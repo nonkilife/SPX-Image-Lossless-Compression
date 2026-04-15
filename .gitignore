@@ -1,0 +1,22 @@
+# ZPNG Whitelist .gitignore
+# Exclude everything
+*
+
+# Whitelist directories
+!core/
+!core/**
+
+# Whitelist files
+!README.md
+!test_suite.py
+!license.txt
+!.gitignore
+
+# Re-exclude Python junk
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+.pytest_cache/
+.venv/
+.env
