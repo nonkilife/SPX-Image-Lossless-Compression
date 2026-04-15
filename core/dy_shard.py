@@ -44,55 +44,83 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
     specialized PDF templates. The outputs here directly shape the bitstream container.
     """
     n_shards = shard_map.max() + 1 if nsid < 0 else nsid + 1
+    N_CHUNKS = 16
+    chunk_size = (h + N_CHUNKS - 1) // N_CHUNKS
+    chunk_shard_hists = np.zeros((N_CHUNKS, 3, n_shards, 256), dtype=np.uint32)
 
-    row_shard_hists: npt.NDArray[np.uint32] = np.zeros((h, 3, n_shards, 256), dtype=np.uint32)
     row_ptrs: npt.NDArray[np.uint32] = np.zeros((h, 3, n_shards), dtype=np.uint32)
     row_hits: npt.NDArray[np.uint32] = np.zeros((h, 3), dtype=np.uint32)
     row_abs_sums: npt.NDArray[np.uint64] = np.zeros((h, 3), dtype=np.uint64)
 
-    for i in prange(h):
-        h0, h1, h2 = np.uint32(0), np.uint32(0), np.uint32(0)
-        s0, s1, s2 = np.uint64(0), np.uint64(0), np.uint64(0)
-        
-        curr_valg = np.uint8(0)
-        prev_valg = np.uint8(0)
-        
-        # [Unrolled Start] Pixel j=0: G-Lead Only
-        if w > 0:
-            ag = np.uint8(0)
-            bg = (gr_ch[i-1, 0] if i > 0 else np.uint8(0))
-            cg = np.uint8(0)
+    for c_idx in prange(N_CHUNKS):
+        start_i = c_idx * chunk_size
+        end_i = min(start_i + chunk_size, h)
+        local_hists = np.zeros((3, n_shards, 256), dtype=np.uint32)
+
+        for i in range(start_i, end_i):
+            h0, h1, h2 = np.uint32(0), np.uint32(0), np.uint32(0)
+            s0, s1, s2 = np.uint64(0), np.uint64(0), np.uint64(0)
             
-            pg_m = predict_med_standard(ag, bg, cg)
-            curr_valg = gr_ch[i, 0]
-            ctxg = int(get_context_id_flexible(ag, bg, cg, pg_m, shard_map, v_bounds, i_segs, nsid))
-            diffg = (int(curr_valg) - int(pg_m)) & 0xFF
-            # [v6.5] Centered storage for linear median calculation (0 -> 128)
-            resg_c = (diffg + 128) & 0xFF
-            row_shard_hists[i, 0, int(ctxg), resg_c] += 1; row_ptrs[i, 0, int(ctxg)] += 1
-            h_val = (diffg + 128) % 256 - 128
-            h0 += np.uint32(h_val == 0); s0 += np.uint64(abs(h_val))
-            prev_valg = curr_valg
+            curr_valg = np.uint8(0)
+            prev_valg = np.uint8(0)
+            
+            # [Unrolled Start] Pixel j=0: G-Lead Only
+            if w > 0:
+                ag = np.uint8(0)
+                bg = (gr_ch[i-1, 0] if i > 0 else np.uint8(0))
+                cg = np.uint8(0)
+                
+                pg_m = predict_med_standard(ag, bg, cg)
+                curr_valg = gr_ch[i, 0]
+                ctxg = int(get_context_id_flexible(ag, bg, cg, pg_m, shard_map, v_bounds, i_segs, nsid))
+                diffg = (int(curr_valg) - int(pg_m)) & 0xFF
+                # [v6.5] Centered storage for linear median calculation (0 -> 128)
+                resg_c = (diffg + 128) & 0xFF
+                local_hists[0, int(ctxg), resg_c] += 1; row_ptrs[i, 0, int(ctxg)] += 1
+                h_val = (diffg + 128) % 256 - 128
+                h0 += np.uint32(h_val == 0); s0 += np.uint64(abs(h_val))
+                prev_valg = curr_valg
 
-        # [Main Loop] j=1 to w-1: Dual-Channel Operation (No Stagger Branching)
-        for j in range(1, w):
-            # 1. G-Channel (Lead)
-            ag = gr_ch[i, j-1]
-            bg = (gr_ch[i-1, j] if i > 0 else np.uint8(0))
-            cg = (gr_ch[i-1, j-1] if i > 0 else np.uint8(0))
-            pg_m = predict_med_standard(ag, bg, cg)
-            curr_valg = gr_ch[i, j]
-            ctxg = int(get_context_id_flexible(ag, bg, cg, pg_m, shard_map, v_bounds, i_segs, nsid))
-            diffg = (int(curr_valg) - int(pg_m)) & 0xFF
-            # [v6.5] Centered storage for linear median calculation (0 -> 128)
-            resg_c = (diffg + 128) & 0xFF
-            row_shard_hists[i, 0, int(ctxg), resg_c] += 1; row_ptrs[i, 0, int(ctxg)] += 1
-            h_val = (diffg + 128) % 256 - 128
-            h0 += np.uint32(h_val == 0); s0 += np.uint64(abs(h_val))
+            # [Main Loop] j=1 to w-1: Dual-Channel Operation (No Stagger Branching)
+            for j in range(1, w):
+                # 1. G-Channel (Lead)
+                ag = gr_ch[i, j-1]
+                bg = (gr_ch[i-1, j] if i > 0 else np.uint8(0))
+                cg = (gr_ch[i-1, j-1] if i > 0 else np.uint8(0))
+                pg_m = predict_med_standard(ag, bg, cg)
+                curr_valg = gr_ch[i, j]
+                ctxg = int(get_context_id_flexible(ag, bg, cg, pg_m, shard_map, v_bounds, i_segs, nsid))
+                diffg = (int(curr_valg) - int(pg_m)) & 0xFF
+                # [v6.5] Centered storage for linear median calculation (0 -> 128)
+                resg_c = (diffg + 128) & 0xFF
+                local_hists[0, int(ctxg), resg_c] += 1; row_ptrs[i, 0, int(ctxg)] += 1
+                h_val = (diffg + 128) % 256 - 128
+                h0 += np.uint32(h_val == 0); s0 += np.uint64(abs(h_val))
 
-            # 2. RD/BD Channels (Lag)
-            if not is_grayscale:
-                target_j = j - 1
+                # 2. RD/BD Channels (Lag)
+                if not is_grayscale:
+                    target_j = j - 1
+                    val1, val2 = rd_ch[i, target_j], bd_ch[i, target_j]
+                    a1, b1, c1 = (rd_ch[i, target_j-1] if target_j > 0 else np.uint8(0)), (rd_ch[i-1, target_j] if i > 0 else np.uint8(0)), (rd_ch[i-1, target_j-1] if (i > 0 and target_j > 0) else np.uint8(0))
+                    a2, b2, c2 = (bd_ch[i, target_j-1] if target_j > 0 else np.uint8(0)), (bd_ch[i-1, target_j] if i > 0 else np.uint8(0)), (bd_ch[i-1, target_j-1] if (i > 0 and target_j > 0) else np.uint8(0))
+                    ctx1 = int(get_context_id_flexible(a1, b1, c1, prev_valg, shard_map, v_bounds, i_segs, nsid))
+                    ctx2 = int(get_context_id_flexible(a2, b2, c2, prev_valg, shard_map, v_bounds, i_segs, nsid))
+                    p1, p2 = predict_med_standard(a1, b1, c1), predict_med_standard(a2, b2, c2)
+                    diff1 = (int(val1) - int(p1)) & 0xFF
+                    diff2 = (int(val2) - int(p2)) & 0xFF
+                    # [v6.5] Centered storage for linear median calculation (0 -> 128)
+                    res1_c, res2_c = (diff1 + 128) & 0xFF, (diff2 + 128) & 0xFF
+                    local_hists[1, ctx1, res1_c] += 1; row_ptrs[i, 1, ctx1] += 1
+                    local_hists[2, ctx2, res2_c] += 1; row_ptrs[i, 2, ctx2] += 1
+                    h1_val, h2_val = (diff1 + 128) % 256 - 128, (diff2 + 128) % 256 - 128
+                    h1 += np.uint32(h1_val == 0); s1 += np.uint64(abs(h1_val))
+                    h2 += np.uint32(h2_val == 0); s2 += np.uint64(abs(h2_val))
+                
+                prev_valg = curr_valg
+
+            # [Unrolled End] Final Pixel j=w-1: RD/BD-Lag Only
+            if w > 0 and not is_grayscale:
+                target_j = w - 1
                 val1, val2 = rd_ch[i, target_j], bd_ch[i, target_j]
                 a1, b1, c1 = (rd_ch[i, target_j-1] if target_j > 0 else np.uint8(0)), (rd_ch[i-1, target_j] if i > 0 else np.uint8(0)), (rd_ch[i-1, target_j-1] if (i > 0 and target_j > 0) else np.uint8(0))
                 a2, b2, c2 = (bd_ch[i, target_j-1] if target_j > 0 else np.uint8(0)), (bd_ch[i-1, target_j] if i > 0 else np.uint8(0)), (bd_ch[i-1, target_j-1] if (i > 0 and target_j > 0) else np.uint8(0))
@@ -103,40 +131,23 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
                 diff2 = (int(val2) - int(p2)) & 0xFF
                 # [v6.5] Centered storage for linear median calculation (0 -> 128)
                 res1_c, res2_c = (diff1 + 128) & 0xFF, (diff2 + 128) & 0xFF
-                row_shard_hists[i, 1, ctx1, res1_c] += 1; row_ptrs[i, 1, ctx1] += 1
-                row_shard_hists[i, 2, ctx2, res2_c] += 1; row_ptrs[i, 2, ctx2] += 1
+                local_hists[1, ctx1, res1_c] += 1; row_ptrs[i, 1, ctx1] += 1
+                local_hists[2, ctx2, res2_c] += 1; row_ptrs[i, 2, ctx2] += 1
                 h1_val, h2_val = (diff1 + 128) % 256 - 128, (diff2 + 128) % 256 - 128
                 h1 += np.uint32(h1_val == 0); s1 += np.uint64(abs(h1_val))
                 h2 += np.uint32(h2_val == 0); s2 += np.uint64(abs(h2_val))
-            
-            prev_valg = curr_valg
 
-        # [Unrolled End] Final Pixel j=w-1: RD/BD-Lag Only
-        if w > 0 and not is_grayscale:
-            target_j = w - 1
-            val1, val2 = rd_ch[i, target_j], bd_ch[i, target_j]
-            a1, b1, c1 = (rd_ch[i, target_j-1] if target_j > 0 else np.uint8(0)), (rd_ch[i-1, target_j] if i > 0 else np.uint8(0)), (rd_ch[i-1, target_j-1] if (i > 0 and target_j > 0) else np.uint8(0))
-            a2, b2, c2 = (bd_ch[i, target_j-1] if target_j > 0 else np.uint8(0)), (bd_ch[i-1, target_j] if i > 0 else np.uint8(0)), (bd_ch[i-1, target_j-1] if (i > 0 and target_j > 0) else np.uint8(0))
-            ctx1 = int(get_context_id_flexible(a1, b1, c1, prev_valg, shard_map, v_bounds, i_segs, nsid))
-            ctx2 = int(get_context_id_flexible(a2, b2, c2, prev_valg, shard_map, v_bounds, i_segs, nsid))
-            p1, p2 = predict_med_standard(a1, b1, c1), predict_med_standard(a2, b2, c2)
-            diff1 = (int(val1) - int(p1)) & 0xFF
-            diff2 = (int(val2) - int(p2)) & 0xFF
-            # [v6.5] Centered storage for linear median calculation (0 -> 128)
-            res1_c, res2_c = (diff1 + 128) & 0xFF, (diff2 + 128) & 0xFF
-            row_shard_hists[i, 1, ctx1, res1_c] += 1; row_ptrs[i, 1, ctx1] += 1
-            row_shard_hists[i, 2, ctx2, res2_c] += 1; row_ptrs[i, 2, ctx2] += 1
-            h1_val, h2_val = (diff1 + 128) % 256 - 128, (diff2 + 128) % 256 - 128
-            h1 += np.uint32(h1_val == 0); s1 += np.uint64(abs(h1_val))
-            h2 += np.uint32(h2_val == 0); s2 += np.uint64(abs(h2_val))
-
-        row_hits[i, 0], row_hits[i, 1], row_hits[i, 2] = h0, h1, h2
-        row_abs_sums[i, 0], row_abs_sums[i, 1], row_abs_sums[i, 2] = s0, s1, s2
+            row_hits[i, 0], row_hits[i, 1], row_hits[i, 2] = h0, h1, h2
+            row_abs_sums[i, 0], row_abs_sums[i, 1], row_abs_sums[i, 2] = s0, s1, s2
+        
+        chunk_shard_hists[c_idx] = local_hists
 
     shard_counts_total = np.zeros((3, n_shards), dtype=np.uint32)
     shard_stats_total = np.zeros((3, n_shards, 256), dtype=np.uint32)
+    for c_idx in range(N_CHUNKS):
+        shard_stats_total += chunk_shard_hists[c_idx]
+
     for i in range(h):
-        shard_stats_total += row_shard_hists[i]
         for c in range(3):
             for s in range(n_shards):
                 shard_counts_total[c, s] += row_ptrs[i, c, s]

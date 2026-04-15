@@ -1,5 +1,3 @@
-[中文版](./README_ZH.md)
-
 # ZPNG: Python-based Lossless Image Compression
 
 ![Python Version](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-GPL--3.0-green) ![MSE](https://img.shields.io/badge/MSE-0.000-red)
