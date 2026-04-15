@@ -318,32 +318,83 @@ def get_trend_idx(ag: np.uint8, bg: np.uint8, cg: np.uint8) -> np.uint8:
     falling = np.uint8(ag < cg) * np.uint8(bg < cg)
     return np.uint8(falling + 2 * (1 - (rising + falling)))
 
-@njit(fastmath=True, error_model='numpy', inline='always', cache=True)
-def get_context_id_flexible(ag: np.uint8, bg: np.uint8, cg: np.uint8, intensity: np.uint8, 
-                          shard_map: npt.NDArray[np.uint8], boundaries: npt.NDArray[np.uint8],
-                          i_segs: npt.NDArray[np.uint8], nsid: int) -> np.uint8:
-    """ ZPNG v6.2 Flexible Dispatcher: Strength x Intensity x Trend [Branchless Optimized]. """
-    dh: np.int32 = abs(np.int32(ag) - np.int32(cg))
-    dv: np.int32 = abs(np.int32(bg) - np.int32(cg))
-    v: np.uint32 = np.uint32(max(dh, dv))
-    
-    # [1] Intensity Logic (Branchless Segment Discovery)
-    i_idx = np.uint8(intensity > i_segs[1]) + np.uint8(intensity > i_segs[2])
-    
-    # [2] Strength Logic (Branchless V-Tier Comparison Summation)
-    v_tier = np.uint8(v > 0)
-    for i in range(1, len(boundaries) - 1):
-        v_tier += np.uint8(v > boundaries[i])
+
+# --- [v6.6] High-Performance Context Dispatcher LUTs ---
+SPATIAL_TRANS_LUT = np.zeros((512, 512), dtype=np.uint8)
+INTENSITY_LUT = np.zeros(256, dtype=np.uint8)
+
+def initialize_luts_python(v_bounds, i_segs):
+    """ Fills the global LUTs with precomputed context features in Python. 
+        Note: Done at module load to ensure Numba sees them as populated constants.
+    """
+    # 1. Intensity LUT
+    for i in range(256):
+        idx = np.uint8(i > i_segs[1]) + np.uint8(i > i_segs[2])
+        INTENSITY_LUT[i] = idx
+        
+    # 2. Spatial Transition LUT (512x512)
+    for da in range(-255, 256):
+        d_idx_a = da + 255
+        for db in range(-255, 256):
+            d_idx_b = db + 255
+            # Strength (V)
+            dh, dv = abs(da), abs(db)
+            v = max(dh, dv)
+            v_tier = np.uint8(v > 0)
+            for i in range(1, len(v_bounds) - 1):
+                v_tier += np.uint8(v > v_bounds[i])
             
-    # [3] Trend Logic
-    t_idx = get_trend_idx(ag, bg, cg)
+            # Trend (T)
+            rising = np.uint8(da > 0) * np.uint8(db > 0)
+            falling = np.uint8(da < 0) * np.uint8(db < 0)
+            t_idx = np.uint8(falling + 2 * (1 - (rising + falling)))
+            
+            # Noise Flag (N)
+            ns_hit = np.uint8(dh > 12) * np.uint8(dv > 12)
+            
+            # Packing: [V:5][T:2][N:1]
+            packed = (v_tier << 3) | (t_idx << 1) | ns_hit
+            SPATIAL_TRANS_LUT[d_idx_a, d_idx_b] = packed
+
+# Auto-initialize with default Universal-42 bounds (Internal Cache)
+_LAST_V_BOUNDS = np.zeros(8, dtype=np.uint8)
+_LAST_I_SEGS = np.zeros(4, dtype=np.uint8)
+
+def sync_luts_if_needed(v_bounds, i_segs):
+    """ 
+    [v6.6 Defensive] Ensures global LUTs match the requested profile.
+    Must be called from Python context before entering JIT kernels.
+    """
+    global _LAST_V_BOUNDS, _LAST_I_SEGS
+    if not np.array_equal(_LAST_V_BOUNDS, v_bounds) or not np.array_equal(_LAST_I_SEGS, i_segs):
+        initialize_luts_python(v_bounds, i_segs)
+        _LAST_V_BOUNDS = v_bounds.copy()
+        _LAST_I_SEGS = i_segs.copy()
+
+# Initial load
+sync_luts_if_needed(V_BOUND_RGB, INTENSITY_SEG_RGB)
+
+@njit(fastmath=True, cache=True)
+def get_context_id_fast(ag: uint8, bg: uint8, cg: uint8, intensity: uint8, 
+                       shard_map: npt.NDArray[np.uint8], nsid: int) -> uint8:
+    """ 
+    ZPNG v6.6 Ultra-Fast Dispatcher: Double LUT Lookup.
+    Replaces get_context_id_flexible with O(1) complexity.
+    """
+    # 1. Double Feature Lookup
+    # Note: ag, bg, cg must be cast to signed int for the difference
+    packed = SPATIAL_TRANS_LUT[int(ag) - int(cg) + 255, int(bg) - int(cg) + 255]
+    i_idx = INTENSITY_LUT[intensity]
     
-    # [4] Map Lookup
-    base_cid = shard_map[v_tier, i_idx, t_idx]
+    # 2. Extract Features
+    v_tier = packed >> 3
+    t_idx = (packed >> 1) & 0x03
+    ns_hit = packed & 0x01
     
-    # [5] Noise Shard Overrule (Branchless)
-    ns_hit = np.uint8(nsid >= 0) * np.uint8(dh > 12) * np.uint8(dv > 12)
-    
-    return np.uint8((1 - ns_hit) * base_cid + ns_hit * max(0, nsid))
+    # 3. Final Mapping
+    if ns_hit != 0 and nsid >= 0:
+        return np.uint8(nsid)
+        
+    return shard_map[v_tier, i_idx, t_idx]
 
 # --- End of Flexible Sharding Hub ---

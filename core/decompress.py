@@ -171,7 +171,12 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
             is_grayscale: bool = bool(flag & FLAG_GRAYSCALE)
             
             # [v6.6] Unified Profile Selection
+            from .common import PROFILE_RGB, sync_luts_if_needed
             profile = PROFILE_RGB
+            
+            # [v6.6 Defensive] Ensure global Context LUTs match requested profile
+            sync_luts_if_needed(profile.v_boundaries_gr, profile.intensity_segments)
+            
             n_shards = profile.total_shards
             
             # Expanded parameters for JIT

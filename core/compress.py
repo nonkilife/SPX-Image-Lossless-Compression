@@ -244,6 +244,7 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
     try:
         arr: npt.NDArray[np.uint8]
         # [v2.16] Optimization: Use pre-loaded array if available to avoid redundant I/O
+        actual_mode: Optional[str] = None
         if preloaded_arr is not None:
             arr = preloaded_arr
             h, w, c = arr.shape
@@ -252,6 +253,7 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
             # Standard Path
             img: Image.Image = Image.open(img_path)
             img.load()
+            actual_mode = img.mode
             target_mode: str = 'RGBA' if img.mode == 'RGBA' else 'RGB'
             img_rgb: Image.Image = img.convert(target_mode)
             arr = np.array(img_rgb)
@@ -264,9 +266,8 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
             orig_size = os.path.getsize(img_path) if img_path else arr.nbytes
         except (TypeError, OSError):
             orig_size = arr.nbytes
-            
+
         # [v6.6] Optimized Grayscale Detection (Metadata aware)
-        actual_mode: Optional[str] = img.mode if 'img' in locals() else None
         is_grayscale: bool = check_grayscale_robust(arr, actual_mode)
         
         # 3. Channel Extraction & Statistical Prep
@@ -278,8 +279,12 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
         aad_val: float = calculate_aad_estimate(gr_map)
         
         # [v6.6] Unified RGB Sharding
-        from .common import ShardProfile
+        from .common import ShardProfile, sync_luts_if_needed
         profile: ShardProfile = PROFILE_RGB
+        
+        # [v6.6 Defensive] Ensure global Context LUTs match requested profile
+        sync_luts_if_needed(profile.v_boundaries_gr, profile.intensity_segments)
+        
         n_shards: int = profile.total_shards
         
         # [Diagnostic] Mode Signaling

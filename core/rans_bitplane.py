@@ -24,6 +24,7 @@ import numpy as np
 import numpy.typing as npt
 from numba import njit, prange, uint8, uint16, uint32, uint64
 from typing import Tuple, List, Optional
+import concurrent.futures
 
 # =============================================================================
 # --- Configuration ---
@@ -49,13 +50,13 @@ def rans_decode_2bit_4way_kernel(bitstream: npt.NDArray[np.uint8],
     for y in range(h):
         # L (Left neighbors) initialized at start of row
         l0, l1, l2, l3 = uint8(0), uint8(0), uint8(0), uint8(0)
-        prev_up: uint8 = uint8(0)  # cached nw = up from previous x-iteration
+        prev_up: uint8 = uint8(0)  # Caches rec[y-1, x] to use as nw in next iteration
         for x in range(w):
             if y == 0:
                 ctx0, ctx1, ctx2, ctx3 = l0, l1, l2, l3
             else:
                 up: uint8 = rec[y-1, x]
-                nw: uint8 = prev_up  # was rec[y-1, x-1]; 0 at x==0 by initialization
+                nw: uint8 = prev_up
                 u0, u1, u2, u3 = up&0x03, (up>>2)&0x03, (up>>4)&0x03, (up>>6)&0x03
                 n0, n1, n2, n3 = nw&0x03, (nw>>2)&0x03, (nw>>4)&0x03, (nw>>6)&0x03
                 ctx0 = l0 | (u0 << 2) | (n0 << 4)
@@ -257,6 +258,9 @@ def rans_encode_2bit_4way_kernel(shard_data: npt.NDArray[np.uint8],
     ptr: int = 0
 
     for y in range(h - 1, -1, -1):
+        # Pre-cache up neighbor for x=w-1 (last in iteration, first in execution)
+        # Note: nw for pixel x is up for pixel x-1.
+        next_nw: uint8 = shard_data[y-1, w-1] if y > 0 else uint8(0)
         for x in range(w - 1, -1, -1):
             px: uint8 = shard_data[y, x]
             s0, s1, s2, s3 = px&0x03, (px>>2)&0x03, (px>>4)&0x03, (px>>6)&0x03
@@ -266,7 +270,7 @@ def rans_encode_2bit_4way_kernel(shard_data: npt.NDArray[np.uint8],
                 lpx: uint8 = shard_data[y, x-1] if x > 0 else uint8(0)
                 c0, c1, c2, c3 = lpx&0x03, (lpx>>2)&0x03, (lpx>>4)&0x03, (lpx>>6)&0x03
             else:
-                up: uint8 = shard_data[y-1, x]
+                up: uint8 = next_nw # Current's up is the one cached as nw for the right pixel
                 nw: uint8 = shard_data[y-1, x-1] if x > 0 else uint8(0)
                 lpx: uint8 = shard_data[y, x-1] if x > 0 else uint8(0)
 
@@ -275,6 +279,7 @@ def rans_encode_2bit_4way_kernel(shard_data: npt.NDArray[np.uint8],
                 c1 = ((lpx>>2)&0x03) | (((up>>2)&0x03) << 2) | (((nw>>2)&0x03) << 4)
                 c2 = ((lpx>>4)&0x03) | (((up>>4)&0x03) << 2) | (((nw>>4)&0x03) << 4)
                 c3 = ((lpx>>6)&0x03) | (((up>>6)&0x03) << 2) | (((nw>>6)&0x03) << 4)
+                next_nw = nw # For next iteration (x-1), current's nw is next's up
 
             # Sequence-critical: Encode all 4 layers in reverse (3 then 2 then 1 then 0)
 
@@ -334,12 +339,15 @@ def compress_bitplane_gray(raw_data: npt.NDArray[np.uint8]) -> bytes:
     stack_cf: npt.NDArray[np.uint64] = np.stack(pdfs_cf_list)
     stack_f: npt.NDArray[np.uint64] = np.stack(pdfs_f_list)
     
-    results: List[Tuple[npt.NDArray[np.uint64], npt.NDArray[np.uint8]]] = []
-    for s_idx in range(BITPLANE_N_SHARDS):
-        y0: int = s_idx * shard_h
-        y1: int = (s_idx+1) * shard_h if s_idx < BITPLANE_N_SHARDS-1 else h
-        shard_data = raw_data[y0:y1, :]
-        results.append(rans_encode_2bit_4way_kernel(shard_data, stack_cf, stack_f))
+    # Parallel execution using ThreadPoolExecutor (Safe & GIL-free)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=BITPLANE_N_SHARDS) as executor:
+        futures = []
+        for s_idx in range(BITPLANE_N_SHARDS):
+            y0: int = s_idx * shard_h
+            y1: int = (s_idx+1) * shard_h if s_idx < BITPLANE_N_SHARDS-1 else h
+            shard_data = raw_data[y0:y1, :]
+            futures.append(executor.submit(rans_encode_2bit_4way_kernel, shard_data, stack_cf, stack_f))
+        results = [f.result() for f in futures]
     
     # Construct final payload
     out = bytearray()

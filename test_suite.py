@@ -236,10 +236,12 @@ def print_comparison_table(stats_list: List[Dict], dataset_name: str):
     
     # Header
     header_str = "|"
+    sep_str = "|"
     for i, h in enumerate(headers):
         header_str += f" {h:<{col_widths[i]}} |"
+        sep_str += "-" * (col_widths[i] + 2) + "|"
     print(header_str)
-    print("|" + "-" * (total_width - 2) + "|")
+    print(sep_str)
     
     # Rows
     for r_label, key, fmt, *idx in rows:
@@ -264,6 +266,8 @@ def print_comparison_table(stats_list: List[Dict], dataset_name: str):
             
             row_str += f" {formatted_val:<{col_widths[i+1]}} |"
         print(row_str)
+    
+    # Bottom border
     print("═" * total_width + "\n")
 
 def show_codec_summary(s: Dict):
@@ -279,6 +283,7 @@ def show_codec_summary(s: Dict):
     print(f"  Avg Process Time: Enc {s['avg_e_ms']:7.1f} ms | Dec {s['avg_d_ms']:7.1f} ms")
     print(f"  Throughput      : Compress {s['sys_tp'][0]:6.2f} MB/s | Decompress {s['sys_tp'][1]:6.2f} MB/s")
     print(f"  Core Efficiency : Compress {s['core_tp'][0]:5.2f} MB/s | Decompress {s['core_tp'][1]:5.2f} MB/s")
+    print(f"  Wall-clock      : {s['wall_s']:6.2f} s       | MSE (Quality): {s['mse']:13.8f}")
     print(f"{div}\n")
 
 # =============================================================================
@@ -462,8 +467,11 @@ def main():
 
     for name, worker in queue:
         stats, res_map = run_codec_benchmark(name, worker, files, args.workers)
+        # Ensure stats is at least a dict with the codec name if failure occurred
+        if not stats:
+            stats = {"name": name, "count": 0, "success": False}
         all_stats.append(stats)
-        task_results.append(res_map)
+        task_results.append(res_map if res_map else {})
 
     # --- Win Counting Logic ---
     if len(task_results) > 1:

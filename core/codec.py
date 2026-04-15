@@ -49,6 +49,8 @@ def pack_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsu
     profile = PROFILE_RGB
     n_shards = profile.total_shards
 
+    # Widths are stored as uint8 using mod-256 encoding: value 0 represents 256.
+    # The decoder (decompress.py) restores this via: np.where(r == 0, 256, r).
     if is_grayscale:
         header_widths: bytes = (shard_widths[0, :n_shards] % 256).astype(np.uint8).tobytes()
         header_medians: bytes = shard_medians[0, :n_shards].tobytes()
@@ -170,7 +172,7 @@ def unpack_bitstream_v5(compressed_data: bytes, h: int, w: int, is_rgba: bool, i
                        flag: int, metadata_len: int) -> Tuple:
     """
     Deserializes the ZPNG bitstream format back into parsed frequency tables and residuals.
-    
+
     Processing Steps:
     1. Parses the Shard Metadata block (Widths, Medians, Modes) dynamically.
     2. Uses Zstd to de-compact the internal PDF dictionary arrays.
@@ -181,17 +183,14 @@ def unpack_bitstream_v5(compressed_data: bytes, h: int, w: int, is_rgba: bool, i
         if pos + 4 > len(buf):
             raise ValueError("Unexpected End of File: Missing block metadata.")
         b_len_v: int = int(np.frombuffer(buf[pos:pos+4], dtype='<u4')[0])
-        if b_len_v > len(buf): 
-            raise ValueError(f"Invalid block length: {b_len_v}")
         if pos + 4 + b_len_v > len(buf):
             raise ValueError(f"Truncated bitstream: Expected {b_len_v} bytes, got {len(buf) - (pos + 4)}")
         return b_len_v, pos + 4, pos + 4 + b_len_v
-    
+
     from .rans import (
-        rans_decode_4way_core, build_all_lookups,
+        rans_decode_shards_parallel, build_all_lookups,
         expand_pdf_tables
     )
-    import zstandard as zstd
     dctx = zstd.ZstdDecompressor()
 
     if flag & FLAG_BITPLANE:
@@ -235,12 +234,6 @@ def unpack_bitstream_v5(compressed_data: bytes, h: int, w: int, is_rgba: bool, i
         shard_counts[0] = sc_block.copy().reshape((n_shards,))
     else:
         shard_counts = sc_block.copy().reshape((3, n_shards))
-    from .rans import (
-        rans_decode_4way_core, rans_decode_shards_parallel, build_all_lookups,
-        expand_pdf_tables
-    )
-    import zstandard as zstd
-    dctx = zstd.ZstdDecompressor()
 
     # 4. Parallel rANS Decoding (v7.2 [HIGH-THROUGHPUT])
     all_lookups: npt.NDArray[np.uint8] = build_all_lookups(all_cum_freqs)
@@ -271,8 +264,8 @@ def unpack_bitstream_v5(compressed_data: bytes, h: int, w: int, is_rgba: bool, i
     bs_lengths = np.zeros(num_targets, dtype=np.uint32)
     
     for idx in range(num_targets):
-        if p + 36 > len(compressed_data): 
-            break
+        if p + 36 > len(compressed_data):
+            raise ValueError(f"Truncated bitstream: shard {idx}/{num_targets} header missing at offset {p}")
             
         chunk_meta: npt.NDArray[np.uint32] = np.frombuffer(compressed_data[p:p+36], dtype='<u4')
         states[idx, 0] = np.uint64(chunk_meta[0]) | (np.uint64(chunk_meta[1]) << 32)
@@ -318,8 +311,8 @@ def unpack_bitstream_v5(compressed_data: bytes, h: int, w: int, is_rgba: bool, i
         res_bd_flat = all_res_flat[gr_len+rd_len:]
         
         gr_offs = out_offsets[:n_shards]
-        rd_offs = out_offsets[n_shards:2*n_shards] - uint32(gr_len)
-        bd_offs = out_offsets[2*n_shards:] - uint32(gr_len + rd_len)
+        rd_offs = out_offsets[n_shards:2*n_shards] - np.uint32(gr_len)
+        bd_offs = out_offsets[2*n_shards:] - np.uint32(gr_len + rd_len)
 
     res_a_flat: Optional[npt.NDArray[np.uint8]] = None
     if is_rgba:
