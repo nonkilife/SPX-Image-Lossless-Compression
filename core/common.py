@@ -164,7 +164,7 @@ TOTAL_SHARDS = 42
 ENABLE_DIAGNOSTICS: bool = False  # Production Gate
 
 def get_shard_labels() -> List[str]:
-    """ Automatically generates descriptive labels for all shards (Max 30). """
+    """ Automatically generates descriptive labels for all shards. """
     labels = [f"Shard_{i}" for i in range(TOTAL_SHARDS)]
     # We could make this semantic, but for now generic index is safer for mixed modes
     return labels
@@ -201,7 +201,7 @@ class ZpngResult:
     shard_widths: npt.NDArray[np.uint16] = field(default_factory=lambda: np.zeros((3, TOTAL_SHARDS), dtype=np.uint16))
     
     # [v4.10.2] Channel Statistical Data (Global Histograms: Grn, RD, BD)
-    channel_hists: npt.NDArray[np.uint32] = field(default_factory=lambda: np.zeros(3, dtype=np.uint32))
+    channel_hists: npt.NDArray[np.uint32] = field(default_factory=lambda: np.zeros((3, 256), dtype=np.uint32))
     
     # [v4.11.0] Noise Prediction Modes
     channel_modes: npt.NDArray[np.uint8] = field(default_factory=lambda: np.zeros(3, dtype=np.uint8))
@@ -238,10 +238,9 @@ def extract_srb_metadata(shard_stats: npt.NDArray[np.uint32]) -> Tuple[npt.NDArr
     for c in range(3):
         for s in range(n_shards):
             hist = shard_stats[c, s]
-            if np.sum(hist) > 0:
+            if np.any(hist):
                 indices = np.where(hist > 0)[0]
-                if len(indices) > 0:
-                    widths[c, s] = np.uint16(int(np.max(indices)) + 1)
+                widths[c, s] = np.uint16(int(indices[-1]) + 1)
     return mins, widths
 
 @njit(parallel=True, fastmath=True, cache=True)
@@ -255,8 +254,8 @@ def apply_median_to_stats(shard_stats: npt.NDArray[np.uint32], medians: npt.NDAr
     n_colors, n_shards, _ = shard_stats.shape
     aligned_stats = np.zeros((n_colors, n_shards, 256), dtype=np.uint32)
     
-    for c in prange(n_colors):
-        for s in range(n_shards):
+    for c in range(n_colors):
+        for s in prange(n_shards):
             m = int(medians[c, s])
             hist = shard_stats[c, s]
             if np.sum(hist) == 0: continue
@@ -295,10 +294,10 @@ def calculate_channel_stats(hist: npt.NDArray[np.uint32]) -> Tuple[float, int, i
     # 3. Median (50th Percentile)
     acc = 0
     median_val = 0
-    midpoint = total // 2
+    midpoint = (total + 1) // 2
     for i in range(256):
         acc += hist[i]
-        if acc > midpoint:
+        if acc >= midpoint:
             median_val = i
             break
             
@@ -320,41 +319,37 @@ def get_trend_idx(ag: np.uint8, bg: np.uint8, cg: np.uint8) -> np.uint8:
 
 
 # --- [v6.6] High-Performance Context Dispatcher LUTs ---
-SPATIAL_TRANS_LUT = np.zeros((512, 512), dtype=np.uint8)
+SPATIAL_TRANS_LUT = np.zeros((511, 511), dtype=np.uint8)
 INTENSITY_LUT = np.zeros(256, dtype=np.uint8)
 
 def initialize_luts_python(v_bounds, i_segs):
-    """ Fills the global LUTs with precomputed context features in Python. 
+    """ Fills the global LUTs with precomputed context features in Python.
         Note: Done at module load to ensure Numba sees them as populated constants.
     """
-    # 1. Intensity LUT
-    for i in range(256):
-        idx = np.uint8(i > i_segs[1]) + np.uint8(i > i_segs[2])
-        INTENSITY_LUT[i] = idx
-        
-    # 2. Spatial Transition LUT (512x512)
-    for da in range(-255, 256):
-        d_idx_a = da + 255
-        for db in range(-255, 256):
-            d_idx_b = db + 255
-            # Strength (V)
-            dh, dv = abs(da), abs(db)
-            v = max(dh, dv)
-            v_tier = np.uint8(v > 0)
-            for i in range(1, len(v_bounds) - 1):
-                v_tier += np.uint8(v > v_bounds[i])
-            
-            # Trend (T)
-            rising = np.uint8(da > 0) * np.uint8(db > 0)
-            falling = np.uint8(da < 0) * np.uint8(db < 0)
-            t_idx = np.uint8(falling + 2 * (1 - (rising + falling)))
-            
-            # Noise Flag (N)
-            ns_hit = np.uint8(dh > 12) * np.uint8(dv > 12)
-            
-            # Packing: [V:5][T:2][N:1]
-            packed = (v_tier << 3) | (t_idx << 1) | ns_hit
-            SPATIAL_TRANS_LUT[d_idx_a, d_idx_b] = packed
+    # 1. Intensity LUT (vectorized)
+    i_arr = np.arange(256, dtype=np.uint8)
+    INTENSITY_LUT[:] = (i_arr > i_segs[1]).astype(np.uint8) + (i_arr > i_segs[2]).astype(np.uint8)
+
+    # 2. Spatial Transition LUT (511x511, vectorized)
+    d = np.arange(-255, 256, dtype=np.int16)
+    DA, DB = np.meshgrid(d, d, indexing='ij')   # (511, 511)
+
+    # Strength (V): count how many boundaries are exceeded
+    v = np.maximum(np.abs(DA), np.abs(DB))
+    v_tier = (v > 0).astype(np.uint8)
+    for i in range(1, len(v_bounds) - 1):
+        v_tier += (v > int(v_bounds[i])).astype(np.uint8)
+
+    # Trend (T)
+    rising  = ((DA > 0) & (DB > 0)).astype(np.uint8)
+    falling = ((DA < 0) & (DB < 0)).astype(np.uint8)
+    t_idx   = (falling + 2 * (1 - rising - falling)).astype(np.uint8)
+
+    # Noise Flag (N)
+    ns_hit = ((np.abs(DA) > 12) & (np.abs(DB) > 12)).astype(np.uint8)
+
+    # Packing: [V:5][T:2][N:1]
+    SPATIAL_TRANS_LUT[:] = ((v_tier << 3) | (t_idx << 1) | ns_hit).astype(np.uint8)
 
 # Auto-initialize with default Universal-42 bounds (Internal Cache)
 _LAST_V_BOUNDS = np.zeros(8, dtype=np.uint8)

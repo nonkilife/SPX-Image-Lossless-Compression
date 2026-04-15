@@ -37,11 +37,11 @@ from .codec import unpack_bitstream_v5
 import threading, sys
 from typing import Tuple, Optional, List, Dict, Any, Union
 from .common import (
-    predict_med_standard, 
+    predict_med_standard,
     from_zigzag, to_zigzag,
     FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE, FLAG_COLOR_GSUB,
-    FLAG_BITPLANE, 
-    TOTAL_SHARDS, PROFILE_RGB
+    FLAG_BITPLANE,
+    TOTAL_SHARDS, PROFILE_RGB, sync_luts_if_needed
 )
 from . import env
 
@@ -171,7 +171,6 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
             is_grayscale: bool = bool(flag & FLAG_GRAYSCALE)
             
             # [v6.6] Unified Profile Selection
-            from .common import PROFILE_RGB, sync_luts_if_needed
             profile = PROFILE_RGB
             
             # [v6.6 Defensive] Ensure global Context LUTs match requested profile
@@ -189,18 +188,20 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
             metadata_bytes: bytes = b""
             compressed_data: bytes = b""
 
+            m_len = int(metadata_len)
             if not (is_simple or is_raw or is_pass):
                 if flag & FLAG_BITPLANE:
-                    all_payload: bytes = f.read()
-                    m_len = int(metadata_len)
-                    metadata_bytes = all_payload[-m_len:] if m_len > 0 else b""
-                    compressed_data = all_payload[:-m_len] if m_len > 0 else all_payload
                     shard_widths.fill(1)
+                    # For Bitplane, we still use full read for now as it's not yet optimized
+                    compressed_data = f.read()
+                    metadata_bytes = b""
                 else:
                     meta_stride = n_shards if is_grayscale else 3 * n_shards
-                    h_len = meta_stride * 3 # Widths, Medians, Modes
+                    h_len = meta_stride * 3
                     h_raw: bytes = f.read(h_len)
-                    
+                    if len(h_raw) < h_len:
+                        raise ValueError("Truncated header: Shard metadata missing.")
+
                     if is_grayscale:
                         r_widths = np.frombuffer(h_raw[:n_shards], dtype=np.uint8)
                         shard_widths[0] = np.where(r_widths == 0, np.uint16(256), r_widths.astype(np.uint16))
@@ -211,17 +212,20 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
                         shard_widths = np.where(r_widths == 0, np.uint16(256), r_widths.astype(np.uint16))
                         shard_medians = np.frombuffer(h_raw[3*n_shards:6*n_shards], dtype=np.uint8).reshape((3, n_shards))
                         shard_modes = np.frombuffer(h_raw[6*n_shards:9*n_shards], dtype=np.uint8).reshape((3, n_shards))
+
+                    # Pass the stream directly to unpacker
+                    res_gr_flat, res_rd_flat, res_bd_flat, gr_offs, rd_offs, bd_offs, shard_counts, res_a_flat = unpack_bitstream_v5(
+                        f, h, w, is_rgba, is_grayscale, shard_widths, shard_modes, flag, metadata_len
+                    )
                     
-                    all_payload = f.read()
-                    m_len = int(metadata_len)
-                    metadata_bytes = all_payload[-m_len:] if m_len > 0 else b""
-                    compressed_data = all_payload[:-m_len] if m_len > 0 else all_payload
+                    # Read metadata from the end of the stream
+                    metadata_bytes = f.read(m_len) if m_len > 0 else b""
             else:
+                # simple/raw/pass paths still read full payload (as they use PIL or Zstd directly)
                 all_payload = f.read()
-                m_len = int(metadata_len)
+                shard_widths.fill(1)
                 metadata_bytes = all_payload[-m_len:] if m_len > 0 else b""
                 compressed_data = all_payload[:-m_len] if m_len > 0 else all_payload
-                shard_widths.fill(1)
 
             rgb: npt.NDArray[np.uint8]
             if is_pass:
@@ -231,17 +235,17 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
             elif is_simple:
                 rgb = np.frombuffer(zstandard_decompress(compressed_data), dtype=np.uint8).reshape((h, w, 4 if is_rgba else 3))
             else:
-                res_gr_flat, res_rd_flat, res_bd_flat, gr_offs, rd_offs, bd_offs, shard_counts, res_a_flat = unpack_bitstream_v5(
-                    compressed_data, h, w, is_rgba, is_grayscale, shard_widths, shard_modes, flag, metadata_len
-                )
-
                 if flag & FLAG_BITPLANE:
+                    res_gr_flat, res_rd_flat, res_bd_flat, gr_offs, rd_offs, bd_offs, shard_counts, res_a_flat = unpack_bitstream_v5(
+                        compressed_data, h, w, is_rgba, is_grayscale, shard_widths, shard_modes, flag, metadata_len
+                    )
                     if is_grayscale:
                         gr_rec = reconstruct_2d_channels(h, w, res_gr_flat.reshape((h, w)))
                         rd_rec, bd_rec = np.zeros((h, w), dtype=np.uint8), np.zeros((h, w), dtype=np.uint8)
                     else:
                         raise NotImplementedError("Color Bitplane reconstruction not yet implemented.")
                 else:
+                    # Standard Shard Path (already unpacked via stream above)
                     gr_rec, rd_rec, bd_rec = reconstruct_channels(
                         h, w, res_gr_flat, res_rd_flat, res_bd_flat, 
                         gr_offs, rd_offs, bd_offs, 
@@ -250,7 +254,7 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
                         profile.intensity_segments, nsid
                     )
 
-                a_rec: npt.NDArray[np.uint8] = np.empty((h, w), dtype=np.uint8) if is_rgba else np.zeros((1, 1), dtype=np.uint8)
+                a_rec: npt.NDArray[np.uint8] = np.empty((h, w), dtype=np.uint8) if is_rgba else np.zeros((0, 0), dtype=np.uint8)
                 if is_rgba and res_a_flat is not None:
                     decode_alpha_channel(h, w, res_a_flat.reshape((h, w)), a_rec)
                 
@@ -266,7 +270,7 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
         logger.error(f"Decompression Failure: {e}")
         import traceback
         logger.debug(traceback.format_exc())
-        raise e
+        raise
 
 # --- Pytest Snippet for Decompression Integrity ---
 # """

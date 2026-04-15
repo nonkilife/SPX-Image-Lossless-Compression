@@ -10,7 +10,8 @@ import numpy as np
 import numpy.typing as npt
 import zstandard as zstd
 from numba import njit, prange, uint8, uint16, uint32, uint64
-from typing import Tuple, List, Optional
+import concurrent.futures
+from typing import Tuple, List, Optional, Union, BinaryIO
 from .common import (
     TOTAL_SHARDS, FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE,
     PROFILE_RGB
@@ -39,7 +40,7 @@ def pack_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsu
     [M-O]      Shard Block: Sizes for each active shard, followed by rANS byte payloads
     [O-END]    Optional Metadata
     """
-    flag: int = int(is_rgba)
+    flag: int = FLAG_RGBA if is_rgba else 0
     if is_grayscale: flag |= FLAG_GRAYSCALE
     if use_gsub: flag |= FLAG_COLOR_GSUB
 
@@ -85,8 +86,8 @@ def pack_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsu
     else:
         all_sym_freqs_flat = np.concatenate((gr_sym, rd_sym, bd_sym))
         all_widths_flat = np.concatenate((shard_widths[0, :n_shards], shard_widths[1, :n_shards], shard_widths[2, :n_shards]))
-        header_modes: bytes = np.concatenate((gr_modes, rd_modes, bd_modes)).tobytes()
         all_modes_internal = np.concatenate((gr_modes, rd_modes, bd_modes))
+        header_modes: bytes = all_modes_internal.tobytes()
     
     header: bytes = header_base + header_widths + header_medians + header_modes
     
@@ -112,7 +113,7 @@ def pack_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsu
     else:
         shard_lengths_ans: npt.NDArray[np.uint32] = shard_counts.ravel().astype(np.uint32)
         all_cum_stack: npt.NDArray[np.uint64] = np.concatenate((gr_cum, rd_cum, bd_cum))
-        all_sym_stack: npt.NDArray[np.uint64] = np.concatenate((gr_sym, rd_sym, bd_sym))
+        all_sym_stack: npt.NDArray[np.uint64] = all_sym_freqs_flat
 
     shard_offsets_ans: npt.NDArray[np.uint32] = np.zeros(len(shard_lengths_ans), dtype=np.uint32)
     if len(shard_lengths_ans) > 0:
@@ -136,15 +137,12 @@ def pack_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsu
         sharded_payload += np.array([len(c_alpha)], dtype='<u4').tobytes() + c_alpha
 
     # 1e. Return full modes for diagnostics
-    if is_grayscale:
-        # Re-broadcast for consistency
-        modes_diag = np.zeros((3, n_shards), dtype=np.uint8)
-        modes_diag[0] = gr_modes
-        return b"ZPNGCSDE" + header + bytes(sharded_payload) + metadata_bytes, modes_diag
-    else:
-        modes_diag = np.zeros((3, n_shards), dtype=np.uint8)
-        modes_diag[0], modes_diag[1], modes_diag[2] = gr_modes, rd_modes, bd_modes
-        return b"ZPNGCSDE" + header + bytes(sharded_payload) + metadata_bytes, modes_diag
+    modes_diag = np.zeros((3, n_shards), dtype=np.uint8)
+    modes_diag[0] = gr_modes
+    if not is_grayscale:
+        modes_diag[1] = rd_modes
+        modes_diag[2] = bd_modes
+    return b"ZPNGCSDE" + header + bytes(sharded_payload) + metadata_bytes, modes_diag
 
 def pack_bitplane_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: bool,
                              resid_gr: npt.NDArray[np.uint8], metadata_bytes: bytes) -> bytes:
@@ -167,7 +165,7 @@ def pack_bitplane_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool
         
     return b"ZPNGCSDE" + header + bit_payload + metadata_bytes
 
-def unpack_bitstream_v5(compressed_data: bytes, h: int, w: int, is_rgba: bool, is_grayscale: bool,
+def unpack_bitstream_v5(compressed_data: Union[bytes, BinaryIO], h: int, w: int, is_rgba: bool, is_grayscale: bool,
                        shard_widths: npt.NDArray[np.uint16], shard_modes: npt.NDArray[np.uint8],
                        flag: int, metadata_len: int) -> Tuple:
     """
@@ -179,16 +177,25 @@ def unpack_bitstream_v5(compressed_data: bytes, h: int, w: int, is_rgba: bool, i
     3. Interprets the Shard Lengths matrix to carve up the rANS payloads array.
     4. Triggers the 4-Way SIMD rANS parallel decoding block for all channels.
     """
-    def read_block_meta(buf: bytes, pos: int) -> Tuple[int, int, int]:
-        if pos + 4 > len(buf):
-            raise ValueError("Unexpected End of File: Missing block metadata.")
-        b_len_v: int = int(np.frombuffer(buf[pos:pos+4], dtype='<u4')[0])
-        if pos + 4 + b_len_v > len(buf):
-            raise ValueError(f"Truncated bitstream: Expected {b_len_v} bytes, got {len(buf) - (pos + 4)}")
-        return b_len_v, pos + 4, pos + 4 + b_len_v
+    def read_bytes(src: Union[bytes, BinaryIO], n: int, pos: int) -> Tuple[bytes, int]:
+        if isinstance(src, bytes):
+            if pos + n > len(src):
+                raise ValueError(f"Unexpected End of File: Expected {n} bytes at {pos}, got {len(src)-pos}")
+            return src[pos : pos + n], pos + n
+        else:
+            data = src.read(n)
+            if len(data) < n:
+                raise ValueError(f"Unexpected End of Stream: Expected {n} bytes, got {len(data)}")
+            return data, 0 # Pos is not used for streams
+
+    def read_block_meta_stream(src: Union[bytes, BinaryIO], pos: int) -> Tuple[int, bytes, int]:
+        b_raw, pos = read_bytes(src, 4, pos)
+        b_len = int.from_bytes(b_raw, 'little')
+        payload, pos = read_bytes(src, b_len, pos)
+        return b_len, payload, pos
 
     from .rans import (
-        rans_decode_shards_parallel, build_all_lookups,
+        rans_decode_4way_core, build_all_lookups,
         expand_pdf_tables
     )
     dctx = zstd.ZstdDecompressor()
@@ -207,8 +214,8 @@ def unpack_bitstream_v5(compressed_data: bytes, h: int, w: int, is_rgba: bool, i
     
     p: int = 0
     # 1. Read compacted PDF frequencies
-    pdf_len, pdf_start, p = read_block_meta(compressed_data, p)
-    pdf_raw: npt.NDArray[np.uint8] = np.frombuffer(dctx.decompress(compressed_data[pdf_start:p]), dtype=np.uint8)
+    pdf_len, pdf_raw_bytes, p = read_block_meta_stream(compressed_data, p)
+    pdf_raw: npt.NDArray[np.uint8] = np.frombuffer(dctx.decompress(pdf_raw_bytes), dtype=np.uint8)
     
     if is_grayscale:
         widths_flat: npt.NDArray[np.uint16] = shard_widths[0, :n_shards].flatten()
@@ -216,18 +223,19 @@ def unpack_bitstream_v5(compressed_data: bytes, h: int, w: int, is_rgba: bool, i
         all_sym_freqs_flat: npt.NDArray[np.uint64] = expand_pdf_tables(pdf_raw, widths_flat, modes_flat)
         all_sym_freqs = np.zeros((3, n_shards, 256), dtype=np.uint64)
         all_sym_freqs[0] = all_sym_freqs_flat.reshape((n_shards, 256))
+        all_cum_freqs: npt.NDArray[np.uint64] = np.zeros((3, n_shards, 257), dtype=np.uint64)
+        all_cum_freqs[0, :, 1:] = np.cumsum(all_sym_freqs[0], axis=1)
     else:
         widths_flat: npt.NDArray[np.uint16] = shard_widths[:, :n_shards].flatten()
         modes_flat: npt.NDArray[np.uint8] = shard_modes[:, :n_shards].flatten()
         all_sym_freqs_flat: npt.NDArray[np.uint64] = expand_pdf_tables(pdf_raw, widths_flat, modes_flat)
         all_sym_freqs = all_sym_freqs_flat.reshape((3, n_shards, 256))
-    
-    all_cum_freqs: npt.NDArray[np.uint64] = np.zeros((3, n_shards, 257), dtype=np.uint64)
-    all_cum_freqs[:, :, 1:] = np.cumsum(all_sym_freqs, axis=2)
+        all_cum_freqs: npt.NDArray[np.uint64] = np.zeros((3, n_shards, 257), dtype=np.uint64)
+        all_cum_freqs[:, :, 1:] = np.cumsum(all_sym_freqs, axis=2)
 
     # 2. Read Shard Counts
-    sc_len, sc_start, p = read_block_meta(compressed_data, p)
-    sc_block: npt.NDArray[np.uint32] = np.frombuffer(compressed_data[sc_start:p], dtype='<u4')
+    sc_len, sc_raw_bytes, p = read_block_meta_stream(compressed_data, p)
+    sc_block: npt.NDArray[np.uint32] = np.frombuffer(sc_raw_bytes, dtype='<u4')
     
     shard_counts: npt.NDArray[np.uint32] = np.zeros((3, n_shards), dtype=np.uint32)
     if is_grayscale:
@@ -258,41 +266,44 @@ def unpack_bitstream_v5(compressed_data: bytes, h: int, w: int, is_rgba: bool, i
     if num_targets > 0:
         out_offsets[1:] = np.cumsum(counts_stack[:-1], dtype=np.uint32)
 
-    # Phase 1: I/O Pre-Scan (Sequential)
-    states = np.zeros((num_targets, 4), dtype=np.uint64)
-    bs_offsets = np.zeros(num_targets, dtype=np.uint32)
-    bs_lengths = np.zeros(num_targets, dtype=np.uint32)
-    
-    for idx in range(num_targets):
-        if p + 36 > len(compressed_data):
-            raise ValueError(f"Truncated bitstream: shard {idx}/{num_targets} header missing at offset {p}")
+    # Phase 1 & 2: Streaming Producer-Consumer Decoder (v7.6 [STREAMING])
+    # [v7.6] Overlaps I/O and rANS decoding using ThreadPoolExecutor
+    futures = []
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        for idx in range(num_targets):
+            # 1. Read Shard Header (36 bytes: 4 states, 1 length)
+            h_raw, p = read_bytes(compressed_data, 36, p)
+            chunk_meta: npt.NDArray[np.uint32] = np.frombuffer(h_raw, dtype='<u4')
             
-        chunk_meta: npt.NDArray[np.uint32] = np.frombuffer(compressed_data[p:p+36], dtype='<u4')
-        states[idx, 0] = np.uint64(chunk_meta[0]) | (np.uint64(chunk_meta[1]) << 32)
-        states[idx, 1] = np.uint64(chunk_meta[2]) | (np.uint64(chunk_meta[3]) << 32)
-        states[idx, 2] = np.uint64(chunk_meta[4]) | (np.uint64(chunk_meta[5]) << 32)
-        states[idx, 3] = np.uint64(chunk_meta[6]) | (np.uint64(chunk_meta[7]) << 32)
-        b_len = int(chunk_meta[8])
-        p += 36
-        
-        bs_offsets[idx] = np.uint32(p)
-        bs_lengths[idx] = np.uint32(b_len)
-        p += b_len
+            s0 = np.uint64(chunk_meta[0]) | (np.uint64(chunk_meta[1]) << 32)
+            s1 = np.uint64(chunk_meta[2]) | (np.uint64(chunk_meta[3]) << 32)
+            s2 = np.uint64(chunk_meta[4]) | (np.uint64(chunk_meta[5]) << 32)
+            s3 = np.uint64(chunk_meta[6]) | (np.uint64(chunk_meta[7]) << 32)
+            b_len = int(chunk_meta[8])
+            
+            # 2. Read Shard Payload
+            b_stream_raw, p = read_bytes(compressed_data, b_len, p)
+            b_stream = np.frombuffer(b_stream_raw, dtype=np.uint8)
+            
+            target_cnt = int(counts_stack[idx])
+            if target_cnt > 0:
+                out_start = int(out_offsets[idx])
+                out_view = all_res_flat[out_start : out_start + target_cnt]
+                
+                # 3. Dispatch to Numba-JIT worker (Releases GIL)
+                futures.append(executor.submit(
+                    rans_decode_4way_core,
+                    s0, s1, s2, s3,
+                    b_stream,
+                    all_cum_stack[idx],
+                    all_sym_stack[idx],
+                    all_lookups_stack[idx],
+                    out_view
+                ))
 
-    # Phase 2: Parallel Entropy Decoding Dispatch
-    compressed_data_arr = np.frombuffer(compressed_data, dtype=np.uint8)
-    rans_decode_shards_parallel(
-        compressed_data_arr,
-        states,
-        bs_offsets,
-        bs_lengths,
-        all_cum_stack,
-        all_sym_stack,
-        all_lookups_stack,
-        all_res_flat,
-        out_offsets,
-        counts_stack.astype(np.uint32)
-    )
+        # 4. Synchronization Barrier: Wait for all shards to complete
+        for future in concurrent.futures.as_completed(futures):
+            future.result() # Propagates any internal errors
 
     # Phase 3: Zero-Copy Recombination
     if is_grayscale:
@@ -316,7 +327,7 @@ def unpack_bitstream_v5(compressed_data: bytes, h: int, w: int, is_rgba: bool, i
 
     res_a_flat: Optional[npt.NDArray[np.uint8]] = None
     if is_rgba:
-        a_len, a_start, p2 = read_block_meta(compressed_data, p)
-        res_a_flat = np.frombuffer(dctx.decompress(compressed_data[a_start:p2]), dtype=np.uint8)
+        a_len, a_raw_bytes, p = read_block_meta_stream(compressed_data, p)
+        res_a_flat = np.frombuffer(dctx.decompress(a_raw_bytes), dtype=np.uint8)
         
     return res_gr_flat, res_rd_flat, res_bd_flat, gr_offs, rd_offs, bd_offs, shard_counts, res_a_flat

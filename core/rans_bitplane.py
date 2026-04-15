@@ -103,22 +103,23 @@ def rans_decode_2bit_4way_kernel(bitstream: npt.NDArray[np.uint8],
     return rec
 
 @njit(parallel=True, cache=True, boundscheck=False, fastmath=True, nogil=True)
-def decompress_shards_parallel(payload: npt.NDArray[np.uint8], h: int, w: int, 
-                               n_shards: int, shard_h: int, 
-                               pdfs_f: npt.NDArray[np.uint64], 
-                               pdfs_cf: npt.NDArray[np.uint64], 
-                               states: npt.NDArray[np.uint64], 
-                               lens: npt.NDArray[np.uint32], 
+def decompress_shards_parallel(payload: npt.NDArray[np.uint8], h: int, w: int,
+                               n_shards: int, shard_h: int,
+                               all_pdfs_f: npt.NDArray[np.uint64],
+                               all_pdfs_cf: npt.NDArray[np.uint64],
+                               states: npt.NDArray[np.uint64],
+                               lens: npt.NDArray[np.uint32],
                                off: npt.NDArray[np.uint32]) -> npt.NDArray[np.uint8]:
     """ Orchestrates parallel decompression across vertical image shards. """
     # Max feasible height for any shard (handle remainder correctly)
     max_h = shard_h + (h % n_shards) + 1
-    shard_results: npt.NDArray[np.uint8] = np.zeros((n_shards, max_h, w), dtype=uint8) 
+    shard_results: npt.NDArray[np.uint8] = np.zeros((n_shards, max_h, w), dtype=uint8)
     for s_idx in prange(n_shards):
         sh: int = shard_h if s_idx < n_shards-1 else h - (s_idx*shard_h)
         bs: npt.NDArray[np.uint8] = payload[off[s_idx] : off[s_idx] + lens[s_idx]]
         res: npt.NDArray[np.uint8] = rans_decode_2bit_4way_kernel(
-            bs, states[s_idx,0], states[s_idx,1], states[s_idx,2], states[s_idx,3], sh, w, pdfs_cf, pdfs_f
+            bs, states[s_idx,0], states[s_idx,1], states[s_idx,2], states[s_idx,3],
+            sh, w, all_pdfs_cf[s_idx], all_pdfs_f[s_idx]
         )
         shard_results[s_idx, :sh, :] = res
     return shard_results
@@ -127,39 +128,38 @@ def decompress_bitplane_gray(payload: bytes, h: int, w: int) -> npt.NDArray[np.u
     """ Main entry point for restoring bitplane-encoded grayscale streams. """
     ptr: int = 0
     raw_payload: npt.NDArray[np.uint8] = np.frombuffer(payload, dtype=np.uint8)
-    
+
     n_shards: int = int(raw_payload[ptr]); ptr += 1
-    pdfs_f_list: List[npt.NDArray[np.uint64]] = []
-    pdfs_cf_list: List[npt.NDArray[np.uint64]] = []
-    
-    # Read global frequency tables for each of the 4 layers
-    for _ in range(4):
-        f: npt.NDArray[np.uint64] = np.frombuffer(payload[ptr:ptr+512], dtype=np.uint16).reshape((64, 4)).astype(np.uint64)
-        ptr += 512
-        cf: npt.NDArray[np.uint64] = np.zeros((64, 5), dtype=np.uint64)
-        for i in range(64): 
-            cf[i, 1:] = np.cumsum(f[i])
-        pdfs_f_list.append(f)
-        pdfs_cf_list.append(cf)
-        
+
+    # Read per-shard frequency tables (n_shards × 4 layers × 64 contexts × 4 symbols)
+    all_pdfs_f: npt.NDArray[np.uint64] = np.zeros((n_shards, 4, 64, 4), dtype=np.uint64)
+    all_pdfs_cf: npt.NDArray[np.uint64] = np.zeros((n_shards, 4, 64, 5), dtype=np.uint64)
+    for s_idx in range(n_shards):
+        for l_idx in range(4):
+            f: npt.NDArray[np.uint64] = np.frombuffer(payload[ptr:ptr+512], dtype=np.uint16).reshape((64, 4)).astype(np.uint64)
+            ptr += 512
+            all_pdfs_f[s_idx, l_idx] = f
+            for i in range(64):
+                all_pdfs_cf[s_idx, l_idx, i, 1:] = np.cumsum(f[i])
+
     # Read serialized rANS end-states (Total: n_shards * 4 layers * 8 bytes)
     states: npt.NDArray[np.uint64] = np.frombuffer(payload[ptr : ptr + n_shards * 32], dtype=np.uint64).reshape((n_shards, 4))
     ptr += n_shards * 32
-    
+
     # Read bitstream lengths per shard
     lens: npt.NDArray[np.uint32] = np.frombuffer(payload[ptr : ptr + n_shards * 4], dtype=np.uint32)
     ptr += n_shards * 4
-    
+
     # Map bitstream offsets
     off: npt.NDArray[np.uint32] = np.zeros(n_shards, dtype=np.uint32)
     curr: uint32 = uint32(ptr)
-    for i in range(n_shards): 
+    for i in range(n_shards):
         off[i] = curr; curr += uint32(lens[i])
-    
+
     shard_h: int = h // n_shards
     shard_results: npt.NDArray[np.uint8] = decompress_shards_parallel(
-        raw_payload, h, w, n_shards, shard_h, 
-        np.stack(pdfs_f_list), np.stack(pdfs_cf_list), states, lens, off
+        raw_payload, h, w, n_shards, shard_h,
+        all_pdfs_f, all_pdfs_cf, states, lens, off
     )
     
     # Assemble shards into final image
@@ -323,46 +323,55 @@ def compress_bitplane_gray(raw_data: npt.NDArray[np.uint8]) -> bytes:
     """ Primary orchestrator for bitplane grayscale compression. """
     h, w = raw_data.shape
     shard_h: int = h // BITPLANE_N_SHARDS
-    
-    # Pre-calculate layers and global PDFs
-    layers: List[npt.NDArray[np.uint8]] = [(raw_data >> (i*2)) & 0x03 for i in range(4)]
-    pdfs_f_list: List[npt.NDArray[np.uint64]] = []
-    pdfs_cf_list: List[npt.NDArray[np.uint64]] = []
-    
-    for l_idx in range(4):
-        ctx: npt.NDArray[np.uint8] = get_2bit_contexts_opt(layers[l_idx])
-        f, cf = build_pdf_2bit_global(layers[l_idx].flatten(), ctx)
-        pdfs_f_list.append(f)
-        pdfs_cf_list.append(cf)
-    
-    # Use stack array for Numba parallel calls
-    stack_cf: npt.NDArray[np.uint64] = np.stack(pdfs_cf_list)
-    stack_f: npt.NDArray[np.uint64] = np.stack(pdfs_f_list)
-    
-    # Parallel execution using ThreadPoolExecutor (Safe & GIL-free)
+
+    # Compute shard boundaries once
+    shard_bounds: List[Tuple[int, int]] = []
+    for s_idx in range(BITPLANE_N_SHARDS):
+        y0: int = s_idx * shard_h
+        y1: int = (s_idx+1) * shard_h if s_idx < BITPLANE_N_SHARDS-1 else h
+        shard_bounds.append((y0, y1))
+
+    # Build per-shard frequency tables
+    shard_stacks_f: List[npt.NDArray[np.uint64]] = []
+    shard_stacks_cf: List[npt.NDArray[np.uint64]] = []
+    for y0, y1 in shard_bounds:
+        shard_data: npt.NDArray[np.uint8] = raw_data[y0:y1, :]
+        f_list: List[npt.NDArray[np.uint64]] = []
+        cf_list: List[npt.NDArray[np.uint64]] = []
+        for l_idx in range(4):
+            layer: npt.NDArray[np.uint8] = (shard_data >> (l_idx*2)) & 0x03
+            ctx: npt.NDArray[np.uint8] = get_2bit_contexts_opt(layer)
+            f, cf = build_pdf_2bit_global(layer.flatten(), ctx)
+            f_list.append(f)
+            cf_list.append(cf)
+        shard_stacks_f.append(np.stack(f_list))   # shape: (4, 64, 4)
+        shard_stacks_cf.append(np.stack(cf_list)) # shape: (4, 64, 5)
+
+    # Parallel encode — each shard uses its own tables (Safe & GIL-free)
     with concurrent.futures.ThreadPoolExecutor(max_workers=BITPLANE_N_SHARDS) as executor:
         futures = []
-        for s_idx in range(BITPLANE_N_SHARDS):
-            y0: int = s_idx * shard_h
-            y1: int = (s_idx+1) * shard_h if s_idx < BITPLANE_N_SHARDS-1 else h
-            shard_data = raw_data[y0:y1, :]
-            futures.append(executor.submit(rans_encode_2bit_4way_kernel, shard_data, stack_cf, stack_f))
+        for s_idx, (y0, y1) in enumerate(shard_bounds):
+            futures.append(executor.submit(
+                rans_encode_2bit_4way_kernel,
+                raw_data[y0:y1, :], shard_stacks_cf[s_idx], shard_stacks_f[s_idx]
+            ))
         results = [f.result() for f in futures]
-    
+
     # Construct final payload
     out = bytearray()
     out.append(BITPLANE_N_SHARDS)
-    # 1. Global Frequency Tables (for each layer)
-    for f in pdfs_f_list: 
-        out.extend(f.astype(np.uint16).tobytes())
+    # 1. Per-Shard Frequency Tables (n_shards × 4 layers)
+    for s_idx in range(BITPLANE_N_SHARDS):
+        for l_idx in range(4):
+            out.extend(shard_stacks_f[s_idx][l_idx].astype(np.uint16).tobytes())
     # 2. Final rANS States
-    for r in results: 
-        out.extend(r[0].tobytes()) 
+    for r in results:
+        out.extend(r[0].tobytes())
     # 3. Bitstream Lengths
-    for r in results: 
+    for r in results:
         out.extend(np.array([len(r[1])], dtype=np.uint32).tobytes())
     # 4. Concatenated Bitstreams
-    for r in results: 
+    for r in results:
         out.extend(r[1].tobytes())
-        
+
     return bytes(out)

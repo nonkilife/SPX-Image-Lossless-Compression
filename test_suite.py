@@ -23,7 +23,7 @@ try:
     from core.compress import compress_csde
     from core.decompress import decompress_csde
 except ImportError as e:
-    print(f"[!] Error: Core modules not found. Ensure core directory is present.")
+    print(f"[!] Error: Core modules not found: {e}")
     sys.exit(1)
 
 import imagecodecs
@@ -59,13 +59,11 @@ def zpng_worker(path: str) -> Dict[str, Any]:
         ze_s = (time.perf_counter() - t0)
         
         t1 = time.perf_counter()
-        # Ensure deep reconstruction to match WebP/JXL array conversion
         rec_rgb, _ = decompress_csde(res_z.payload, None, optimize_png=False)
-        _ = rec_rgb.shape 
         zd_s = (time.perf_counter() - t1)
         
         comp_size_bytes = len(res_z.payload)
-        mse = np.mean((arr_orig.astype(np.float64) - rec_rgb.astype(np.float64))**2)
+        mse = np.mean((arr_orig.astype(np.float64) - rec_rgb[..., :3].astype(np.float64))**2)
         
         return {
             "name": "ZPNG", "filename": filename, "pixels": pixels,
@@ -259,7 +257,7 @@ def print_comparison_table(stats_list: List[Dict], dataset_name: str):
                         formatted_val = fmt.format(*val)
                     else:
                         formatted_val = fmt.format(val)
-                except:
+                except Exception:
                     formatted_val = f"{'ERR':>{col_widths[i+1]}}"
                 
                 formatted_val = formatted_val[:col_widths[i+1]]
@@ -319,12 +317,12 @@ def run_codec_benchmark(codec_name, worker_fn, files, workers):
             print()
     except KeyboardInterrupt:
         print("\n[!] Aborted.")
-        sys.exit(1)
+        raise
     except Exception as e:
         print(f"\n❌ FATAL ERROR in run_codec_benchmark: {e}")
         import traceback
         traceback.print_exc()
-        sys.exit(1)
+        raise
     
     wall_clock = time.time() - t_start
     stats = reporter.get_stats(wall_clock)
@@ -465,13 +463,16 @@ def main():
     elif args.codec == "jxl": queue = [("ZPNG-Base", zpng_worker), ("JXL(E7)", jxl_worker)]
     elif args.codec == "bench": queue = [("ZPNG", zpng_worker), ("WebP(M6)", webp_worker), ("JXL(E7)", jxl_worker)]
 
-    for name, worker in queue:
-        stats, res_map = run_codec_benchmark(name, worker, files, args.workers)
-        # Ensure stats is at least a dict with the codec name if failure occurred
-        if not stats:
-            stats = {"name": name, "count": 0, "success": False}
-        all_stats.append(stats)
-        task_results.append(res_map if res_map else {})
+    try:
+        for name, worker in queue:
+            stats, res_map = run_codec_benchmark(name, worker, files, args.workers)
+            # Ensure stats is at least a dict with the codec name if failure occurred
+            if not stats:
+                stats = {"name": name, "count": 0, "success": False}
+            all_stats.append(stats)
+            task_results.append(res_map if res_map else {})
+    except (KeyboardInterrupt, Exception):
+        sys.exit(1)
 
     # --- Win Counting Logic ---
     if len(task_results) > 1:
@@ -540,10 +541,12 @@ def main():
                 if not res["success"]: continue
                 ratio = (res["comp_bytes"] / res["orig_bytes"]) * 100
                 
-                cat_key = "hell"
-                if ratio < 85: cat_key = "easy"
-                elif ratio < 95: cat_key = "hard"
-                elif ratio <= 120: cat_key = "hell"
+                if ratio < 85:
+                    cat_key = "easy"
+                elif ratio < 95:
+                    cat_key = "hard"
+                else:
+                    cat_key = "hell"
                 
                 src = os.path.join(target_path, filename)
                 dst = os.path.join(cat_dirs[cat_key], filename)
