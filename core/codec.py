@@ -17,6 +17,7 @@ from .common import (
     PROFILE_RGB
 )
 from . import rans_bitplane as bit_rans
+from .rans_bitplane_sharded import decompress_bitplane_gray_sharded, BITPLANE_MAGIC
 from .rans import (
     rans_encode_shards_parallel, 
     build_pdf_tables_from_shards, L_LOWER,
@@ -202,7 +203,24 @@ def unpack_bitstream_v5(compressed_data: Union[bytes, BinaryIO], h: int, w: int,
 
     if flag & FLAG_BITPLANE:
         if is_grayscale:
-            gray_res = bit_rans.decompress_bitplane_gray(compressed_data, h, w).flatten()
+            # Detect sharded vs. legacy format by first payload byte
+            if isinstance(compressed_data, (bytes, bytearray)):
+                first_byte = compressed_data[0]
+            else:
+                peek = compressed_data.read(1)
+                # Re-wrap as bytes for the decompressor (it reads from the start)
+                rest = compressed_data.read()
+                compressed_data = peek + rest
+                first_byte = peek[0] if peek else 0
+            profile = PROFILE_RGB
+            if first_byte == BITPLANE_MAGIC:
+                gray_res = decompress_bitplane_gray_sharded(
+                    compressed_data, h, w,
+                    profile.shard_map, profile.v_boundaries_gr,
+                    profile.intensity_segments, profile.noise_shard_id
+                ).flatten()
+            else:
+                gray_res = bit_rans.decompress_bitplane_gray(compressed_data, h, w).flatten()
             return gray_res, None, None, None, None, None, None, None
         else:
             raise NotImplementedError("Color Bitplane unpacking not yet implemented.")

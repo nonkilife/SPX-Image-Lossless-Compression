@@ -20,7 +20,7 @@ import numpy.typing as npt
 from numba import njit, prange, uint8, uint16, uint32, uint64
 from typing import Tuple, Dict, Any, Optional, List, Union
 from dataclasses import dataclass, field
-from .predictor import to_zigzag, from_zigzag, predict_med_standard
+from .predictor import to_zigzag, from_zigzag, predict_med_standard, predict_paeth
 
 # --- 供 codec 與 rans 模組使用的經驗分布範本庫 (v6.6 Data-Driven) ---
 # 這些模板是從 6185 個真實影像分片中透過 K-Means 聚類提取出的「靈魂分布」。
@@ -160,6 +160,77 @@ PROFILE_RGB = ShardProfile(
 
 # Legacy Compatibility Aliases (to minimize breaking changes in other files)
 TOTAL_SHARDS = 42
+
+# --- Per-Shard Dispatch Tables ---
+
+# Predictor IDs
+PRED_MED:   int = 0   # Median Edge Detector  – strong on edges
+PRED_PAETH: int = 1   # PNG Paeth              – accurate on smooth gradients
+
+# Bitplane-width threshold: 90th-percentile ZigZag residual width over active
+# shards.  p90 captures tail behaviour — bitplane needs the entire distribution
+# to be narrow, not just the average.  Natural images have wide high-energy
+# boundary shards that inflate the tail even when the median is low.
+# Empirically: Tecnick p90 max = 95, DIV2K p90 min = 70.5 (at 1 Mpx+ gate).
+# Threshold 85 gives 99% classification accuracy vs 96% for mean@53.
+BITPLANE_WIDTH_THRESHOLD: int = 85
+
+# Minimum pixel count (h*w) for bitplane rANS to be considered.
+# Bitplane carries a fixed per-channel table overhead (~40-60 KB compressed)
+# that dominates on small images.  Kodak (0.39 Mpx) loses +10-17%;
+# images below ~1 Mpx consistently suffer regardless of mean_width.
+BITPLANE_MIN_PIXELS: int = 1_000_000
+
+# Coder IDs
+CODER_STANDARD:  int = 0   # 256-symbol rANS with 30-mode template selection
+CODER_BITPLANE:  int = 1   # 4-layer 2-bit rANS
+
+
+def _build_predictor_lut() -> npt.NDArray[np.uint8]:
+    """
+    Derives PREDICTOR_LUT[42] from the shard_map geometry.
+    Iterates every (v_tier, i_idx, t_idx) cell, reads the assigned shard_id,
+    and marks it as PRED_PAETH for smooth tiers (0-2) or PRED_MED for edge
+    tiers (3-7).
+
+    Tier mapping (V_BOUND_RGB = [0,1,2,4,8,16,32,255]):
+        tier 0 → gradient 0          (flat)
+        tier 1 → gradient 1          (near-flat)
+        tier 2 → gradient 2-3        (very slight)
+        tier 3 → gradient 4-8   ──── Paeth/MED boundary
+        tier 4 → gradient 9-16
+        tier 5 → gradient 17-32
+        tier 6 → gradient 33+        (strong edge)
+    """
+    s_map = build_shard_map_universal_42()
+    lut = np.zeros(42, dtype=np.uint8)           # default = PRED_MED
+    SMOOTH_TIER_MAX = -1                          # Disable Paeth entirely (Phase 1)
+    for v in range(SMOOTH_TIER_MAX + 1):
+        for i in range(s_map.shape[1]):
+            for t in range(s_map.shape[2]):
+                lut[int(s_map[v, i, t])] = np.uint8(PRED_PAETH)
+    return lut
+
+
+PREDICTOR_LUT: npt.NDArray[np.uint8] = _build_predictor_lut()
+
+
+def build_coder_lut(shard_widths_ch: npt.NDArray[np.uint16]) -> npt.NDArray[np.uint8]:
+    """
+    Computes the per-shard coder decision from Pass 1 histogram widths for
+    one channel.  Called once per channel during compression after Pass 1.
+
+    Args:
+        shard_widths_ch: shape (n_shards,) uint16 – ZigZag residual width per shard.
+
+    Returns:
+        coder_lut: shape (n_shards,) uint8 – CODER_BITPLANE or CODER_STANDARD.
+    """
+    return np.where(
+        shard_widths_ch <= np.uint16(BITPLANE_WIDTH_THRESHOLD),
+        np.uint8(CODER_BITPLANE),
+        np.uint8(CODER_STANDARD)
+    ).astype(np.uint8)
 
 ENABLE_DIAGNOSTICS: bool = False  # Production Gate
 

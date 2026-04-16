@@ -30,10 +30,11 @@ import concurrent.futures
 from .transform import (
     restore_channels, decode_alpha_channel, reconstruct_2d_channels
 )
-from .dy_shard import (
+from .shard_rgb import (
     reconstruct_channels
 )
 from .codec import unpack_bitstream_v5
+from .rans_bitplane_sharded import decompress_bitplane_rgb_sharded, BITPLANE_MAGIC
 import threading, sys
 from typing import Tuple, Optional, List, Dict, Any, Union
 from .common import (
@@ -41,7 +42,8 @@ from .common import (
     from_zigzag, to_zigzag,
     FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE, FLAG_COLOR_GSUB,
     FLAG_BITPLANE,
-    TOTAL_SHARDS, PROFILE_RGB, sync_luts_if_needed
+    TOTAL_SHARDS, PROFILE_RGB, sync_luts_if_needed,
+    PREDICTOR_LUT
 )
 from . import env
 
@@ -236,21 +238,26 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
                 rgb = np.frombuffer(zstandard_decompress(compressed_data), dtype=np.uint8).reshape((h, w, 4 if is_rgba else 3))
             else:
                 if flag & FLAG_BITPLANE:
-                    res_gr_flat, res_rd_flat, res_bd_flat, gr_offs, rd_offs, bd_offs, shard_counts, res_a_flat = unpack_bitstream_v5(
-                        compressed_data, h, w, is_rgba, is_grayscale, shard_widths, shard_modes, flag, metadata_len
-                    )
                     if is_grayscale:
+                        res_gr_flat, *_ = unpack_bitstream_v5(
+                            compressed_data, h, w, is_rgba, is_grayscale, shard_widths, shard_modes, flag, metadata_len
+                        )
                         gr_rec = reconstruct_2d_channels(h, w, res_gr_flat.reshape((h, w)))
-                        rd_rec, bd_rec = np.zeros((h, w), dtype=np.uint8), np.zeros((h, w), dtype=np.uint8)
+                        rd_rec = np.zeros((h, w), dtype=np.uint8)
+                        bd_rec = np.zeros((h, w), dtype=np.uint8)
                     else:
-                        raise NotImplementedError("Color Bitplane reconstruction not yet implemented.")
+                        gr_rec, rd_rec, bd_rec = decompress_bitplane_rgb_sharded(
+                            compressed_data, h, w,
+                            profile.shard_map, profile.v_boundaries_gr,
+                            profile.intensity_segments, nsid
+                        )
                 else:
                     # Standard Shard Path (already unpacked via stream above)
                     gr_rec, rd_rec, bd_rec = reconstruct_channels(
-                        h, w, res_gr_flat, res_rd_flat, res_bd_flat, 
-                        gr_offs, rd_offs, bd_offs, 
+                        h, w, res_gr_flat, res_rd_flat, res_bd_flat,
+                        gr_offs, rd_offs, bd_offs,
                         shard_counts, shard_medians, is_grayscale,
-                        profile.shard_map, profile.v_boundaries_gr, 
+                        profile.shard_map, profile.v_boundaries_gr,
                         profile.intensity_segments, nsid
                     )
 
