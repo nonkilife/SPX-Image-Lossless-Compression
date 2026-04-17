@@ -8,12 +8,9 @@ Architecture: RGB/RGBA Channel management and G-sub Recursive Color Transform.
 
 import numpy as np
 import numpy.typing as npt
-from numba import njit, prange, uint8, uint16, uint32, uint64
-from typing import Tuple, List, Optional
-from .common import (
-    TOTAL_SHARDS,
-    to_zigzag, from_zigzag, predict_med_standard
-)
+from numba import njit, prange, uint8
+from typing import Tuple
+from .common import (to_zigzag, from_zigzag, predict_med_standard)
 
 @njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
 def extract_channels(rgb: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint32]]:
