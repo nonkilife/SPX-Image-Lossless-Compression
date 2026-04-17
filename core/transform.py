@@ -1,9 +1,15 @@
 """
-ZPNG-CSDE v6.2 [Flexible-Shard Architecture]
+ZPNG-CSDE v7.5 [High-Precision RCT Architecture]
 Module: zpng_transform
 Role: Pillar 3 - Spatial Transforms.
 Description: High-level image transformations and reconstruction kernels.
 Architecture: RGB/RGBA Channel management and G-sub Recursive Color Transform.
+Engineering Rationale:
+1. Channel Dominance: Green (G) is used as the predictive lead because it usually 
+   contains the highest structural information and correlates strongly with RD/BD 
+   in natural sRGB images.
+2. Zero-Loss Restoration: All spatial operations use uint8 modular arithmetic (wraparound) 
+   to avoid the memory and CPU overhead of signed 16-bit intermediate buffers.
 """
 
 import numpy as np

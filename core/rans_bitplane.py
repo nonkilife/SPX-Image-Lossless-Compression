@@ -1,31 +1,35 @@
 """
-ZPNG-CSDE v7.3 [Shard-Conditioned Bitplane rANS]
+ZPNG-CSDE v7.5 [Stable Parallel Architecture]
 Module: rans_bitplane
 Role: Grayscale entropy coding combining 42-shard gradient context with
       2-bit spatial bitplane context.
 
-Architecture:
-For every pixel, the combined per-layer context is:
+Engineering Rationale:
+1. Pillar 4.5 - Residual Decomposition: 8-bit residuals are decomposed into 
+   four 2-bit layers (Layer 0: bits 0-1, Layer 1: bits 2-3, etc.). This reduces 
+   the alphabet size from 256 to 4 per operation, simplifying PDF modeling.
+2. Temporal-Causal Context: For every pixel, a 6-bit spatial context is derived 
+   from the already-decoded 2-bit values of the Left (L), Up (U), and North-West (NW) 
+   neighbors.
+3. Shard Conditioning: Allows the engine to adapt to local gradient trends (BICC) 
+   while maintaining fine-grained spatial awareness.
+
+Technical Architecture:
+For every pixel, the combined per-layer context is derived via:
     ctx = shard_id * N_SPATIAL + (L_2bit | U_2bit<<2 | NW_2bit<<4)
 
-where:
-  - shard_id  is the 42-shard gradient context computed from original
-              pixel neighbors (same as shard_rgb), derivable at decode
-              time from already-reconstructed neighbors.
-  - spatial   is the 6-bit L/U/NW bitplane context from rans_bitplane.
+Where:
+  - shard_id: 42-shard gradient context (Universal-42 Profile).
+  - L/U/NW_2bit: High-order bits of reconstructed spatial neighbors.
+  - Context Range: 42 x 64 = 2,688 contexts per layer.
 
-This gives 42 × 64 = 2,688 contexts per layer (× 4 layers = 10,752
-distributions). Single-pass sequential encoding preserves the spatial
-locality that the shard_id computation requires.
-
-Bitstream format (first byte = 0xFF distinguishes from legacy format):
-  [0xFF]                          1 byte  – sharded format magic
-  [tables_zstd_len: uint32]       4 bytes
-  [tables_zstd]                   N bytes – Zstd( f[4,2688,4].astype(uint16) )
-  [states: 4 × uint64]           32 bytes – final rANS states
-  [bs_len: uint32]                4 bytes
-  [bitstream]                    bs_len bytes
-```
+Bitstream Format (v7.5):
+  [0xFF]                          1 byte  - Sharded format magic
+  [tables_zstd_len: uint32]       4 bytes - Zstd compressed PDF block length
+  [tables_zstd]                   N bytes - Flattened [4, 2688, 4] frequencies
+  [states: 4 x uint64]           32 bytes - Final rANS states for 4 layers
+  [bs_len: uint32]                4 bytes - Compressed bitstream length
+  [bitstream]                    N bytes - Layered rANS payload
 
 Logic Path:
 ```mermaid
@@ -90,8 +94,8 @@ def _build_pdf_sharded(resid_2d:  npt.NDArray[np.uint8],
     rANS frequencies.
 
     Returns:
-      f  – shape (4, N_CTX, 4) symbol frequencies (sum → 4096 per row)
-      cf – shape (4, N_CTX, 5) cumulative frequencies (0-padded on left)
+      f  - shape (4, N_CTX, 4) symbol frequencies (sum = 4096 per row)
+      cf - shape (4, N_CTX, 5) cumulative frequencies (0-padded on left)
     """
     h, w = resid_2d.shape
     counts = np.zeros((4, N_CTX, 4), dtype=np.uint64)
@@ -179,7 +183,7 @@ def _rans_encode_sharded(resid_2d:  npt.NDArray[np.uint8],
                                              npt.NDArray[np.uint8]]:
     """
     Reverse-scan 4-way interleaved rANS encoder.
-    Layers 3→0 encoded sequentially per pixel (matching decoder pull order).
+    Layers 3-0 encoded sequentially per pixel (matching decoder pull order).
     Returns (final_states[4], bitstream_bytes).
     """
     h, w = resid_2d.shape
@@ -398,7 +402,7 @@ def _rans_decode_sharded_with_ref(bitstream:  npt.NDArray[np.uint8],
     Forward-scan decoder for Rd/Bd channels.
     Shard_id is derived from ref_ch (the already-decoded green channel) so that
     encode and decode contexts are identical without any self-referential tracking.
-    Returns resid_2d (ZigZag residuals) — caller passes to reconstruct_2d_channels.
+    Returns resid_2d (ZigZag residuals) - caller passes to reconstruct_2d_channels.
     """
     resid = np.zeros((h, w), dtype=np.uint8)
 
@@ -497,7 +501,7 @@ def compress_bitplane_gray_sharded(gray_ch:   npt.NDArray[np.uint8],
 
     states, bitstream = _rans_encode_sharded(resid_2d, gray_ch, cf, f, shard_map, nsid)
 
-    # Compress frequency tables with Zstd (many uniform/zero rows → high ratio)
+    # Compress frequency tables with Zstd (many uniform/zero rows - high ratio)
     tables_raw = f.astype(np.uint16).tobytes()
     tables_zstd = zstd.ZstdCompressor(level=1).compress(tables_raw)
 
@@ -569,9 +573,9 @@ def compress_bitplane_rgb_sharded(gr_ch:    npt.NDArray[np.uint8],
     shard_rgb.py's convention. All three channels are encoded in parallel via
     threads (Numba kernels release the GIL via nogil=True). Bitstream format:
       [0xFF]
-      [gr_channel_block]  – tables_zstd_len:u32, tables_zstd, states:4×u64, bs_len:u32, bitstream
-      [rd_channel_block]  – same structure
-      [bd_channel_block]  – same structure
+      [gr_channel_block]  - tables_zstd_len:u32, tables_zstd, states:4*u64, bs_len:u32, bitstream
+      [rd_channel_block]  - same structure
+      [bd_channel_block]  - same structure
     """
     def _pack_channel(resid: npt.NDArray[np.uint8],
                       ref:   npt.NDArray[np.uint8]) -> bytes:

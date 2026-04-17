@@ -1,9 +1,17 @@
 """
-ZPNG-CSDE v6.2 [Flexible-Shard Architecture]
+ZPNG-CSDE v7.5 [Stable Parallel Architecture]
 Module: zpng_rans
 Role: Pillar 4 - Entropy Engine (Unified).
 Description: Integrated 4-Way Interleaved rANS core and Bit-Context 2D rANS Engine.
 Architecture: Precision-indexed SIMD-optimized symbols for O(1) branchless decoding.
+
+Engineering Rationale:
+1. Instruction Level Parallelism (ILP): ZPNG uses 4-way interleaved rANS states to saturate 
+   CPU superscalar pipelines. By decoding 4 symbols per loop iteration, we hide the 
+   dependency latency between state updates and memory lookups.
+2. LIFO Property: rANS is a stack-based (LIFO) engine. Symbols are encoded in 
+   forward order and decoded in reverse order (bottom-up), allowing states to be 
+   revolved back to their initial base through fractional probability divisions.
 """
 
 import numpy as np
@@ -50,11 +58,11 @@ EMP_SYM_FREQS, EMP_CUM_FREQS, EMP_LOOKUPS = _precompute_empirical()
 # =============================================================================
 # [v4.0.8 & v6.9] rANS Precision and Bounds
 L_LOWER: uint64 = uint64(2147483648) # 1 << 31 (L_ANS Lower Bound)
-M_BITS: int     = 12                  # Probability precision
-L_MAX_BOUND: uint64 = (L_LOWER >> M_BITS) << 8 # Precomputed normalization guard
+M_BITS: int     = 12                  # Probability precision (Total mass = 4096)
+L_MAX_BOUND: uint64 = (L_LOWER >> M_BITS) << 8 # Normalization threshold
 M_TOTAL: uint64 = uint64(1 << M_BITS)
 M_MASK: uint64  = M_TOTAL - 1
-SENTINEL_BYTES: int = 8       # 64-bit State Flush Guard
+SENTINEL_BYTES: int = 8       # Memory safety offset for 64-bit state flushing
 
 
 

@@ -188,10 +188,10 @@ def analyze_shard_ranges(shard_stats: npt.NDArray[np.uint32], verbose: bool = Fa
             
     if shard_count > 0:
         avg_width = total_widths / shard_count
-        print(f"有效分片數: {shard_count}")
-        print(f"平均殘差寬度: {avg_width:.2f} (理論值: 256)")
-        print(f"最大觀測寬度: {max_observed_width}")
-        print(f"理論空間節省: {(1.0 - avg_width/256.0)*100:.2f}%")
+        print(f"Shards: {shard_count}")
+        print(f"Avg Width: {avg_width:.2f} (Limit: 256)")
+        print(f"Max Obs Width: {max_observed_width}")
+        print(f"Prob Space Saving: {(1.0 - avg_width/256.0)*100:.2f}%")
     print("-----------------------------------------------\n")
 
 def check_grayscale_robust(arr: npt.NDArray[np.uint8], img_mode: Optional[str] = None) -> bool:
@@ -327,14 +327,14 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
         shard_widths = extract_srb_metadata(biased_stats)
 
         # [v7.5] Per-Image Coder Selection: auto-detect bitplane vs standard rANS.
-        # Grayscale always uses bitplane — the shard-conditioned bitplane coder was
-        # specifically tuned for grayscale and consistently wins there.
-        # For RGB, use the 90th-percentile ZigZag residual width over active shards.
-        # p90 captures tail behaviour: bitplane needs the *entire* distribution to
-        # be narrow, not just the average.  Natural images have a few wide high-energy
-        # boundary shards that inflate the tail even when the median is low — mean
-        # and median are blind to this, p90 is not.  Empirical: Tecnick p90 ≤ 95,
-        # DIV2K p90 ≥ 70.5; threshold 85 gives 99% classification accuracy.
+        # Grayscale always uses bitplane - the shard-conditioned bitplane coder was
+        # optimized for high-res low-entropy textures.
+        
+        # p90 capturing tail behavior - bitplane needs the entire distribution
+        # to be narrow, not just the median. Natural images have wide high-energy
+        # boundary shards that inflate the tail even when the median is low - mean
+        # and median are blind to this, p90 is not. Empirical: Tecnick p90 > 95,
+        # DIV2K p90 > 70.5; threshold 85 gives 99% classification accuracy.
         # A minimum pixel gate (BITPLANE_MIN_PIXELS) guards against fixed table
         # overhead dominating on small images (Kodak, small CLIC).
         # The caller can override by passing use_bitplane=True/False explicitly.

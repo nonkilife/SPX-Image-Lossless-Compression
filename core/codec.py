@@ -1,10 +1,17 @@
 """
-ZPNG-CSDE v6.2 [Flexible-Shard Architecture]
+ZPNG-CSDE v7.5 [Stable Parallel Architecture]
 Module: zpng_codec
 Role: Bitstream Orchestration.
 Description: Logic for packing and unpacking the ZPNG tiered bitstream container.
 Architecture: Structured serialization layer bridging the Model and rANS pillars.
-            
+Engineering Rationale:
+1. Deterministic Block Order: The header and SRB (Metadata) must appear first 
+   to define shard widths and medians, which are required for the decoder to 
+   pre-allocate the rANS state buffers.
+2. Zero-Copy Parallelism: Shard payloads are stored with explicit byte-lengths 
+   preceding the content, allowing the decompressor to spawn independent threads 
+   that jump directly to their target payload without sequential bit-scanning.
+
 Bitstream Structure:
 ```mermaid
 graph TD
@@ -41,7 +48,7 @@ def pack_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsu
     """
     Serializes compressed data into the final ZPNG file block.
     
-    Bitstream Architecture (v6.5):
+    Bitstream Architecture (v7.5):
     [0-15]     Global Header (Height, Width, Metadata Length, Bit Flags)
     [16-N]     SRB Chunk: Widths (n_shards per channel), Medians, Modes
     [N-M]      PDF Chunk (Zstd): Compacted frequency tables for Dynamic Modes (0, 1)

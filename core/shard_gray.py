@@ -13,8 +13,8 @@ graph TD
     A[Raw Gray Channel] --> B[predict_pass_1: 42-Shard BICC Profiling]
     B --> C{Decision Hub}
     C -->|Standard| D[predict_pass_2: Shard-Sequential Residuals]
-    C -->|Bitplane| E[Skip Pass 2 → Bitplane Engine]
-    D --> F[Flat Shard Buffers → rANS]
+    C -->|Bitplane| E[Skip Pass 2 - Bitplane Engine]
+    D --> F[Flat Shard Buffers - rANS]
 ```
 """
 
@@ -37,7 +37,7 @@ def predict_pass_1_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
 
     Simplified from shard_rgb.predict_pass_1: single channel, standard raster
     scan (no BICC stagger). Output arrays use the same 3-channel shapes as
-    predict_pass_1 for drop-in compatibility with compress.py — channel 0 is
+    predict_pass_1 for drop-in compatibility with compress.py - channel 0 is
     populated, channels 1 and 2 are left as zeros.
     """
     n_shards = shard_map.max() + 1 if nsid < 0 else nsid + 1

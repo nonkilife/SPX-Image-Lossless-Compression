@@ -9,7 +9,7 @@ Logic Path Visualization:
 graph TD
     A[Raw Channels: G, RD, BD] --> B[predict_pass_1: BICC Profile]
     B --> Stagger{Staggered Window}
-    Stagger -->|G-Lead| D[G Context → Universal-42]
+    Stagger -->|G-Lead| D[G Context -> Universal-42]
     Stagger -->|RD/BD-Lag| E[RD/BD Context + G-Ref]
     D & E --> F[Median Normalization: v6.5]
     F --> G[predict_pass_2: Vectorized Residuals]
@@ -38,6 +38,11 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
     pixel j while RD/BD process pixel j-1, using the same-position G value as context.
     This interleaved order enables pipeline parallelism while keeping context consistent
     between encoder (prev_valg) and decoder (gr_rec[i, j]) for the same target pixel.
+    
+    Engineering Note: The 'Staggered Step' (j vs j-1) is the core of ZPNG's cross-channel 
+    decorrelation. By lagging the RD/BD channels, we can use the ACTUAL reconstructed 
+    Green pixel at position j as a context for the RD/BD pixels at position j.
+    This ensures zero-drift between compression and decompression.
     
     Produces detailed histograms for each 'Context Shard' so the selector can compile
     specialized PDF templates. The outputs here directly shape the bitstream container.
@@ -80,9 +85,9 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
                 h0 += np.uint32(h_val == 0); s0 += np.uint64(abs(h_val))
                 prev_valg = curr_valg
 
-            # [Main Loop] j=1 to w-1: Dual-Channel Operation (No Stagger Branching)
+            # [Main Loop] j=1 to w-1: Dual-Channel Operation (Staggered Window)
             for j in range(1, w):
-                # 1. G-Channel (Lead)
+                # 1. G-Channel (Lead): Processes current pixel j
                 ag = gr_ch[i, j-1]
                 bg = (gr_ch[i-1, j] if i > 0 else np.uint8(0))
                 cg = (gr_ch[i-1, j-1] if i > 0 else np.uint8(0))
@@ -96,7 +101,7 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
                 h_val = resg_c - 128
                 h0 += np.uint32(h_val == 0); s0 += np.uint64(abs(h_val))
 
-                # 2. RD/BD Channels (Lag)
+                # 2. RD/BD Channels (Lag): Processes PREVIOUS pixel j-1
                 if not is_grayscale:
                     target_j = j - 1
                     val1, val2 = rd_ch[i, target_j], bd_ch[i, target_j]

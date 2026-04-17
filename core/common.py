@@ -1,5 +1,5 @@
 """
-ZPNG-CSDE v6.2 [Flexible-Shard Architecture]
+ZPNG-CSDE v7.5 [Universal-42 Architecture]
 Module: zpng_common
 Role: Pillar 1 - Foundation & Protocol.
 Description: Authoritative definitions for constants, sharding matrices, and header flags.
@@ -8,12 +8,15 @@ Architecture: Flexible Sharding Hub utilizing 3D Mapping LUTs for context ID der
 Logic Path:
 ```mermaid
 graph TD
-    In[Input: ag, bg, cg, pg] --> ST[Double Feature Lookup: SPATIAL_TRANS_LUT]
+    In[Input: ag, bg, cg, LeadValue] --> ST[Double Feature Lookup: SPATIAL_TRANS_LUT]
     In --> IL[Intensity Lookup: INTENSITY_LUT]
     ST --> Feat[Extract: v_tier, t_idx, ns_hit]
     IL --> Feat
     Feat --> ShMap[Universal-42 Shard Map]
     ShMap --> CID[Final Context ID]
+    
+    Note: Spatial lookup uses (ag-cg, bg-cg) to achieve DC-invariance.
+    Packing Format: [V_Tier:5 bits] | [Trend:2 bits] | [Noise:1 bit]
 ```
 """
 
@@ -24,8 +27,8 @@ from typing import Tuple, Optional, List
 from dataclasses import dataclass, field
 from .predictor import to_zigzag, from_zigzag, predict_med_standard
 
-# 供 codec 與 rans 模組使用的經驗分布範本庫 (v6.6 Data-Driven)
-# 從 6185 個真實影像分片透過 K-Means 聚類提取，含對稱與非對稱分布。
+# Empirical distribution template library for codec and rans modules (v6.6 Data-Driven)
+# Extracted from 6185 real image shards via K-Means clustering, including symmetric and asymmetric distributions.
 
 def _build_empirical_templates() -> tuple[npt.NDArray[np.uint64], ...]:
     """ 
@@ -133,7 +136,7 @@ TOTAL_SHARDS = 42
 # --- Per-Shard Dispatch Tables ---
 
 # Bitplane-width threshold: 90th-percentile ZigZag residual width over active
-# shards.  p90 captures tail behaviour — bitplane needs the entire distribution
+# shards.  p90 captures tail behaviour - bitplane needs the entire distribution
 # to be narrow, not just the average.  Natural images have wide high-energy
 # boundary shards that inflate the tail even when the median is low.
 # Empirically: Tecnick p90 max = 95, DIV2K p90 min = 70.5 (at 1 Mpx+ gate).
@@ -289,8 +292,17 @@ SPATIAL_TRANS_LUT = np.zeros((511, 511), dtype=np.uint8)
 INTENSITY_LUT = np.zeros(256, dtype=np.uint8)
 
 def initialize_luts_python(v_bounds, i_segs):
-    """ Fills the global LUTs with precomputed context features in Python.
-        Note: Done at module load to ensure Numba sees them as populated constants.
+    """ 
+    Fills global LUTs with precomputed context features.
+    
+    Engineering Logic:
+    1. Spatial Consistency: Uses (ag-cg) and (bg-cg) to derive a 2D gradient vector.
+       By subtracting the top-left neighbor (cg), we isolate the local 'slope' 
+       from the absolute pixel offset, ensuring the same context is recognized 
+       regardless of the global brightness level.
+    2. Zero-Latency Dispatch: Pre-packs V (Variance), T (Trend), and N (Noise) 
+       into a single uint8. This allows get_context_id_fast to perform 
+       feature extraction using bit-shifts instead of branching logic.
     """
     # 1. Intensity LUT (vectorized)
     i_arr = np.arange(256, dtype=np.uint8)

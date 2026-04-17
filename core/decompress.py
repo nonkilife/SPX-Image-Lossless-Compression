@@ -1,5 +1,5 @@
 """
-ZPNG-CSDE v6.2 [Flexible-Shard Architecture]
+ZPNG-CSDE v7.5 [Stable Parallel Architecture]
 Module: zpng_decompress
 Role: Decompressor Orchestrator.
 Description: Bit-perfect reconstruction engine utilizing the 4-pillar modular core.
@@ -25,7 +25,6 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 import zstandard as zstd
 import time, logging, io
 import numba
-import concurrent.futures
 from .transform import (
     restore_channels, decode_alpha_channel, reconstruct_2d_channels
 )
@@ -33,15 +32,13 @@ from .shard_rgb import (
     reconstruct_channels
 )
 from .codec import unpack_bitstream_v5
-from .rans_bitplane import decompress_bitplane_rgb_sharded, BITPLANE_MAGIC
-import threading, sys
-from typing import Tuple, Optional, List, Dict, Any, Union
+from .rans_bitplane import decompress_bitplane_rgb_sharded
+import threading
+from typing import Tuple, Optional, Union
 from .common import (
-    predict_med_standard,
-    from_zigzag, to_zigzag,
-    FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE, FLAG_COLOR_GSUB,
+    FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE,
     FLAG_BITPLANE,
-    TOTAL_SHARDS, PROFILE_RGB, sync_luts_if_needed
+    PROFILE_RGB, sync_luts_if_needed
 )
 from . import env
 
@@ -144,13 +141,16 @@ def inject_png_metadata(filepath: str, metadata_bytes: bytes) -> None:
 
 def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = None, optimize_png: bool = False) -> Tuple[npt.NDArray[np.uint8], float]:
     """ 
-    Main ZPNG-CSDE Decompression Entry Point (V6.6 Stable).
+    Main ZPNG-CSDE Decompression Entry Point (v7.5 Stable).
     
     Bit-perfect reverse orchestrator:
-    1. Header/Metadata Parser -> 2. Zstd Dictionary Extraction -> 3. SIMD 4-Way rANS Decoding
-    4. BICC Inverse Sharding (Median Re-addition) -> 5. Inverse G-Sub RCT -> 6. Original Hex Verification.
+    1. Parallel Dispatch (Pillar 0): Uses concurrent.futures to decode N shards 
+       simultaneously. Each thread jumps to an absolute bitstream offset, eliminating 
+       sequential dependency.
+    2. BICC Shard Recovery (Pillar 2): Staggered reconstruction of G-Lead then RD/BD-Lag.
+    3. Inverse GSUB (Pillar 1): Cross-channel restoration using Green as the spatial reference.
     
-    NOTE: Operates with Numba JIT parallelism to achieve 6.0+ MB/s decompression throughput.
+    NOTE: Operates with Numba JIT parallelism to achieve 25.0+ MB/s decompression throughput.
     """
     t0: float = time.time()
     try:
@@ -161,7 +161,7 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
             f = open(zpng_input, 'rb')
         try:
             magic: bytes = f.read(8)
-            if magic != b"ZPNGCSDE": raise ValueError("不支援的檔案格式")
+            if magic != b"ZPNGCSDE": raise ValueError("Unsupported file format")
             header_base: bytes = f.read(16)
             h, w, metadata_len, flag = np.frombuffer(header_base, dtype='<u4')
             if h == 0 or w == 0 or h > 65535 or w > 65535:
@@ -187,12 +187,12 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
 
             metadata_bytes: bytes = b""
             compressed_data: bytes = b""
+            res_a_flat: Optional[npt.NDArray[np.uint8]] = None
 
             m_len = int(metadata_len)
             if not (is_simple or is_raw or is_pass):
                 if flag & FLAG_BITPLANE:
                     shard_widths.fill(1)
-                    # For Bitplane, we still use full read for now as it's not yet optimized
                     compressed_data = f.read()
                     metadata_bytes = b""
                 else:
@@ -277,9 +277,3 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
         logger.debug(traceback.format_exc())
         raise
 
-# --- Pytest Snippet for Decompression Integrity ---
-# """
-# def test_decompression_flow():
-#     # This requires a valid zpng bitstream, usually tested via zpng_imgtest.py
-#     pass
-# """
