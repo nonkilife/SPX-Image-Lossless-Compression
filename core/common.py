@@ -8,24 +8,24 @@ Architecture: Flexible Sharding Hub utilizing 3D Mapping LUTs for context ID der
 Logic Path:
 ```mermaid
 graph TD
-    In[Input: ag, bg, cg, Intensity] --> Grad[Calculate Gradients: dh, dv, v=max]
-    Grad --> Hub[Flexible Sharding Hub]
-    Hub --> Map[Lookup: ShardMap Tier, Intensity, Trend]
-    Map --> CID[Context ID]
+    In[Input: ag, bg, cg, pg] --> ST[Double Feature Lookup: SPATIAL_TRANS_LUT]
+    In --> IL[Intensity Lookup: INTENSITY_LUT]
+    ST --> Feat[Extract: v_tier, t_idx, ns_hit]
+    IL --> Feat
+    Feat --> ShMap[Universal-42 Shard Map]
+    ShMap --> CID[Final Context ID]
 ```
 """
 
 import numpy as np
 import numpy.typing as npt
-from numba import njit, prange, uint8, uint16, uint32, uint64
-from typing import Tuple, Dict, Any, Optional, List, Union
+from numba import njit, prange, uint8
+from typing import Tuple, Optional, List
 from dataclasses import dataclass, field
-from .predictor import to_zigzag, from_zigzag, predict_med_standard, predict_paeth
+from .predictor import to_zigzag, from_zigzag, predict_med_standard
 
-# --- 供 codec 與 rans 模組使用的經驗分布範本庫 (v6.6 Data-Driven) ---
-# 這些模板是從 6185 個真實影像分片中透過 K-Means 聚類提取出的「靈魂分布」。
-# 包含對稱分布與處理高反差邊緣的「非對稱分布」。
-# --- 供 codec 與 rans 模組使用的經驗分布範本庫 (v6.6 Data-Driven) ---
+# 供 codec 與 rans 模組使用的經驗分布範本庫 (v6.6 Data-Driven)
+# 從 6185 個真實影像分片透過 K-Means 聚類提取，含對稱與非對稱分布。
 
 def _build_empirical_templates() -> tuple[npt.NDArray[np.uint64], ...]:
     """ 
@@ -83,42 +83,14 @@ class ShardProfile:
     """
     name: str
     v_boundaries_gr: npt.NDArray[np.uint8]
-    v_boundaries_rd_bd: npt.NDArray[np.uint8]
     intensity_segments: npt.NDArray[np.uint8]
-    tiers_per_intensity: int
-    hi_tier_boundary: int
     noise_shard_id: int  # -1 if no noise shard
     total_shards: int
     shard_map: npt.NDArray[np.uint8] # [v_level][intensity_idx][trend_idx]
-    res_context_states: int = 1
-
-# 2.1 Profile: BICC-Full (28-Shard Matrix)
-V_BOUND_GR_FULL = np.array([0, 2, 4, 10, 255], dtype=np.uint8)
-V_BOUND_RD_BD_FULL = np.array([0, 1, 3, 8, 255], dtype=np.uint8)
-INTENSITY_SEG_FULL = np.array([0, 60, 190, 255], dtype=np.uint8)
-TPI_FULL = (len(V_BOUND_GR_FULL) - 1) * 2 + 1
-NSID_FULL = TPI_FULL * (len(INTENSITY_SEG_FULL) - 1)
-
-def build_shard_map_he_rgb() -> npt.NDArray[np.uint8]:
-    """ Builds isomorphic 3D map for HE-RGB (28 shards). 
-        Layout: [5 Tiers][3 Intensity][2 Trends: 0:Straight, 1:Diag]
-    """
-    s_map = np.zeros((5, 3, 3), dtype=np.uint8) # Trend max 3 for safety
-    tpi = 9
-    for i in range(3):
-        base = i * tpi
-        # V=0 (Tier 0)
-        s_map[0, i, :] = base + 0
-        # V>0 (Tiers 1, 2, 3, 4)
-        for v in range(1, 5):
-            s_map[v, i, 0] = base + 1 + (v-1)*2 # Straight
-            s_map[v, i, 1] = base + 2 + (v-1)*2 # Diag
-    return s_map
 
 # 2. Unified Profile Settings (v6.6)
 V_BOUND_RGB = np.array([0, 1, 2, 4, 8, 16, 32, 255], dtype=np.uint8)
 INTENSITY_SEG_RGB = np.array([0, 60, 190, 255], dtype=np.uint8)
-TPI_RGB = 41 # Total 42 shards
 
 def build_shard_map_universal_42() -> npt.NDArray[np.uint8]:
     """ Unified 42-shard Balanced Architecture (v6.6). """
@@ -149,10 +121,7 @@ def build_shard_map_universal_42() -> npt.NDArray[np.uint8]:
 PROFILE_RGB = ShardProfile(
     name="Universal-42",
     v_boundaries_gr=V_BOUND_RGB,
-    v_boundaries_rd_bd=V_BOUND_RGB,
     intensity_segments=INTENSITY_SEG_RGB,
-    tiers_per_intensity=TPI_RGB + 1,
-    hi_tier_boundary=5,
     noise_shard_id=-1,
     total_shards=42,
     shard_map=build_shard_map_universal_42()
@@ -162,10 +131,6 @@ PROFILE_RGB = ShardProfile(
 TOTAL_SHARDS = 42
 
 # --- Per-Shard Dispatch Tables ---
-
-# Predictor IDs
-PRED_MED:   int = 0   # Median Edge Detector  – strong on edges
-PRED_PAETH: int = 1   # PNG Paeth              – accurate on smooth gradients
 
 # Bitplane-width threshold: 90th-percentile ZigZag residual width over active
 # shards.  p90 captures tail behaviour — bitplane needs the entire distribution
@@ -180,57 +145,6 @@ BITPLANE_WIDTH_THRESHOLD: int = 85
 # that dominates on small images.  Kodak (0.39 Mpx) loses +10-17%;
 # images below ~1 Mpx consistently suffer regardless of mean_width.
 BITPLANE_MIN_PIXELS: int = 1_000_000
-
-# Coder IDs
-CODER_STANDARD:  int = 0   # 256-symbol rANS with 30-mode template selection
-CODER_BITPLANE:  int = 1   # 4-layer 2-bit rANS
-
-
-def _build_predictor_lut() -> npt.NDArray[np.uint8]:
-    """
-    Derives PREDICTOR_LUT[42] from the shard_map geometry.
-    Iterates every (v_tier, i_idx, t_idx) cell, reads the assigned shard_id,
-    and marks it as PRED_PAETH for smooth tiers (0-2) or PRED_MED for edge
-    tiers (3-7).
-
-    Tier mapping (V_BOUND_RGB = [0,1,2,4,8,16,32,255]):
-        tier 0 → gradient 0          (flat)
-        tier 1 → gradient 1          (near-flat)
-        tier 2 → gradient 2-3        (very slight)
-        tier 3 → gradient 4-8   ──── Paeth/MED boundary
-        tier 4 → gradient 9-16
-        tier 5 → gradient 17-32
-        tier 6 → gradient 33+        (strong edge)
-    """
-    s_map = build_shard_map_universal_42()
-    lut = np.zeros(42, dtype=np.uint8)           # default = PRED_MED
-    SMOOTH_TIER_MAX = -1                          # Disable Paeth entirely (Phase 1)
-    for v in range(SMOOTH_TIER_MAX + 1):
-        for i in range(s_map.shape[1]):
-            for t in range(s_map.shape[2]):
-                lut[int(s_map[v, i, t])] = np.uint8(PRED_PAETH)
-    return lut
-
-
-PREDICTOR_LUT: npt.NDArray[np.uint8] = _build_predictor_lut()
-
-
-def build_coder_lut(shard_widths_ch: npt.NDArray[np.uint16]) -> npt.NDArray[np.uint8]:
-    """
-    Computes the per-shard coder decision from Pass 1 histogram widths for
-    one channel.  Called once per channel during compression after Pass 1.
-
-    Args:
-        shard_widths_ch: shape (n_shards,) uint16 – ZigZag residual width per shard.
-
-    Returns:
-        coder_lut: shape (n_shards,) uint8 – CODER_BITPLANE or CODER_STANDARD.
-    """
-    return np.where(
-        shard_widths_ch <= np.uint16(BITPLANE_WIDTH_THRESHOLD),
-        np.uint8(CODER_BITPLANE),
-        np.uint8(CODER_STANDARD)
-    ).astype(np.uint8)
 
 ENABLE_DIAGNOSTICS: bool = False  # Production Gate
 
@@ -268,7 +182,6 @@ class ZpngResult:
     shard_counts: npt.NDArray[np.uint32] = field(default_factory=lambda: np.zeros((3, TOTAL_SHARDS), dtype=np.uint32))
     shard_ptrs: Optional[Tuple] = None
     shard_stats: npt.NDArray[np.uint32] = field(default_factory=lambda: np.zeros((3, TOTAL_SHARDS, 256), dtype=np.uint32))
-    shard_mins: npt.NDArray[np.uint8] = field(default_factory=lambda: np.zeros((3, TOTAL_SHARDS), dtype=np.uint8))
     shard_widths: npt.NDArray[np.uint16] = field(default_factory=lambda: np.zeros((3, TOTAL_SHARDS), dtype=np.uint16))
     
     # [v4.10.2] Channel Statistical Data (Global Histograms: Grn, RD, BD)
@@ -297,22 +210,17 @@ class ZpngResult:
     def pixel_count(self) -> int:
         return self.h * self.w
 
-def extract_srb_metadata(shard_stats: npt.NDArray[np.uint32]) -> Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint16]]:
-    """ 
-    [v6.1 BICC] Metadata Analytical Kernel.
-    Determines the observed symbol width for PDF compaction. 
-    Maintains zero-centered shift protocol (mins = 0) to preserve T3 template compatibility.
-    """
+def extract_srb_metadata(shard_stats: npt.NDArray[np.uint32]) -> npt.NDArray[np.uint16]:
+    """ Determines the observed ZigZag symbol width per shard for PDF compaction. """
     n_shards = shard_stats.shape[1]
-    widths = np.ones((3, n_shards), dtype=np.uint16) 
-    mins = np.zeros((3, n_shards), dtype=np.uint8) 
+    widths = np.ones((3, n_shards), dtype=np.uint16)
     for c in range(3):
         for s in range(n_shards):
             hist = shard_stats[c, s]
             if np.any(hist):
                 indices = np.where(hist > 0)[0]
                 widths[c, s] = np.uint16(int(indices[-1]) + 1)
-    return mins, widths
+    return widths
 
 @njit(parallel=True, fastmath=True, cache=True)
 def apply_median_to_stats(shard_stats: npt.NDArray[np.uint32], medians: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint32]:
@@ -374,19 +282,6 @@ def calculate_channel_stats(hist: npt.NDArray[np.uint32]) -> Tuple[float, int, i
             
     return mean_val, median_val, mode_val
 
-
-
-# (predict_med_extreme removed for pipeline flattening)
-
-# Global Immutable Dispatchers [v6.2 Systematic Refactor]
-# Note: V_OFF_LUTs are deprecated; dispatching is now boundary-driven for flexibility.
-
-@njit(fastmath=True, error_model='numpy', inline='always', cache=True)
-def get_trend_idx(ag: np.uint8, bg: np.uint8, cg: np.uint8) -> np.uint8:
-    """ Unified Trend Extraction (v6.6): Rising/Falling/Mix logic. """
-    rising = np.uint8(ag > cg) * np.uint8(bg > cg)
-    falling = np.uint8(ag < cg) * np.uint8(bg < cg)
-    return np.uint8(falling + 2 * (1 - (rising + falling)))
 
 
 # --- [v6.6] High-Performance Context Dispatcher LUTs ---

@@ -106,16 +106,21 @@ graph TD
 ```
 
 ### 5.1 Dual-Path Strategy
-ZPNG implements a **Context-Aware Bypass**. If the encoder detects R=G=B (true monochrome), it activates the Grayscale Path, pruning 66% of computational overhead by bypassing chrominance residual calculations. This path is further optimized for **Bitplane rANS**, which isolates high-order bitplanes (MSB) from low-order noise planes (LSB).
+ZPNG implements a **Context-Aware Bypass** logic to handle different image types with optimal efficiency:
 
-### 5.2 Universal-42 Sharding Hub
-The backbone of ZPNG is the **Universal-42 matrix**. It maps local pixel environments into one of 42 high-fidelity contexts based on:
-1.  **V-Tier (Strength)**: 8 levels of local gradient magnitude.
-2.  **Intensity Logic**: 3 exposure segments (Dark/Normal/Light).
-3.  **Trend Awareness**: Straight vs. Diagonal edge detection.
+*   **RGB Route**: Utilizing the **G-sub RCT**, it extracts a Green foundation (Lead) followed by RD/BD residuals (Lag). It uses a staggered processing window to maintain context consistency across channels.
+*   **Grayscale Route**: If R=G=B is detected, the engine activates a specialized monochrome bypass, pruning ~65% of computational overhead. This path is highly optimized for **Bitplane rANS**, which decomposes the 8-bit signal into hierarchical layers to maximize redundancy extraction.
 
-### 5.3 Bitplane rANS Concepts
-For extreme monochrome density, ZPNG explores **Bitplane-Level Entropy Isolation**. Instead of treating an 8-bit residual as a single symbol, the engine can decompose the residual into 2D bit contexts. This allows the rANS core to apply distinct probability models to predictable structural bits vs. unpredictable stochastic noise.
+### 5.2 Universal-42 Sharding & Template Matrix
+The backbone of ZPNG is the **Universal-42 profile**, mapping pixels into 42 contexts based on V-Tier (gradient strength), Intensity, and Trend. 
+
+For entropy coding, the engine utilizes a **30-Mode Template Matrix**:
+- **6 Base Centroids**: Data-driven probability shapes derived from 6,000+ real-world image shards.
+- **5 Sigma Scales**: Each centroid is scaled from `0.5` to `1.5` to adapt to different noise levels.
+- **Zero-Overhead**: These 30 empirical modes are hardcoded in the decoder, allowing optimal PDF matching without the "Header Tax" of custom frequency tables.
+
+### 5.3 Bitplane rANS (rans_bitplane.py)
+For high-density images, ZPNG employs **Shard-Conditioned Bitplane rANS**. Instead of treating the residual as a single 256-symbol alphabet, it decomposes the signal into 2-bit layers. Each layer uses a massive **2,688-way context model** ($42 \text{ Shards} \times 64 \text{ Spatial Patterns}$), allowing the rANS core to isolate structural predictable bits from stochastic noise bits.
 
 ---
 

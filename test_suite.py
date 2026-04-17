@@ -161,29 +161,33 @@ class CodecReporter:
 
     def get_stats(self, wall_clock: float) -> Dict[str, Any]:
         if self.count == 0: return {}
-        avg_ratio = self.total_comp / self.total_orig * 100
-        
-        # [Fix] Correct BPP logic: 
-        # total_orig / total_pixels gives bits per pixel of the source (e.g. 1.0 for 8-bit, 3.0 for 24-bit if scaled)
-        # But total_orig is bytes. So (total_orig * 8 / total_pixels) is Source BPP.
-        # We want compressed BPP = (total_comp * 8 / total_pixels).
-        # To make it intuitive, we should report BPP relative to the 8-bit or 24-bit source.
+        agg_ratio = self.total_comp / self.total_orig * 100   # aggregate: total_comp/total_orig
+        mean_ratio = float(np.mean(self.ratios)) if self.ratios else agg_ratio  # per-image arithmetic mean
+
         avg_bpp = self.total_comp * 8.0 / self.total_pixels
         src_bpp = self.total_orig * 8.0 / self.total_pixels if self.total_pixels > 0 else 0
         orig_mb = self.total_orig / (1024**2)
-        
+
         total_work = self.total_e_s + self.total_d_s
-        sys_enc_tp = orig_mb / (wall_clock * (self.total_e_s / total_work)) if total_work > 0 else 0
-        sys_dec_tp = orig_mb / (wall_clock * (self.total_d_s / total_work)) if total_work > 0 else 0
-        
+        if total_work > 0:
+            # Distribute wall-clock proportionally to enc/dec fractions, then cap at serial
+            # floor (total_e_s / total_d_s). Without the cap, single-worker runs produce
+            # TP < Core Eff because wall_clock includes untimed overhead (PNG loading, MSE).
+            enc_wall = min(wall_clock * (self.total_e_s / total_work), self.total_e_s)
+            dec_wall = min(wall_clock * (self.total_d_s / total_work), self.total_d_s)
+            sys_enc_tp = orig_mb / enc_wall if enc_wall > 0 else 0
+            sys_dec_tp = orig_mb / dec_wall if dec_wall > 0 else 0
+        else:
+            sys_enc_tp = sys_dec_tp = 0
+
         return {
             "name": self.name,
             "count": self.count,
             "orig_mb": orig_mb,
             "src_bpp": src_bpp,
             "comp_mb": self.total_comp / (1024**2),
-            "saved_pct": 100 - avg_ratio, "bpp": avg_bpp,
-            "mean_ratio": avg_ratio, "median_ratio": np.median(self.ratios),
+            "saved_pct": 100 - agg_ratio, "bpp": avg_bpp,
+            "mean_ratio": mean_ratio, "median_ratio": np.median(self.ratios),
             "range": (min(self.ratios), max(self.ratios)),
             "mse": self.total_mse / self.total_pixels,
             "avg_e_ms": (self.total_e_s * 1000) / self.count if self.count > 0 else 0,
@@ -298,11 +302,13 @@ def run_codec_benchmark(codec_name, worker_fn, files, workers):
         # --- [關鍵修正 1]：單執行緒獨立 Warmup，徹底避免 Numba 編譯死結 ---
         print(f"  [Warmup] Compiling Numba JIT (Single Thread)...", end='\r')
         w_start = time.time()
-        worker_fn("__WARMUP__") 
+        worker_fn("__WARMUP__")
         t_warmup = time.time() - w_start
         print(f"  [Warmup] Completed in {t_warmup:.2f}s" + " " * 20)
-        
+
         # --- [關鍵修正 2]：正式進入多執行緒壓測 ---
+        # Wall-clock starts AFTER warmup so TP excludes JIT compile time.
+        t_proc_start = time.time()
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {executor.submit(worker_fn, p): p for p in files}
             idx = 0
@@ -324,7 +330,7 @@ def run_codec_benchmark(codec_name, worker_fn, files, workers):
         traceback.print_exc()
         raise
     
-    wall_clock = time.time() - t_start
+    wall_clock = time.time() - t_proc_start   # excludes warmup/JIT time
     stats = reporter.get_stats(wall_clock)
     stats["warmup_s"] = t_warmup
     show_codec_summary(stats)

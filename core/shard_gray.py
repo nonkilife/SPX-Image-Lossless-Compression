@@ -10,10 +10,11 @@ Description: 42-shard BICC orchestration for grayscale images.
 Logic Path Visualization:
 ```mermaid
 graph TD
-    A[Raw Gray Channel] --> B[predict_pass_1_gray: Profile Shards]
-    B --> C[Global Histogram Aggregation: 42 Shards]
-    C --> D[predict_pass_2_gray: Payload Assembly]
-    D --> E[Flat Shard Buffer → rANS]
+    A[Raw Gray Channel] --> B[predict_pass_1: 42-Shard BICC Profiling]
+    B --> C{Decision Hub}
+    C -->|Standard| D[predict_pass_2: Shard-Sequential Residuals]
+    C -->|Bitplane| E[Skip Pass 2 → Bitplane Engine]
+    D --> F[Flat Shard Buffers → rANS]
 ```
 """
 
@@ -22,8 +23,7 @@ import numpy.typing as npt
 from numba import njit, prange, uint8, uint32, uint64
 from typing import Tuple
 from .common import (
-    to_zigzag, predict_med_standard, predict_paeth,
-    PRED_PAETH,
+    to_zigzag, predict_med_standard,
     get_context_id_fast
 )
 
@@ -31,8 +31,7 @@ from .common import (
 @njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
 def predict_pass_1_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
                         shard_map: npt.NDArray[np.uint8], v_bounds: npt.NDArray[np.uint8],
-                        i_segs: npt.NDArray[np.uint8], nsid: int,
-                        predictor_lut: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint8], Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint64]]]:
+                        i_segs: npt.NDArray[np.uint8], nsid: int) -> Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint8], Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint64]]]:
     """
     Stage 1: O(N) Shard Profiling & Histogram Generation for grayscale.
 
@@ -63,13 +62,9 @@ def predict_pass_1_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
                 a = gray_ch[i, j-1] if j > 0 else np.uint8(0)
                 b = gray_ch[i-1, j] if i > 0 else np.uint8(0)
                 c = gray_ch[i-1, j-1] if (i > 0 and j > 0) else np.uint8(0)
-                p_ctx = predict_med_standard(a, b, c)
+                p = predict_med_standard(a, b, c)
                 val = gray_ch[i, j]
-                ctx = int(get_context_id_fast(a, b, c, p_ctx, shard_map, nsid))
-                if predictor_lut[ctx] == PRED_PAETH:
-                    p = predict_paeth(a, b, c)
-                else:
-                    p = p_ctx
+                ctx = int(get_context_id_fast(a, b, c, p, shard_map, nsid))
                 diff = (int(val) - int(p)) & 0xFF
                 # [v6.5] Centered storage: 0 residual maps to 128
                 res_c = (diff + 128) & 0xFF
@@ -140,8 +135,7 @@ def predict_pass_2_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
                         i_segs: npt.NDArray[np.uint8], nsid: int,
                         row_global_offsets: npt.NDArray[np.uint32],
                         shard_medians: npt.NDArray[np.uint8],
-                        shard_out: npt.NDArray[np.uint8],
-                        predictor_lut: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8], Tuple[np.uint64, np.float64]]:
+                        shard_out: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8], Tuple[np.uint64, np.float64]]:
     """
     Stage 2: O(N) Encoding Payload Construction for grayscale.
 
@@ -163,13 +157,9 @@ def predict_pass_2_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
             a = gray_ch[i, j-1] if j > 0 else np.uint8(0)
             b = gray_ch[i-1, j] if i > 0 else np.uint8(0)
             c = gray_ch[i-1, j-1] if (i > 0 and j > 0) else np.uint8(0)
-            p_ctx = predict_med_standard(a, b, c)
+            p = predict_med_standard(a, b, c)
             val = gray_ch[i, j]
-            ctx = int(get_context_id_fast(a, b, c, p_ctx, shard_map, nsid))
-            if predictor_lut[ctx] == PRED_PAETH:
-                p = predict_paeth(a, b, c)
-            else:
-                p = p_ctx
+            ctx = int(get_context_id_fast(a, b, c, p, shard_map, nsid))
             # [v6.1] Median Normalization ONLY
             diff = int(val) - int(p) - (int(shard_medians[0, ctx]) - 128)
             shard_out[local_ptr[ctx]] = to_zigzag(diff)

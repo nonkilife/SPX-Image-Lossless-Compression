@@ -8,14 +8,13 @@ Architecture: Dispatcher layer connecting bitstream parsing to the BICC/RCT reco
 Technical Flowchart:
 ```mermaid
 graph TD
-    Bs[ZPNG Bitstream] --> Head[Parse Header & Bias Matrix]
-    Head --> rANS[4-way Interleaved rANS Parallel Decoding]
-    
-    rANS --> FHub[Flexible Sharding Hub]
-    FHub --> BICC[BICC Recovery: Centroid Shifting - Grn Only]
-    
-    BICC --> InvGSUB[Inverse G-sub RCT: Restore RGB/RGBA]
-    InvGSUB --> Out[Bit-Perfect Image Output]
+    In[ZPNG Bitstream] --> Unpack[Codec: Unpack Metadata]
+    Unpack --> Mode{Is Bitplane?}
+    Mode -->|No| Standard[Standard rANS Decoding]
+    Mode -->|Yes| Bitplane[Bitplane rANS Decoding]
+    Standard & Bitplane --> BICC[BICC: Median Re-addition]
+    BICC --> InvGSUB[Inverse G-sub RCT: Restore RGB]
+    InvGSUB --> Out[Bit-Perfect Image]
 ```
 """
 
@@ -34,7 +33,7 @@ from .shard_rgb import (
     reconstruct_channels
 )
 from .codec import unpack_bitstream_v5
-from .rans_bitplane_sharded import decompress_bitplane_rgb_sharded, BITPLANE_MAGIC
+from .rans_bitplane import decompress_bitplane_rgb_sharded, BITPLANE_MAGIC
 import threading, sys
 from typing import Tuple, Optional, List, Dict, Any, Union
 from .common import (
@@ -42,8 +41,7 @@ from .common import (
     from_zigzag, to_zigzag,
     FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE, FLAG_COLOR_GSUB,
     FLAG_BITPLANE,
-    TOTAL_SHARDS, PROFILE_RGB, sync_luts_if_needed,
-    PREDICTOR_LUT
+    TOTAL_SHARDS, PROFILE_RGB, sync_luts_if_needed
 )
 from . import env
 

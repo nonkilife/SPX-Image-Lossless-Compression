@@ -4,20 +4,27 @@ Module: zpng_codec
 Role: Bitstream Orchestration.
 Description: Logic for packing and unpacking the ZPNG tiered bitstream container.
 Architecture: Structured serialization layer bridging the Model and rANS pillars.
+            
+Bitstream Structure:
+```mermaid
+graph TD
+    Meta[Header: H, W, Flags] --> SRB[SRB Block: Widths, Medians, Modes]
+    SRB --> PDF[PDF Block: Zstd Compacted Tables]
+    PDF --> Data[Shard Block: Interleaved rANS Payloads]
+    Data --> End[Metadata & Alpha]
+```
 """
 
 import numpy as np
 import numpy.typing as npt
 import zstandard as zstd
-from numba import njit, prange, uint8, uint16, uint32, uint64
 import concurrent.futures
 from typing import Tuple, List, Optional, Union, BinaryIO
 from .common import (
-    TOTAL_SHARDS, FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE,
+    FLAG_RGBA, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE,
     PROFILE_RGB
 )
-from . import rans_bitplane as bit_rans
-from .rans_bitplane_sharded import decompress_bitplane_gray_sharded, BITPLANE_MAGIC
+from .rans_bitplane import decompress_bitplane_gray_sharded
 from .rans import (
     rans_encode_shards_parallel, 
     build_pdf_tables_from_shards, L_LOWER,
@@ -94,19 +101,18 @@ def pack_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsu
     
     pdf_compact_block = compact_pdf_tables(all_sym_freqs_flat, all_widths_flat, all_modes_internal)
     
-    # [Internal reuse of zstd decompressor/compressor is handled by callers or locally]
     c_pdf = zstd.ZstdCompressor(level=1).compress(pdf_compact_block.tobytes())
-    
+
     # 1a. Write PDF block
     sharded_payload += np.array([len(c_pdf)], dtype='<u4').tobytes() + c_pdf
-    
+
     # 1b. Write Shard Counts
     if is_grayscale:
         sharded_payload += np.array([shard_counts[0].nbytes], dtype='<u4').tobytes() + shard_counts[0].tobytes()
     else:
         sharded_payload += np.array([shard_counts.nbytes], dtype='<u4').tobytes() + shard_counts.tobytes()
-    
-    # 1d. rANS Encode Shards
+
+    # 1c. rANS Encode Shards
     if is_grayscale:
         shard_lengths_ans: npt.NDArray[np.uint32] = shard_counts[0].ravel().astype(np.uint32)
         all_cum_stack: npt.NDArray[np.uint64] = gr_cum
@@ -132,12 +138,11 @@ def pack_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsu
             off = int(bs_offsets[idx])
             sharded_payload += bitstreams_flat[off:off+int(bs_lengths[idx])].tobytes()
 
-    # 1d. Encode Alpha (Traditional Zstd)
+    # 1d. Encode Alpha (Zstd)
     if is_rgba:
         c_alpha = zstd.ZstdCompressor(level=1).compress(res_a.tobytes())
         sharded_payload += np.array([len(c_alpha)], dtype='<u4').tobytes() + c_alpha
 
-    # 1e. Return full modes for diagnostics
     modes_diag = np.zeros((3, n_shards), dtype=np.uint8)
     modes_diag[0] = gr_modes
     if not is_grayscale:
@@ -145,26 +150,6 @@ def pack_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsu
         modes_diag[2] = bd_modes
     return b"ZPNGCSDE" + header + bytes(sharded_payload) + metadata_bytes, modes_diag
 
-def pack_bitplane_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: bool,
-                             resid_gr: npt.NDArray[np.uint8], metadata_bytes: bytes) -> bytes:
-    """ Bitplane-Contextual packing path (v5.3). Currently optimized for Grayscale. """
-    flag: int = FLAG_BITPLANE
-    if is_rgba: flag |= FLAG_RGBA
-    if is_grayscale: flag |= FLAG_GRAYSCALE
-    if use_gsub: flag |= FLAG_COLOR_GSUB
-    
-    metadata_len = len(metadata_bytes)
-    # Header: h, w, metadata_len, flag (4 x 4 bytes = 16 bytes)
-    header: bytes = np.array([h, w, metadata_len, flag], dtype='<u4').tobytes()
-    
-    # 2D Bit-Context Encoding (Greyscale path)
-    if is_grayscale:
-        bit_payload = bit_rans.compress_bitplane_gray(resid_gr)
-    else:
-        # Placeholder for color bitplane (will follow same logic for each channel)
-        raise NotImplementedError("Color Bitplane mode not yet implemented.")
-        
-    return b"ZPNGCSDE" + header + bit_payload + metadata_bytes
 
 def unpack_bitstream_v5(compressed_data: Union[bytes, BinaryIO], h: int, w: int, is_rgba: bool, is_grayscale: bool,
                        shard_widths: npt.NDArray[np.uint16], shard_modes: npt.NDArray[np.uint8],
@@ -203,24 +188,12 @@ def unpack_bitstream_v5(compressed_data: Union[bytes, BinaryIO], h: int, w: int,
 
     if flag & FLAG_BITPLANE:
         if is_grayscale:
-            # Detect sharded vs. legacy format by first payload byte
-            if isinstance(compressed_data, (bytes, bytearray)):
-                first_byte = compressed_data[0]
-            else:
-                peek = compressed_data.read(1)
-                # Re-wrap as bytes for the decompressor (it reads from the start)
-                rest = compressed_data.read()
-                compressed_data = peek + rest
-                first_byte = peek[0] if peek else 0
             profile = PROFILE_RGB
-            if first_byte == BITPLANE_MAGIC:
-                gray_res = decompress_bitplane_gray_sharded(
-                    compressed_data, h, w,
-                    profile.shard_map, profile.v_boundaries_gr,
-                    profile.intensity_segments, profile.noise_shard_id
-                ).flatten()
-            else:
-                gray_res = bit_rans.decompress_bitplane_gray(compressed_data, h, w).flatten()
+            gray_res = decompress_bitplane_gray_sharded(
+                compressed_data, h, w,
+                profile.shard_map, profile.v_boundaries_gr,
+                profile.intensity_segments, profile.noise_shard_id
+            ).flatten()
             return gray_res, None, None, None, None, None, None, None
         else:
             raise NotImplementedError("Color Bitplane unpacking not yet implemented.")
@@ -228,11 +201,10 @@ def unpack_bitstream_v5(compressed_data: Union[bytes, BinaryIO], h: int, w: int,
     # [v6.6] Determine Shard Count
     profile = PROFILE_RGB
     n_shards = profile.total_shards
-    n_colors = 1 if is_grayscale else 3
-    
+
     p: int = 0
     # 1. Read compacted PDF frequencies
-    pdf_len, pdf_raw_bytes, p = read_block_meta_stream(compressed_data, p)
+    _, pdf_raw_bytes, p = read_block_meta_stream(compressed_data, p)
     pdf_raw: npt.NDArray[np.uint8] = np.frombuffer(dctx.decompress(pdf_raw_bytes), dtype=np.uint8)
     
     if is_grayscale:
@@ -252,7 +224,7 @@ def unpack_bitstream_v5(compressed_data: Union[bytes, BinaryIO], h: int, w: int,
         all_cum_freqs[:, :, 1:] = np.cumsum(all_sym_freqs, axis=2)
 
     # 2. Read Shard Counts
-    sc_len, sc_raw_bytes, p = read_block_meta_stream(compressed_data, p)
+    _, sc_raw_bytes, p = read_block_meta_stream(compressed_data, p)
     sc_block: npt.NDArray[np.uint32] = np.frombuffer(sc_raw_bytes, dtype='<u4')
     
     shard_counts: npt.NDArray[np.uint32] = np.zeros((3, n_shards), dtype=np.uint32)
@@ -261,7 +233,7 @@ def unpack_bitstream_v5(compressed_data: Union[bytes, BinaryIO], h: int, w: int,
     else:
         shard_counts = sc_block.copy().reshape((3, n_shards))
 
-    # 4. Parallel rANS Decoding (v7.2 [HIGH-THROUGHPUT])
+    # 3. Parallel rANS Decoding (v7.2 [HIGH-THROUGHPUT])
     all_lookups: npt.NDArray[np.uint8] = build_all_lookups(all_cum_freqs)
     
     # [v7.2] Flatten stacks to maximize multi-core thread saturation
@@ -345,7 +317,7 @@ def unpack_bitstream_v5(compressed_data: Union[bytes, BinaryIO], h: int, w: int,
 
     res_a_flat: Optional[npt.NDArray[np.uint8]] = None
     if is_rgba:
-        a_len, a_raw_bytes, p = read_block_meta_stream(compressed_data, p)
+        _, a_raw_bytes, p = read_block_meta_stream(compressed_data, p)
         res_a_flat = np.frombuffer(dctx.decompress(a_raw_bytes), dtype=np.uint8)
         
     return res_gr_flat, res_rd_flat, res_bd_flat, gr_offs, rd_offs, bd_offs, shard_counts, res_a_flat

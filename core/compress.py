@@ -8,15 +8,13 @@ Architecture: Dispatcher layer connecting RGB input to the BICC/rANS pipeline vi
 Technical Flowchart:
 ```mermaid
 graph TD
-    Ar[Input RGB/RGBA] --> GSUB[G-sub RCT: Decorrelate Channels]
-    GSUB --> USH[Universal Sharding Hub: 42 Contexts]
-    
-    USH --> Pass1[Pass 1: Histograms & Bias Estimation]
-    Pass1 --> BICC[BICC: Shard-Level Centroid Shifting]
-    
-    BICC --> Pass2[Pass 2: Optimized Residual Mapping]
-    Pass2 --> rANS[rANS: 4-way Parallel Entropy Coding]
-    rANS --> Out[ZStandard Container Payload]
+    Ar[Input RGB/RGBA] --> GSUB[G-sub RCT: Extract G, RD, BD]
+    GSUB --> Pass1[Pass 1: Universal-42 Profiling]
+    Pass1 --> CodecSel{p90_width < Threshold?}
+    CodecSel -->|No| Standard[Standard rANS: 30 Empirical Modes]
+    CodecSel -->|Yes| Bitplane[Bitplane rANS: 2688 Contexts]
+    Standard & Bitplane --> Pack[Codec: Pack Bitstream]
+    Pack --> Out[ZPNG Payload]
 ```
 """
 
@@ -43,7 +41,7 @@ from .common import (
     TOTAL_SHARDS, apply_median_to_stats,
     calculate_channel_stats, PROFILE_RGB,
     extract_srb_metadata, to_zigzag, from_zigzag, predict_med_standard,
-    PREDICTOR_LUT, BITPLANE_WIDTH_THRESHOLD, BITPLANE_MIN_PIXELS
+    BITPLANE_WIDTH_THRESHOLD, BITPLANE_MIN_PIXELS
 )
 from .transform import (
     extract_channels, predict_2d_residuals,
@@ -55,8 +53,8 @@ from .shard_rgb import (
 from .shard_gray import (
     predict_pass_1_gray, predict_pass_2_gray
 )
-from .codec import pack_bitstream_v5, pack_bitplane_bitstream_v5
-from .rans_bitplane_sharded import compress_bitplane_gray_sharded, compress_bitplane_rgb_sharded
+from .codec import pack_bitstream_v5
+from .rans_bitplane import compress_bitplane_gray_sharded, compress_bitplane_rgb_sharded
 from . import env
 
 # --- Startup: Validate Dependencies ---
@@ -311,8 +309,7 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
             (hits_total_p1, sums_total_p1) = \
                 predict_pass_1_gray(h, w, gr_map,
                                     profile.shard_map, profile.v_boundaries_gr,
-                                    profile.intensity_segments, profile.noise_shard_id,
-                                    PREDICTOR_LUT)
+                                    profile.intensity_segments, profile.noise_shard_id)
         else:
             shard_counts, shard_stats, shard_offsets_p1, row_global_offsets, shard_medians, \
             (hits_total_p1, sums_total_p1) = \
@@ -327,7 +324,7 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
         
         # [v4.7.2-STABLE] Metadata Extraction (NOW USING NORMALIZED RANGES)
         shard_widths: npt.NDArray[np.uint16]
-        _, shard_widths = extract_srb_metadata(biased_stats)
+        shard_widths = extract_srb_metadata(biased_stats)
 
         # [v7.5] Per-Image Coder Selection: auto-detect bitplane vs standard rANS.
         # Grayscale always uses bitplane — the shard-conditioned bitplane coder was
@@ -379,8 +376,7 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
             res_a, (a_hits, a_sum) = \
                 predict_pass_2_gray(h, w, gr_map, a_map, is_rgba,
                                     profile.shard_map, profile.v_boundaries_gr, profile.intensity_segments, profile.noise_shard_id,
-                                    row_global_offsets, shard_medians, shard_gr,
-                                    PREDICTOR_LUT)
+                                    row_global_offsets, shard_medians, shard_gr)
         else:
             res_a, (a_hits, a_sum) = \
                 predict_pass_2(h, w, gr_map, rd_map, bd_map, a_map, is_rgba, False,
@@ -532,8 +528,7 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
                           shard_counts=shard_counts,
                           shard_ptrs=None,
                           shard_stats=shard_stats,
-                          shard_mins=np.zeros((3, n_shards), dtype=np.uint8),
-                          shard_widths=shard_widths,
+shard_widths=shard_widths,
                           shard_medians=shard_medians,
                           shard_modes=res_modes,
                           channel_hists=channel_hists,

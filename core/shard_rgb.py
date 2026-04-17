@@ -7,14 +7,12 @@ Description: Unified sharding orchestration compatible with 3D Mapping LUTs.
 Logic Path Visualization:
 ```mermaid
 graph TD
-    A[Raw Channels: G, RD, BD] --> B[predict_pass_1: Profile Shards]
-    B --> C{BICC Staggering}
-    C -->|Lead| D[Green MED + Row Hist]
-    C -->|Lag| E[RD/BD MED + Staggered G Context]
-    D & E --> F[Global Histogram Aggregation]
-    F --> G[predict_pass_2: Payload Assembly]
-    G --> H[Alpha Re-centering]
-    H --> I[Flat Payload Buffers]
+    A[Raw Channels: G, RD, BD] --> B[predict_pass_1: BICC Profile]
+    B --> Stagger{Staggered Window}
+    Stagger -->|G-Lead| D[G Context → Universal-42]
+    Stagger -->|RD/BD-Lag| E[RD/BD Context + G-Ref]
+    D & E --> F[Median Normalization: v6.5]
+    F --> G[predict_pass_2: Vectorized Residuals]
 ```
 """
 
@@ -23,8 +21,7 @@ import numpy.typing as npt
 from numba import njit, prange, uint8, uint16, uint32, uint64
 from typing import Tuple, List, Optional
 from .common import (
-    to_zigzag, from_zigzag, predict_med_standard,
-    get_context_id_fast
+    to_zigzag, from_zigzag, predict_med_standard, get_context_id_fast
 )
 
 @njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
@@ -71,7 +68,7 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
                 ag = np.uint8(0)
                 bg = (gr_ch[i-1, 0] if i > 0 else np.uint8(0))
                 cg = np.uint8(0)
-                
+
                 pg = predict_med_standard(ag, bg, cg)
                 curr_valg = gr_ch[i, 0]
                 ctxg = int(get_context_id_fast(ag, bg, cg, pg, shard_map, nsid))
