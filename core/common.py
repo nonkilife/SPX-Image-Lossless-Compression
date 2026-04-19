@@ -15,7 +15,7 @@ graph TD
     Feat --> ShMap[ShardProfile.shard_map]
     ShMap --> CID[Final Context ID]
     %% Spatial lookup uses ag-cg, bg-cg to achieve DC-invariance.
-    %% Packing Format: [V_Tier:5 bits] | [Trend:2 bits] | [Noise:1 bit]
+    %% Packing Format: [V_Tier:3 bits] | [Trend:2 bits] | [Noise:1 bit]
 ```
 """
 
@@ -70,7 +70,6 @@ FLAG_PASSTHROUGH: int = 0x08  # Original File Storage (PNG/JPG)
 FLAG_GRAYSCALE: int   = 0x10  # Hardware-accelerated true monochrome bypassing CR
 FLAG_COLOR_GSUB: int   = 0x20  # Adaptive Green-Subtract Transform (Smooth Image Optimization)
 FLAG_BITPLANE: int    = 0x40  # 2D Bit-Context engine
-FLAG_TEMPLATE_MODE: int = 0x80 # Use Laplace-Template entropy coding
 
 # --- 2. Sharding Profile System ---
 
@@ -128,9 +127,6 @@ PROFILE_RGB = ShardProfile(
     total_shards=42,
     shard_map=build_shard_map_universal_42()
 )
-
-# Used internally by ZpngResult defaults and get_shard_labels; not imported by other modules.
-TOTAL_SHARDS = 42
 
 # --- Per-Shard Dispatch Tables ---
 
@@ -252,7 +248,7 @@ def apply_median_to_stats(shard_stats: npt.NDArray[np.uint32], medians: npt.NDAr
 @njit(fastmath=True, error_model='numpy', cache=True)
 def calculate_channel_stats(hist: npt.NDArray[np.uint32]) -> Tuple[float, int, int]:
     """
-    Derived O(256) metrics from a global channel histogram.
+    Derives O(256) metrics from a global channel histogram.
     Returns (Mean, Median, Mode).
     """
     total = np.sum(hist)
@@ -283,7 +279,6 @@ def calculate_channel_stats(hist: npt.NDArray[np.uint32]) -> Tuple[float, int, i
             break
             
     return mean_val, median_val, mode_val
-
 
 
 # --- High-Performance Context Dispatcher LUTs ---
@@ -329,7 +324,7 @@ def initialize_luts_python(v_bounds, i_segs, shard_map, nsid: int):
     # Noise Flag (N)
     ns_hit = ((np.abs(DA) > 12) & (np.abs(DB) > 12)).astype(np.uint8)
 
-    # Packing: [V:5][T:2][N:1]
+    # Packing: [V:3][T:2][N:1]
     SPATIAL_TRANS_LUT[:] = ((v_tier << 3) | (t_idx << 1) | ns_hit).astype(np.uint8)
 
     # 3. Final Dispatch LUT — collapses branch + 3D shard_map lookup into a single

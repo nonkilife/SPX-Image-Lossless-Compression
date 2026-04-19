@@ -35,9 +35,11 @@ from .common import (
 )
 from .rans_bitplane import decompress_bitplane_gray_sharded
 from .rans import (
-    rans_encode_shards_parallel, 
+    rans_encode_shards_parallel,
     build_pdf_tables_from_shards, L_LOWER,
-    compact_pdf_tables
+    compact_pdf_tables,
+    rans_decode_4way_core, build_all_lookups,
+    expand_pdf_tables
 )
 
 def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: bool,
@@ -53,7 +55,7 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
     Bitstream Architecture:
     [0-15]     Global Header (Height, Width, Metadata Length, Bit Flags)
     [16-N]     SRB Chunk: Widths (n_shards per channel), Medians, Modes
-    [N-M]      PDF Chunk (Zstd): Compacted frequency tables for Dynamic Modes (0, 1)
+    [N-M]      PDF Chunk (Zstd): Compacted frequency tables for Dynamic Modes (0, 3)
     [M-O]      Shard Block: Sizes for each active shard, followed by rANS byte payloads
     [O-END]    Optional Metadata
     """
@@ -91,23 +93,18 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
         bd_shards: List[npt.NDArray[np.uint8]] = [shard_bd[shard_offsets_p1[2,s]:shard_offsets_p1[2,s]+shard_counts[2,s]] for s in range(n_shards)]
 
     # Build frequency tables (PDF modeling)
-    if not is_grayscale:
-        gr_cum, gr_sym, gr_modes = build_pdf_tables_from_shards(gr_shards, shard_widths[0])
-        rd_cum, rd_sym, rd_modes = build_pdf_tables_from_shards(rd_shards, shard_widths[1])
-        bd_cum, bd_sym, bd_modes = build_pdf_tables_from_shards(bd_shards, shard_widths[2])
-    else:
-        gr_cum, gr_sym, gr_modes = build_pdf_tables_from_shards(gr_shards, shard_widths[0])
-    
+    gr_cum, gr_sym, gr_modes = build_pdf_tables_from_shards(gr_shards, shard_widths[0])
     if is_grayscale:
         all_sym_freqs_flat = gr_sym
         all_widths_flat = shard_widths[0, :n_shards]
-        header_modes: bytes = gr_modes.tobytes()
         all_modes_internal = gr_modes
     else:
+        rd_cum, rd_sym, rd_modes = build_pdf_tables_from_shards(rd_shards, shard_widths[1])
+        bd_cum, bd_sym, bd_modes = build_pdf_tables_from_shards(bd_shards, shard_widths[2])
         all_sym_freqs_flat = np.concatenate((gr_sym, rd_sym, bd_sym))
         all_widths_flat = np.concatenate((shard_widths[0, :n_shards], shard_widths[1, :n_shards], shard_widths[2, :n_shards]))
         all_modes_internal = np.concatenate((gr_modes, rd_modes, bd_modes))
-        header_modes: bytes = all_modes_internal.tobytes()
+    header_modes: bytes = all_modes_internal.tobytes()
     
     header: bytes = header_base + header_widths + header_medians + header_modes
     
@@ -165,15 +162,14 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
 
 def unpack_bitstream(compressed_data: Union[bytes, BinaryIO], h: int, w: int, is_rgba: bool, is_grayscale: bool,
                      shard_widths: npt.NDArray[np.uint16], shard_modes: npt.NDArray[np.uint8],
-                     flag: int, metadata_len: int) -> Tuple:
+                     flag: int) -> Tuple:
     """
     Deserializes the ZPNG bitstream format back into parsed frequency tables and residuals.
 
     Processing Steps:
-    1. Parses the Shard Metadata block (Widths, Medians, Modes) dynamically.
-    2. Uses Zstd to de-compact the internal PDF dictionary arrays.
-    3. Reads shard counts to determine output allocation per shard.
-    4. Parallel rANS decoding via ThreadPoolExecutor (GIL released by Numba workers).
+    1. Decompacts the Zstd-compressed PDF frequency tables and reconstructs CDF arrays for rANS decoding.
+    2. Reads shard counts to determine output allocation per shard.
+    3. Parallel rANS decoding via ThreadPoolExecutor (GIL released by Numba workers).
     """
     def read_bytes(src: Union[bytes, BinaryIO], n: int, pos: int) -> Tuple[bytes, int]:
         if isinstance(src, bytes):
@@ -192,10 +188,6 @@ def unpack_bitstream(compressed_data: Union[bytes, BinaryIO], h: int, w: int, is
         payload, pos = read_bytes(src, b_len, pos)
         return payload, pos
 
-    from .rans import (
-        rans_decode_4way_core, build_all_lookups,
-        expand_pdf_tables
-    )
     dctx = zstd.ZstdDecompressor()
 
     if flag & FLAG_BITPLANE:
@@ -268,8 +260,7 @@ def unpack_bitstream(compressed_data: Union[bytes, BinaryIO], h: int, w: int, is
     if num_targets > 0:
         out_offsets[1:] = np.cumsum(counts_stack[:-1], dtype=np.uint32)
 
-    # Phase 1 & 2: Streaming Producer-Consumer Decoder
-    # Overlaps I/O and rANS decoding using ThreadPoolExecutor
+    # Parallel rANS Decoder: dispatches shard decodes to thread workers concurrently.
     futures = []
     with concurrent.futures.ThreadPoolExecutor() as executor:
         for idx in range(num_targets):

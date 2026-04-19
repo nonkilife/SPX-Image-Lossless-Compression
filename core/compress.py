@@ -11,7 +11,7 @@ graph TD
     Ar[Input RGB/RGBA] --> GSUB[G-sub RCT: Extract G, RD, BD]
     GSUB --> Pass1[Pass 1: Universal-42 Profiling]
     Pass1 --> CodecSel{p90_width < Threshold?}
-    CodecSel -->|No| Standard[Standard rANS: 30 Empirical Modes]
+    CodecSel -->|No| Standard[Standard rANS: 8 Modes: 0/3/4-9]
     CodecSel -->|Yes| Bitplane[Bitplane rANS: 2688 Contexts]
     Standard & Bitplane --> Pack[Codec: Pack Bitstream]
     Pack --> Out[ZPNG Payload]
@@ -23,24 +23,16 @@ import numpy as np
 import numpy.typing as npt
 import logging
 import os, time
-from typing import Tuple, Optional, List, Dict, Any
+from typing import Optional
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 import zstandard as zstd
-from numba import njit, prange, uint8, uint32, uint64
-import concurrent.futures
-import threading, sys
-from .rans import (
-    rans_encode_shards_parallel, 
-    build_pdf_tables_from_shards, L_LOWER,
-    compact_pdf_tables
-)
-
+import threading
 from .common import (
     ZpngResult, FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE,
     apply_median_to_stats,
     calculate_channel_stats, PROFILE_RGB,
-    extract_srb_metadata, to_zigzag, from_zigzag, predict_med_standard,
+    extract_srb_metadata,
     BITPLANE_WIDTH_THRESHOLD, BITPLANE_MIN_PIXELS
 )
 from .transform import (
@@ -96,6 +88,8 @@ def set_parallel_threads(n: int):
     numba.set_num_threads(n)
     logger.info(f"Numba Parallel Engine set to {n} thread(s).")
 
+_MAX_CHUNK_SIZE = 10 * 1024 * 1024  # 10 MB — OOM DoS guard for non-critical chunks
+
 def extract_png_metadata(filepath: str) -> bytes:
     """
     Extracts raw PNG metadata chunks (excluding IHDR, IDAT, IEND) to allow lossless recreation.
@@ -116,12 +110,10 @@ def extract_png_metadata(filepath: str) -> bytes:
                 ctype: bytes = f.read(4)
                 
                 # [v5.1] Memory Protection: Limit non-critical chunk sizes to prevent OOM DoS.
-                MAX_CHUNK_SIZE = 10 * 1024 * 1024 # 10MB
-                
                 if ctype in [b'IHDR', b'IDAT', b'IEND']:
                     f.seek(length + 4, 1) # Skip Data + CRC
                 else:
-                    if length > MAX_CHUNK_SIZE:
+                    if length > _MAX_CHUNK_SIZE:
                         logger.warning(f"Chunk {ctype.decode(errors='replace')} exceeds safe limit ({length} bytes). Skipping.")
                         f.seek(length + 4, 1) # Skip oversized chunk
                     else:
@@ -139,48 +131,9 @@ def extract_png_metadata(filepath: str) -> bytes:
         return b''
 
 # =============================================================================
-# --- 3. Diagnostic Helpers ---
+# --- 2. Diagnostic Helpers ---
 # =============================================================================
 
-def analyze_shard_ranges(shard_stats: npt.NDArray[np.uint32], verbose: bool = False):
-    """ [Research] Analyzes the actual residual spread in each shard. """
-    print("\n--- [Research] Shard Residual Range Analysis ---")
-    total_widths = 0.0
-    shard_count = 0
-    max_observed_width = 0
-    
-    # Pre-map zigzag to signed
-    vals = np.zeros(256, dtype=np.int16)
-    for i in range(256):
-        z8 = np.uint8(i)
-        mask = -np.int16(z8 & 1)
-        vals[i] = np.int16(z8 >> 1) ^ mask
-
-    for c in range(3):
-        chan_name = ["Grn", "RD", "BD"][c]
-        for k in range(n_shards):
-            hist = shard_stats[c, k]
-            count = np.sum(hist)
-            if count == 0: continue
-            
-            indices = np.where(hist > 0)[0]
-            if len(indices) == 0: continue
-            
-            shard_vals = vals[indices]
-            min_v, max_v = np.min(shard_vals), np.max(shard_vals)
-            width = int(max_v - min_v + 1)
-            
-            total_widths += width
-            shard_count += 1
-            max_observed_width = max(max_observed_width, width)
-            
-    if shard_count > 0:
-        avg_width = total_widths / shard_count
-        print(f"Shards: {shard_count}")
-        print(f"Avg Width: {avg_width:.2f} (Limit: 256)")
-        print(f"Max Obs Width: {max_observed_width}")
-        print(f"Prob Space Saving: {(1.0 - avg_width/256.0)*100:.2f}%")
-    print("-----------------------------------------------\n")
 
 def check_grayscale_robust(arr: npt.NDArray[np.uint8], img_mode: Optional[str] = None) -> bool:
     """ 
@@ -284,7 +237,8 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
         shard_counts: npt.NDArray[np.uint32] = np.zeros((3, n_shards), dtype=np.uint32)
         shard_stats: npt.NDArray[np.uint32] = np.zeros((3, n_shards, 256), dtype=np.uint32)
         
-        use_gsub = True # Standardized
+        # G-sub is applied inside extract_channels; this flag only marks the bitstream header.
+        use_gsub = True
  
         # Calculate Global Modes for Noise Shard Prediction
         modes: npt.NDArray[np.uint8] = np.zeros(3, dtype=np.uint8)
@@ -401,17 +355,15 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
         metadata_bytes: bytes = extract_png_metadata(img_path)
         metadata_len: int = len(metadata_bytes)
         
-        # 1. Determine initial mode via gating (v5.1.2: score reused from pre-pass)
+        # 1. Determine initial mode via gating
         is_too_small: bool = (pixels < 1024)
-        is_too_complex: bool = False # Gating removed
 
         # Evaluate fallbacks only if necessary
         size_simple: float = 1e18
         simple_payload: bytes = b""
         raw_bytes: bytes = b""
-        # [v4.9.1 Fix] Optimization: Only check SIMPLE for tiny icons (<64k) or high-complexity outliers
-        # Ensure force_mode == 1 trigger is included in calculation path.
-        if force_mode == 1 or is_too_small or is_too_complex or pixels < 65536:
+        # [v4.9.1 Fix] Optimization: Only check SIMPLE for tiny icons (<64k pixels)
+        if force_mode == 1 or pixels < 65536:
             raw_bytes = arr.tobytes()
             simple_payload = zstandard_compress(raw_bytes)
             size_simple = 8 + 16 + len(simple_payload) + metadata_len
@@ -420,7 +372,7 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
         # Passthrough is only an option if the physical file exists
         size_pass: float = 8 + 16 + orig_size if (img_path and os.path.exists(img_path)) else 1e18
 
-        force_simple: bool = (force_mode == 1) or is_too_small or is_too_complex
+        force_simple: bool = (force_mode == 1) or is_too_small
         selected_mode: str = "RGB"
         if force_simple:
             selected_mode = "SIMPLE" if size_simple < size_raw else "RAW"
@@ -441,6 +393,7 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
         header_base: bytes = np.array([h, w, metadata_len, flag], dtype='<u4').tobytes()
         
         final_payload: bytes = b""
+        modes_diag: npt.NDArray[np.uint8] = np.zeros((3, n_shards), dtype=np.uint8)
         if selected_mode == "SIMPLE":
             final_payload = b"ZPNGCSDE" + header_base + simple_payload + metadata_bytes
         elif selected_mode == "RAW":
@@ -455,7 +408,6 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
             flag |= FLAG_BITPLANE
             header_base = np.array([h, w, metadata_len, flag], dtype='<u4').tobytes()
             final_payload = b"ZPNGCSDE" + header_base + bit_payload + metadata_bytes
-            selected_mode = "GRAY"
         elif use_bitplane and selected_mode == "RGB":
             # [v7.3] Shard-Conditioned Bitplane RGB Path
             gr_resid = predict_2d_residuals(gr_map)
@@ -470,7 +422,6 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
             header_base = np.array([h, w, metadata_len, flag], dtype='<u4').tobytes()
             final_payload = b"ZPNGCSDE" + header_base + bit_payload + metadata_bytes
         else:
-            modes_diag: npt.NDArray[np.uint8]
             final_payload, modes_diag = pack_bitstream(
                 h, w, is_rgba, is_grayscale, use_gsub,
                 shard_counts, shard_offsets_p1, shard_widths, shard_medians,
@@ -493,29 +444,31 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
                 flag = (flag & FLAG_RGBA) | FLAG_PASSTHROUGH
                 header_base = np.array([h, w, metadata_len, flag], dtype='<u4').tobytes()
                 final_payload = b"ZPNGCSDE" + header_base + original_bytes
+                selected_mode = "PASSTHROUGH"
             elif size_simple == min_size:
                 flag = (flag & FLAG_RGBA) | FLAG_SIMPLE
                 header_base = np.array([h, w, metadata_len, flag], dtype='<u4').tobytes()
                 final_payload = b"ZPNGCSDE" + header_base + simple_payload + metadata_bytes
+                selected_mode = "SIMPLE"
             else:
                 # Fallback to RAW (Uncompressed raw pixels)
                 flag = (flag & FLAG_RGBA) | FLAG_RAW
                 header_base = np.array([h, w, metadata_len, flag], dtype='<u4').tobytes()
                 if not raw_bytes: raw_bytes = arr.tobytes()
                 final_payload = b"ZPNGCSDE" + header_base + raw_bytes + metadata_bytes
+                selected_mode = "RAW"
 
         if output_path:
             with open(output_path, 'wb') as f_out: f_out.write(final_payload)
 
-        # Re-capture modes for diagnostics even for fallback paths (optional, but good for research)
-        res_modes: npt.NDArray[np.uint8] = modes_diag if 'modes_diag' in locals() else np.zeros((3, n_shards), dtype=np.uint8)
+        res_modes: npt.NDArray[np.uint8] = modes_diag
 
         return ZpngResult(enc_time=time.time()-t0, h=h, w=w, is_rgba=is_rgba, comp_size=len(final_payload),
                           orig_size=orig_size, hits=hits_total_p1, res_sums=sums_total_p1,
                           shard_counts=shard_counts,
                           shard_ptrs=None,
                           shard_stats=shard_stats,
-shard_widths=shard_widths,
+                          shard_widths=shard_widths,
                           shard_medians=shard_medians,
                           shard_modes=res_modes,
                           channel_hists=channel_hists,
@@ -529,26 +482,3 @@ shard_widths=shard_widths,
         import traceback
         logger.debug(traceback.format_exc())
         raise
-
-# --- Pytest Snippet for Core Logic Verification ---
-"""
-def test_compression_parity():
-    import numpy as np
-    from .compress import compress_csde
-    from .decompress import decompress_csde
-    
-    # Create synthetic test image (G-sub compatible)
-    data = np.random.randint(0, 255, (128, 128, 3), dtype=np.uint8)
-    
-    # Compress
-    res = compress_csde(None, None, preloaded_arr=data)
-    assert res.payload is not None
-    assert len(res.payload) > 0
-    
-    # Decompress
-    rec, _ = decompress_csde(res.payload, None)
-    
-    # MSE Check
-    mse = np.mean((data.astype(np.float64) - rec.astype(np.float64))**2)
-    assert mse == 0.0, f"Bit-perfect check failed: MSE={mse}"
-"""

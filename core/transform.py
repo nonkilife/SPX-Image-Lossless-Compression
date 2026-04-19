@@ -57,10 +57,10 @@ def extract_channels(rgb: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8],
     return gr_map, rd_map, bd_map, a_map, global_hists
 
 @njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
-def restore_channels(gr_rec: npt.NDArray[np.uint8], rd_rec: npt.NDArray[np.uint8], 
-                     bd_rec: npt.NDArray[np.uint8], a_ch: npt.NDArray[np.uint8], 
-                     is_rgba: bool, is_grayscale: bool) -> npt.NDArray[np.uint8]:
-    """ Inverse G-sub RCT transform (Parallelized). """
+def restore_channels(gr_rec: npt.NDArray[np.uint8], rd_rec: npt.NDArray[np.uint8],
+                     bd_rec: npt.NDArray[np.uint8], a_ch: npt.NDArray[np.uint8],
+                     is_rgba: bool, is_grayscale: bool, apply_gsub: bool) -> npt.NDArray[np.uint8]:
+    """ Inverse G-sub RCT transform (Parallelized). apply_gsub mirrors FLAG_COLOR_GSUB. """
     h, w = gr_rec.shape
     rgb = np.zeros((h, w, 4 if is_rgba else 3), dtype=np.uint8)
     for i in prange(h):
@@ -68,9 +68,12 @@ def restore_channels(gr_rec: npt.NDArray[np.uint8], rd_rec: npt.NDArray[np.uint8
             g = gr_rec[i, j]
             if is_grayscale:
                 r, b = g, g
-            else:
+            elif apply_gsub:
                 r = np.uint8((int(rd_rec[i, j]) + int(g)) & 0xFF)
                 b = np.uint8((int(bd_rec[i, j]) + int(g)) & 0xFF)
+            else:
+                r = rd_rec[i, j]
+                b = bd_rec[i, j]
             rgb[i, j, 0], rgb[i, j, 1], rgb[i, j, 2] = r, g, b
             if is_rgba: rgb[i, j, 3] = a_ch[i, j]
     return rgb

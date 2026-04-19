@@ -8,13 +8,16 @@ Architecture: Dispatcher layer connecting bitstream parsing to the BICC/RCT reco
 Technical Flowchart:
 ```mermaid
 graph TD
-    In[ZPNG Bitstream] --> Unpack[Codec: Unpack Metadata]
-    Unpack --> Mode{Is Bitplane?}
-    Mode -->|No| Standard[Standard rANS Decoding]
-    Mode -->|Yes| Bitplane[Bitplane rANS Decoding]
+    In[ZPNG Bitstream] --> Flags{Mode Flags}
+    Flags -->|PASSTHROUGH| Pass[PIL Direct Open]
+    Flags -->|RAW| Raw[memcpy reshape]
+    Flags -->|SIMPLE| Simple[ZStd Decompress]
+    Flags -->|Sharded| BP{Is Bitplane?}
+    BP -->|No| Standard[Standard rANS Decoding]
+    BP -->|Yes| Bitplane[Bitplane rANS Decoding]
     Standard & Bitplane --> BICC[BICC: Median Re-addition]
     BICC --> InvGSUB[Inverse G-sub RCT: Restore RGB]
-    InvGSUB --> Out[Bit-Perfect Image]
+    Pass & Raw & Simple & InvGSUB --> Out[Bit-Perfect Image]
 ```
 """
 
@@ -37,7 +40,7 @@ import threading
 from typing import Tuple, Optional, Union
 from .common import (
     FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE,
-    FLAG_BITPLANE,
+    FLAG_BITPLANE, FLAG_COLOR_GSUB,
     PROFILE_RGB, sync_luts_if_needed
 )
 from . import env
@@ -136,20 +139,14 @@ def inject_png_metadata(filepath: str, metadata_bytes: bytes) -> None:
         logger.error(f"Failed to inject PNG metadata: {e}")
 
 
-
-
-
 def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = None, optimize_png: bool = False) -> Tuple[npt.NDArray[np.uint8], float]:
-    """ 
+    """
     Main ZPNG-CSDE Decompression Entry Point (v7.5 Stable).
-    
+
     Bit-perfect reverse orchestrator:
-    1. Parallel Dispatch (Pillar 0): Uses concurrent.futures to decode N shards 
-       simultaneously. Each thread jumps to an absolute bitstream offset, eliminating 
-       sequential dependency.
-    2. BICC Shard Recovery (Pillar 2): Staggered reconstruction of G-Lead then RD/BD-Lag.
-    3. Inverse GSUB (Pillar 1): Cross-channel restoration using Green as the spatial reference.
-    
+    1. BICC Shard Recovery (Pillar 2): Staggered reconstruction of G-Lead then RD/BD-Lag.
+    2. Inverse GSUB (Pillar 1): Cross-channel restoration using Green as the spatial reference.
+
     NOTE: Operates with Numba JIT parallelism to achieve 25.0+ MB/s decompression throughput.
     """
     t0: float = time.time()
@@ -178,7 +175,6 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
             
             n_shards = profile.total_shards
             
-            # Expanded parameters for JIT
             nsid = profile.noise_shard_id
             
             shard_widths: npt.NDArray[np.uint16] = np.zeros((3, n_shards), dtype=np.uint16)
@@ -194,7 +190,11 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
                 if flag & FLAG_BITPLANE:
                     shard_widths.fill(1)
                     compressed_data = f.read()
-                    metadata_bytes = b""
+                    if m_len > 0:
+                        metadata_bytes = compressed_data[-m_len:]
+                        compressed_data = compressed_data[:-m_len]
+                    else:
+                        metadata_bytes = b""
                 else:
                     meta_stride = n_shards if is_grayscale else 3 * n_shards
                     h_len = meta_stride * 3
@@ -215,7 +215,7 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
 
                     # Pass the stream directly to unpacker
                     res_gr_flat, res_rd_flat, res_bd_flat, gr_offs, rd_offs, bd_offs, shard_counts, res_a_flat = unpack_bitstream(
-                        f, h, w, is_rgba, is_grayscale, shard_widths, shard_modes, flag, metadata_len
+                        f, h, w, is_rgba, is_grayscale, shard_widths, shard_modes, flag
                     )
                     
                     # Read metadata from the end of the stream
@@ -238,7 +238,7 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
                 if flag & FLAG_BITPLANE:
                     if is_grayscale:
                         res_gr_flat, *_ = unpack_bitstream(
-                            compressed_data, h, w, is_rgba, is_grayscale, shard_widths, shard_modes, flag, metadata_len
+                            compressed_data, h, w, is_rgba, is_grayscale, shard_widths, shard_modes, flag
                         )
                         gr_rec = reconstruct_2d_channels(h, w, res_gr_flat.reshape((h, w)))
                         rd_rec = np.zeros((h, w), dtype=np.uint8)
@@ -257,11 +257,13 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
                         profile.shard_map, nsid
                     )
 
-                a_rec: npt.NDArray[np.uint8] = np.empty((h, w), dtype=np.uint8) if is_rgba else np.zeros((0, 0), dtype=np.uint8)
+                # np.zeros ensures opaque default for RGBA bitplane images (res_a_flat is None there).
+                a_rec: npt.NDArray[np.uint8] = np.zeros((h, w), dtype=np.uint8) if is_rgba else np.zeros((0, 0), dtype=np.uint8)
                 if is_rgba and res_a_flat is not None:
                     decode_alpha_channel(h, w, res_a_flat.reshape((h, w)), a_rec)
                 
-                rgb = restore_channels(gr_rec, rd_rec, bd_rec, a_rec, is_rgba, is_grayscale)
+                rgb = restore_channels(gr_rec, rd_rec, bd_rec, a_rec, is_rgba, is_grayscale,
+                                      bool(flag & FLAG_COLOR_GSUB))
 
             if output_path:
                 Image.fromarray(rgb).save(output_path, optimize=optimize_png)
