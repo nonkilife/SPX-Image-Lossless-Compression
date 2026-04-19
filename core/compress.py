@@ -38,7 +38,7 @@ from .rans import (
 
 from .common import (
     ZpngResult, FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE,
-    TOTAL_SHARDS, apply_median_to_stats,
+    apply_median_to_stats,
     calculate_channel_stats, PROFILE_RGB,
     extract_srb_metadata, to_zigzag, from_zigzag, predict_med_standard,
     BITPLANE_WIDTH_THRESHOLD, BITPLANE_MIN_PIXELS
@@ -53,7 +53,7 @@ from .shard_rgb import (
 from .shard_gray import (
     predict_pass_1_gray, predict_pass_2_gray
 )
-from .codec import pack_bitstream_v5
+from .codec import pack_bitstream
 from .rans_bitplane import compress_bitplane_gray_sharded, compress_bitplane_rgb_sharded
 from . import env
 
@@ -67,18 +67,6 @@ logger: logging.Logger = logging.getLogger("zpng.compress")
 # [v2.25] Module-level Thread-Local for compressor object reuse
 thread_local_comp: threading.local = threading.local()
 
-def get_thread_local_workspace(h: int) -> npt.NDArray[np.uint32]:
-    """ [v5.2] Manages a persistent workspace for row_shard_hists to avoid 200MB+ daily allocation. """
-    target_h = max(h, 2160) # Target 2K baseline, or current h
-    if not hasattr(thread_local_comp, 'row_shard_hists'):
-        thread_local_comp.row_shard_hists = np.zeros((target_h, 3, TOTAL_SHARDS, 256), dtype=np.uint32)
-    elif thread_local_comp.row_shard_hists.shape[0] < h:
-        # Resize if current image is larger than our buffer
-        thread_local_comp.row_shard_hists = np.zeros((h, 3, TOTAL_SHARDS, 256), dtype=np.uint32)
-    
-    workspace = thread_local_comp.row_shard_hists[:h]
-    workspace.fill(0) # Faster than re-allocation + zeroing by OS
-    return workspace
 
 def clear_zpng_workspaces():
     """ [v5.2.3] Forces release of large Thread-Local memory buffers to prevent OOM in long-lived workers (FastAPI/Celery). """
@@ -170,7 +158,7 @@ def analyze_shard_ranges(shard_stats: npt.NDArray[np.uint32], verbose: bool = Fa
 
     for c in range(3):
         chan_name = ["Grn", "RD", "BD"][c]
-        for k in range(TOTAL_SHARDS):
+        for k in range(n_shards):
             hist = shard_stats[c, k]
             count = np.sum(hist)
             if count == 0: continue
@@ -286,7 +274,7 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
         profile: ShardProfile = PROFILE_RGB
         
         # [v6.6 Defensive] Ensure global Context LUTs match requested profile
-        sync_luts_if_needed(profile.v_boundaries_gr, profile.intensity_segments)
+        sync_luts_if_needed(profile.v_boundaries_gr, profile.intensity_segments, profile.shard_map, profile.noise_shard_id)
         
         n_shards: int = profile.total_shards
         
@@ -304,18 +292,22 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
             _, _, mode_val = calculate_channel_stats(channel_hists[c_idx])
             modes[c_idx] = np.uint8(mode_val)
         
+        # Pad channel maps with 1-pixel zero border for guard-free Numba kernels
+        gr_map_p = np.pad(gr_map, 1, constant_values=0)
+        if not is_grayscale:
+            rd_map_p = np.pad(rd_map, 1, constant_values=0)
+            bd_map_p = np.pad(bd_map, 1, constant_values=0)
+
         if is_grayscale:
             shard_counts, shard_stats, shard_offsets_p1, row_global_offsets, shard_medians, \
             (hits_total_p1, sums_total_p1) = \
-                predict_pass_1_gray(h, w, gr_map,
-                                    profile.shard_map, profile.v_boundaries_gr,
-                                    profile.intensity_segments, profile.noise_shard_id)
+                predict_pass_1_gray(h, w, gr_map_p,
+                                    profile.shard_map, profile.noise_shard_id)
         else:
             shard_counts, shard_stats, shard_offsets_p1, row_global_offsets, shard_medians, \
             (hits_total_p1, sums_total_p1) = \
-                predict_pass_1(h, w, gr_map, rd_map, bd_map, False,
-                               profile.shard_map, profile.v_boundaries_gr,
-                               profile.intensity_segments, profile.noise_shard_id)
+                predict_pass_1(h, w, gr_map_p, rd_map_p, bd_map_p, False,
+                               profile.shard_map, profile.noise_shard_id)
         
 
         
@@ -374,13 +366,13 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
         a_sum: float
         if is_grayscale:
             res_a, (a_hits, a_sum) = \
-                predict_pass_2_gray(h, w, gr_map, a_map, is_rgba,
-                                    profile.shard_map, profile.v_boundaries_gr, profile.intensity_segments, profile.noise_shard_id,
+                predict_pass_2_gray(h, w, gr_map_p, a_map, is_rgba,
+                                    profile.shard_map, profile.noise_shard_id,
                                     row_global_offsets, shard_medians, shard_gr)
         else:
             res_a, (a_hits, a_sum) = \
-                predict_pass_2(h, w, gr_map, rd_map, bd_map, a_map, is_rgba, False,
-                               profile.shard_map, profile.v_boundaries_gr, profile.intensity_segments, profile.noise_shard_id,
+                predict_pass_2(h, w, gr_map_p, rd_map_p, bd_map_p, a_map, is_rgba, False,
+                               profile.shard_map, profile.noise_shard_id,
                                row_global_offsets, shard_medians,
                                shard_gr, shard_rd, shard_bd)
 
@@ -461,8 +453,7 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
             resid_2d = predict_2d_residuals(gr_map)
             bit_payload = compress_bitplane_gray_sharded(
                 gr_map, resid_2d,
-                profile.shard_map, profile.v_boundaries_gr,
-                profile.intensity_segments, profile.noise_shard_id
+                profile.shard_map, profile.noise_shard_id
             )
             flag |= FLAG_BITPLANE
             header_base = np.array([h, w, metadata_len, flag], dtype='<u4').tobytes()
@@ -476,15 +467,14 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
             bit_payload = compress_bitplane_rgb_sharded(
                 gr_map, rd_map, bd_map,
                 gr_resid, rd_resid, bd_resid,
-                profile.shard_map, profile.v_boundaries_gr,
-                profile.intensity_segments, profile.noise_shard_id
+                profile.shard_map, profile.noise_shard_id
             )
             flag |= FLAG_BITPLANE
             header_base = np.array([h, w, metadata_len, flag], dtype='<u4').tobytes()
             final_payload = b"ZPNGCSDE" + header_base + bit_payload + metadata_bytes
         else:
             modes_diag: npt.NDArray[np.uint8]
-            final_payload, modes_diag = pack_bitstream_v5(
+            final_payload, modes_diag = pack_bitstream(
                 h, w, is_rgba, is_grayscale, use_gsub,
                 shard_counts, shard_offsets_p1, shard_widths, shard_medians,
                 all_shards_flat, res_a, metadata_bytes

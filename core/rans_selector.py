@@ -1,12 +1,3 @@
-import numpy as np
-import numpy.typing as npt
-from numba import njit, uint8, uint16, uint32, uint64
-import os
-
-# From core.common import EMPIRICAL_TEMPLATES 
-# (In njit context, we pass it or access via global if pre-compiled)
-from .common import EMPIRICAL_TEMPLATES
-
 """
 ZPNG-CSDE PDF Template Selector (rans_selector)
 
@@ -20,11 +11,18 @@ Available PDF Modes:
 
 Decision Logic (Cross-Entropy vs Penalty):
 The selector evaluates the theoretical bit-cost (cross-entropy) of encoding the data using the perfectly
-fitted Custom PDF, versus the "best-fit" Static Template. Since the Custom PDF is perfectly fitted, it will 
-ALWAYS yield the lowest mathematical bit-cost. However, it applies a 'penalty' to the Custom PDF's cost to 
-simulate the physical file size required to save the table into the header. If the penalty makes the Custom 
+fitted Custom PDF, versus the "best-fit" Static Template. Since the Custom PDF is perfectly fitted, it will
+ALWAYS yield the lowest mathematical bit-cost. However, it applies a 'penalty' to the Custom PDF's cost to
+simulate the physical file size required to save the table into the header. If the penalty makes the Custom
 PDF more expensive than the "slightly ill-fitting but free" Static Template, the Template is chosen.
 """
+
+import numpy as np
+import numpy.typing as npt
+from numba import njit, uint8, uint16, uint32, uint64
+import os
+
+from .common import EMPIRICAL_TEMPLATES
 
 @njit(fastmath=True, cache=True)
 def calculate_cross_entropy(counts: npt.NDArray[np.uint64], pdf: npt.NDArray[np.uint16]) -> float:
@@ -40,8 +38,8 @@ def calculate_cross_entropy(counts: npt.NDArray[np.uint64], pdf: npt.NDArray[np.
 
 @njit(fastmath=True, cache=True)
 def build_pdf_from_counts(counts: npt.NDArray[np.uint64], width: int) -> npt.NDArray[np.uint16]:
-    """ 
-    [v6.7] Precision Alphabet-Tightening PDF Builder.
+    """
+    Precision Alphabet-Tightening PDF Builder.
     Generates a normalized 12-bit (4096 total) PDF only for symbols within [0, width-1].
     Symbols outside this range are strictly 0 probability, eliminating the "Survival Tax".
     """
@@ -65,7 +63,7 @@ def build_pdf_from_counts(counts: npt.NDArray[np.uint64], width: int) -> npt.NDA
         pdf[i] = v
         current_sum += int(v)
 
-    # 3. Correct total mass to exactly 4096 using the Peak Distrubution strategy
+    # 3. Correct total mass to exactly 4096 using the Peak Distribution strategy
     # Note: Symbols [active_limit : 256] remain 0.
     diff = int(4096) - int(current_sum)
 
@@ -104,7 +102,6 @@ def _decide_shard_mode_core(counts: npt.NDArray[np.uint64], width: int,
                             templates: npt.NDArray[np.uint64],
                             disable_templates: bool) -> tuple[uint8, npt.NDArray[np.uint64]]:
     
-    # Automatically downgrades to Mode 1 (Sparse) during chunk serialization if array length favors it.
     dense_pdf = build_pdf_from_counts(counts, width)
     
     if disable_templates:
@@ -114,8 +111,7 @@ def _decide_shard_mode_core(counts: npt.NDArray[np.uint64], width: int,
     best_emp_mode = uint8(0)
     min_emp_bits = 1e18
     
-    # [v6.6.4] Pixel-Adaptive Dynamic Penalty
-    # Adjusts the penalty relative to the size of the shard.
+    # Pixel-Adaptive Dynamic Penalty: adjusts relative to shard size.
     # For small images/shards, the physical byte size of the custom table represents a massive % of the payload,
     # thus the penalty (discouraging Mode 0) becomes exponentially higher.
     n_pixels = uint32(0)

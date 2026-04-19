@@ -1,8 +1,8 @@
 """
-ZPNG-CSDE v7.5 [Stable Parallel Architecture]
-Module: zpng_rans
+ZPNG-CSDE [Stable Parallel Architecture]
+Module: rans
 Role: Pillar 4 - Entropy Engine (Unified).
-Description: Integrated 4-Way Interleaved rANS core and Bit-Context 2D rANS Engine.
+Description: Integrated 4-way interleaved rANS core and Bit-Context 2D rANS Engine.
 Architecture: Precision-indexed SIMD-optimized symbols for O(1) branchless decoding.
 
 Engineering Rationale:
@@ -20,12 +20,11 @@ from numba import njit, prange, uint8, uint16, uint32, uint64, int32
 from typing import Tuple, List, Optional
 
 from .common import (
-    TOTAL_SHARDS, FLAG_TEMPLATE_MODE, EMPIRICAL_TEMPLATES,
-    to_zigzag, from_zigzag
+    EMPIRICAL_TEMPLATES,
 )
 from .rans_selector import _decide_shard_mode_core
 
-# [v6.6 Research] Pre-calc Empirical cumulative/slot tables for decoder
+# Pre-compute empirical cumulative/slot tables for decoder
 def _precompute_empirical():
     syms = []
     cums = []
@@ -56,7 +55,7 @@ EMP_SYM_FREQS, EMP_CUM_FREQS, EMP_LOOKUPS = _precompute_empirical()
 # =============================================================================
 # --- Global Industrial Constants ---
 # =============================================================================
-# [v4.0.8 & v6.9] rANS Precision and Bounds
+# rANS Precision and Bounds
 L_LOWER: uint64 = uint64(2147483648) # 1 << 31 (L_ANS Lower Bound)
 M_BITS: int     = 12                  # Probability precision (Total mass = 4096)
 L_MAX_BOUND: uint64 = (L_LOWER >> M_BITS) << 8 # Normalization threshold
@@ -175,7 +174,7 @@ def collect_freqs_jit(data: npt.NDArray[np.uint8], freqs_out: npt.NDArray[np.uin
 @njit(fastmath=True, cache=True)
 def build_pdf_tables_from_shards_core(shard_counts: npt.NDArray[np.uint64],
                                     shard_widths: npt.NDArray[np.uint16]) -> Tuple[npt.NDArray[np.uint64], npt.NDArray[np.uint64], npt.NDArray[np.uint8]]:
-    """ Move the core logic back to a tight JIT loop called from Python to avoid List overhead. """
+    """ Builds cumulative frequency tables for all shards in a single JIT pass, avoiding Python list overhead. """
     num_shards: int = shard_counts.shape[0]
     all_sym_freqs: npt.NDArray[np.uint64] = np.zeros((num_shards, 256), dtype=np.uint64)
     all_cum_freqs: npt.NDArray[np.uint64] = np.zeros((num_shards, 257), dtype=np.uint64)
@@ -266,7 +265,7 @@ def expand_pdf_tables(compacted_data: npt.NDArray[np.uint8], shard_widths: npt.N
         mode = shard_modes[s]
         
         if mode >= 4:
-            # [v6.6] Empirical Templates
+            # Empirical template: retrieve hardcoded PDF, no bitstream bytes consumed
             tid = mode - 4
             expanded[s] = EMPIRICAL_TEMPLATES[tid].astype(np.uint64)
         elif mode == 3:

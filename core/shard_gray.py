@@ -1,8 +1,8 @@
 """
-ZPNG-CSDE v7.2 [Grayscale Sharding Module]
-Module: zpng_shard_gray
+ZPNG-CSDE [Grayscale Sharding Module]
+Module: shard_gray
 Role: Pillar 3.5 (Grayscale) - Single-Channel Data Partitioning.
-Description: 42-shard BICC orchestration for grayscale images.
+Description: N-shard BICC orchestration for grayscale images.
              Symmetric counterpart to shard_rgb, operating on a single luminance
              channel in standard raster order (no BICC stagger required without
              RD/BD chroma channels). Feeds the standard rANS engine.
@@ -10,7 +10,7 @@ Description: 42-shard BICC orchestration for grayscale images.
 Logic Path Visualization:
 ```mermaid
 graph TD
-    A[Raw Gray Channel] --> B[predict_pass_1: 42-Shard BICC Profiling]
+    A[Raw Gray Channel] --> B[predict_pass_1: N-Shard BICC Profiling]
     B --> C{Decision Hub}
     C -->|Standard| D[predict_pass_2: Shard-Sequential Residuals]
     C -->|Bitplane| E[Skip Pass 2 - Bitplane Engine]
@@ -20,7 +20,7 @@ graph TD
 
 import numpy as np
 import numpy.typing as npt
-from numba import njit, prange, uint8, uint32, uint64
+from numba import njit, prange, uint8, uint64
 from typing import Tuple
 from .common import (
     to_zigzag, predict_med_standard,
@@ -30,8 +30,7 @@ from .common import (
 
 @njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
 def predict_pass_1_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
-                        shard_map: npt.NDArray[np.uint8], v_bounds: npt.NDArray[np.uint8],
-                        i_segs: npt.NDArray[np.uint8], nsid: int) -> Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint8], Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint64]]]:
+                        shard_map: npt.NDArray[np.uint8], nsid: int) -> Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint8], Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint64]]]:
     """
     Stage 1: O(N) Shard Profiling & Histogram Generation for grayscale.
 
@@ -55,18 +54,19 @@ def predict_pass_1_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
         local_hists = np.zeros((n_shards, 256), dtype=np.uint32)
 
         for i in range(start_i, end_i):
+            pi = i + 1  # padded row index (gray_ch is (h+2, w+2))
             h_acc = np.uint32(0)
             s_acc = np.uint64(0)
 
-            for j in range(w):
-                a = gray_ch[i, j-1] if j > 0 else np.uint8(0)
-                b = gray_ch[i-1, j] if i > 0 else np.uint8(0)
-                c = gray_ch[i-1, j-1] if (i > 0 and j > 0) else np.uint8(0)
+            for pj in range(1, w + 1):
+                a = gray_ch[pi, pj-1]
+                b = gray_ch[pi-1, pj]
+                c = gray_ch[pi-1, pj-1]
                 p = predict_med_standard(a, b, c)
-                val = gray_ch[i, j]
+                val = gray_ch[pi, pj]
                 ctx = int(get_context_id_fast(a, b, c, p, shard_map, nsid))
                 diff = (int(val) - int(p)) & 0xFF
-                # [v6.5] Centered storage: 0 residual maps to 128
+                # Centered storage: 0 residual maps to 128
                 res_c = (diff + 128) & 0xFF
                 local_hists[ctx, res_c] += 1
                 row_ptrs[i, ctx] += 1
@@ -117,7 +117,7 @@ def predict_pass_1_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
     for i in range(h):
         row_global_offsets_out[i, 0] = row_global_offsets_1ch[i]
 
-    # [v6.7] Pure BICC Legacy: No Median normalization, only Offset (Min) Tightening.
+    # Medians fixed at 128 (neutral): median normalization in Pass 2 is a no-op.
     shard_medians = np.full((3, n_shards), np.uint8(128), dtype=np.uint8)
 
     hits_out = np.zeros(3, dtype=np.uint32)
@@ -131,8 +131,7 @@ def predict_pass_1_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
 @njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
 def predict_pass_2_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
                         a_ch: npt.NDArray[np.uint8], is_rgba: bool,
-                        shard_map: npt.NDArray[np.uint8], v_bounds: npt.NDArray[np.uint8],
-                        i_segs: npt.NDArray[np.uint8], nsid: int,
+                        shard_map: npt.NDArray[np.uint8], nsid: int,
                         row_global_offsets: npt.NDArray[np.uint32],
                         shard_medians: npt.NDArray[np.uint8],
                         shard_out: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8], Tuple[np.uint64, np.float64]]:
@@ -151,16 +150,17 @@ def predict_pass_2_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
     row_a_sums = np.zeros(h, dtype=np.float64)
 
     for i in prange(h):
+        pi = i + 1  # padded row index (gray_ch is (h+2, w+2))
         local_ptr = row_global_offsets[i, 0].copy()
 
-        for j in range(w):
-            a = gray_ch[i, j-1] if j > 0 else np.uint8(0)
-            b = gray_ch[i-1, j] if i > 0 else np.uint8(0)
-            c = gray_ch[i-1, j-1] if (i > 0 and j > 0) else np.uint8(0)
+        for pj in range(1, w + 1):
+            a = gray_ch[pi, pj-1]
+            b = gray_ch[pi-1, pj]
+            c = gray_ch[pi-1, pj-1]
             p = predict_med_standard(a, b, c)
-            val = gray_ch[i, j]
+            val = gray_ch[pi, pj]
             ctx = int(get_context_id_fast(a, b, c, p, shard_map, nsid))
-            # [v6.1] Median Normalization ONLY
+            # Median-normalize residual
             diff = int(val) - int(p) - (int(shard_medians[0, ctx]) - 128)
             shard_out[local_ptr[ctx]] = to_zigzag(diff)
             local_ptr[ctx] += 1

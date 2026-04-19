@@ -1,6 +1,6 @@
 """
-ZPNG-CSDE v7.5 [High-Precision RCT Architecture]
-Module: zpng_transform
+ZPNG-CSDE [RCT Architecture]
+Module: transform
 Role: Pillar 3 - Spatial Transforms.
 Description: High-level image transformations and reconstruction kernels.
 Architecture: RGB/RGBA Channel management and G-sub Recursive Color Transform.
@@ -27,7 +27,7 @@ def extract_channels(rgb: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8],
     Extracts the G channel directly, then subtracts G from R and B.
     By doing so, the luminance correlation (which heavily permeates G, R, B simultaneously) 
     is largely eliminated from R and B, making these newly created RD and BD color-difference 
-    channels highly compressible. Also outputs per-row intensity historgrams for profile logic.
+    channels highly compressible. Also outputs per-row intensity histograms for profile logic.
     """
     h, w, c = rgb.shape[0], rgb.shape[1], rgb.shape[2]
     gr_map = np.empty((h, w), dtype=np.uint8)
@@ -94,23 +94,19 @@ def decode_alpha_channel(h: int, w: int, res_ch: npt.NDArray[np.uint8], rec_ch: 
 @njit(parallel=True, cache=True)
 def predict_2d_residuals(data_ch: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8]:
     """
-    Applies the completely unified Median Edge Detection (MED) algorithm block.
-
-    Staggered Infrastructure Paradigm:
-    Transforms original 2D channel data into a 2D residual matrix representing
-    the delta offsets from the local predicted environment (A, B, C contexts).
+    Applies MED prediction rowwise and encodes each residual as a ZigZag symbol.
+    Returns a 2D residual matrix with the same shape as the input channel.
     """
     h, w = data_ch.shape
     res = np.zeros((h, w), dtype=uint8)
     if w == 0:
         return res
     for i in prange(h):
-        # [Unrolled Start] Pixel j=0
+        # Boundary pixel (j=0): no left or upper-left neighbor
         b = data_ch[i-1, 0] if i > 0 else uint8(0)
         pred = predict_med_standard(uint8(0), b, uint8(0))
         res[i, 0] = to_zigzag(int(data_ch[i, 0]) - int(pred))
 
-        # [Main Loop] j=1 to w-1
         for j in range(1, w):
             a = data_ch[i, j-1]
             b = data_ch[i-1, j] if i > 0 else uint8(0)
@@ -121,17 +117,16 @@ def predict_2d_residuals(data_ch: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8
 
 @njit(cache=True)
 def reconstruct_2d_channels(h: int, w: int, res_ch: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8]:
-    """ Standard MED reconstruction from a 2D residual matrix [Staggered Infrastructure]. """
+    """ Inverse MED reconstruction from a 2D ZigZag residual matrix. """
     rec = np.zeros((h, w), dtype=uint8)
     if w == 0:
         return rec
     for i in range(h):
-        # [Unrolled Start] Pixel j=0
+        # Boundary pixel (j=0): no left or upper-left neighbor
         b = rec[i-1, 0] if i > 0 else uint8(0)
         pred = predict_med_standard(uint8(0), b, uint8(0))
         rec[i, 0] = uint8((from_zigzag(res_ch[i, 0]) + int(pred)) & 0xFF)
 
-        # [Main Loop] j=1 to w-1
         for j in range(1, w):
             a = rec[i, j-1]
             b = rec[i-1, j] if i > 0 else uint8(0)

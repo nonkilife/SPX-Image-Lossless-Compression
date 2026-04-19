@@ -31,7 +31,7 @@ from .transform import (
 from .shard_rgb import (
     reconstruct_channels
 )
-from .codec import unpack_bitstream_v5
+from .codec import unpack_bitstream
 from .rans_bitplane import decompress_bitplane_rgb_sharded
 import threading
 from typing import Tuple, Optional, Union
@@ -174,7 +174,7 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
             profile = PROFILE_RGB
             
             # [v6.6 Defensive] Ensure global Context LUTs match requested profile
-            sync_luts_if_needed(profile.v_boundaries_gr, profile.intensity_segments)
+            sync_luts_if_needed(profile.v_boundaries_gr, profile.intensity_segments, profile.shard_map, profile.noise_shard_id)
             
             n_shards = profile.total_shards
             
@@ -214,7 +214,7 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
                         shard_modes = np.frombuffer(h_raw[6*n_shards:9*n_shards], dtype=np.uint8).reshape((3, n_shards))
 
                     # Pass the stream directly to unpacker
-                    res_gr_flat, res_rd_flat, res_bd_flat, gr_offs, rd_offs, bd_offs, shard_counts, res_a_flat = unpack_bitstream_v5(
+                    res_gr_flat, res_rd_flat, res_bd_flat, gr_offs, rd_offs, bd_offs, shard_counts, res_a_flat = unpack_bitstream(
                         f, h, w, is_rgba, is_grayscale, shard_widths, shard_modes, flag, metadata_len
                     )
                     
@@ -237,7 +237,7 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
             else:
                 if flag & FLAG_BITPLANE:
                     if is_grayscale:
-                        res_gr_flat, *_ = unpack_bitstream_v5(
+                        res_gr_flat, *_ = unpack_bitstream(
                             compressed_data, h, w, is_rgba, is_grayscale, shard_widths, shard_modes, flag, metadata_len
                         )
                         gr_rec = reconstruct_2d_channels(h, w, res_gr_flat.reshape((h, w)))
@@ -246,8 +246,7 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
                     else:
                         gr_rec, rd_rec, bd_rec = decompress_bitplane_rgb_sharded(
                             compressed_data, h, w,
-                            profile.shard_map, profile.v_boundaries_gr,
-                            profile.intensity_segments, nsid
+                            profile.shard_map, nsid
                         )
                 else:
                     # Standard Shard Path (already unpacked via stream above)
@@ -255,8 +254,7 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
                         h, w, res_gr_flat, res_rd_flat, res_bd_flat,
                         gr_offs, rd_offs, bd_offs,
                         shard_counts, shard_medians, is_grayscale,
-                        profile.shard_map, profile.v_boundaries_gr,
-                        profile.intensity_segments, nsid
+                        profile.shard_map, nsid
                     )
 
                 a_rec: npt.NDArray[np.uint8] = np.empty((h, w), dtype=np.uint8) if is_rgba else np.zeros((0, 0), dtype=np.uint8)

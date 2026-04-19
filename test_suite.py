@@ -65,9 +65,14 @@ def zpng_worker(path: str) -> Dict[str, Any]:
         comp_size_bytes = len(res_z.payload)
         mse = np.mean((arr_orig.astype(np.float64) - rec_rgb[..., :3].astype(np.float64))**2)
         
+        # Calculate PNM size (Raw Pixels + Header)
+        channels = arr_orig.shape[2] if arr_orig.ndim == 3 else 1
+        pnm_header = f"P{'6' if channels==3 else '5'}\n{arr_orig.shape[1]} {arr_orig.shape[0]}\n255\n".encode('ascii')
+        pnm_bytes = len(pnm_header) + arr_orig.size
+
         return {
             "name": "ZPNG", "filename": filename, "pixels": pixels,
-            "orig_bytes": orig_size_bytes, "comp_bytes": comp_size_bytes,
+            "orig_bytes": orig_size_bytes, "pnm_bytes": pnm_bytes, "comp_bytes": comp_size_bytes,
             "e_s": ze_s, "d_s": zd_s, "mse": mse, "success": True
         }
     except Exception as e:
@@ -97,9 +102,14 @@ def webp_worker(path: str) -> Dict[str, Any]:
                 _ = np.array(img_webp) # Force full decode
             wd_s = (time.perf_counter() - t1)
             
+            # Calculate PNM size
+            channels = arr_orig.shape[2] if arr_orig.ndim == 3 else 1
+            pnm_header = f"P{'6' if channels==3 else '5'}\n{arr_orig.shape[1]} {arr_orig.shape[0]}\n255\n".encode('ascii')
+            pnm_bytes = len(pnm_header) + arr_orig.size
+
             return {
                 "name": "WebP", "filename": filename, "pixels": pixels,
-                "orig_bytes": orig_size_bytes, "comp_bytes": comp_size_bytes,
+                "orig_bytes": orig_size_bytes, "pnm_bytes": pnm_bytes, "comp_bytes": comp_size_bytes,
                 "e_s": we_s, "d_s": wd_s, "mse": 0.0, "success": True
             }
     except Exception as e:
@@ -124,9 +134,14 @@ def jxl_worker(path: str) -> Dict[str, Any]:
             jd_s = (time.perf_counter() - t1)
             
             comp_size_bytes = len(encoded)
+            # Calculate PNM size
+            channels = arr_orig.shape[2] if arr_orig.ndim == 3 else 1
+            pnm_header = f"P{'6' if channels==3 else '5'}\n{arr_orig.shape[1]} {arr_orig.shape[0]}\n255\n".encode('ascii')
+            pnm_bytes = len(pnm_header) + arr_orig.size
+
             return {
                 "name": "JXL", "filename": filename, "pixels": pixels,
-                "orig_bytes": orig_size_bytes, "comp_bytes": comp_size_bytes,
+                "orig_bytes": orig_size_bytes, "pnm_bytes": pnm_bytes, "comp_bytes": comp_size_bytes,
                 "e_s": je_s, "d_s": jd_s, "mse": 0.0, "success": True
             }
     except Exception as e:
@@ -141,6 +156,7 @@ class CodecReporter:
         self.name = codec_name
         self.count = 0
         self.total_orig = 0
+        self.total_pnm = 0
         self.total_comp = 0
         self.total_pixels = 0
         self.total_e_s = 0.0
@@ -153,6 +169,7 @@ class CodecReporter:
         self.count += 1
         self.total_pixels += res["pixels"]
         self.total_orig += res["orig_bytes"]
+        self.total_pnm += res["pnm_bytes"]
         self.total_comp += res["comp_bytes"]
         self.total_e_s += res["e_s"]
         self.total_d_s += res["d_s"]
@@ -184,8 +201,10 @@ class CodecReporter:
             "name": self.name,
             "count": self.count,
             "orig_mb": orig_mb,
+            "pnm_mb": self.total_pnm / (1024**2),
             "src_bpp": src_bpp,
             "comp_mb": self.total_comp / (1024**2),
+            "saved_pnm_pct": (1.0 - self.total_comp / self.total_pnm) * 100 if self.total_pnm > 0 else 0,
             "saved_pct": 100 - agg_ratio, "bpp": avg_bpp,
             "mean_ratio": mean_ratio, "median_ratio": np.median(self.ratios),
             "range": (min(self.ratios), max(self.ratios)),
@@ -212,9 +231,11 @@ def print_comparison_table(stats_list: List[Dict], dataset_name: str):
     # Define Rows (Label, key, format, tuple_idx)
     rows = [
         ("Original Size", "orig_mb", "{:>10.2f} MB"),
+        ("PNM Size (Raw)", "pnm_mb", "{:>10.2f} MB"),
         ("Source BPP", "src_bpp", "{:>13.4f}"),
         ("Compressed Size", "comp_mb", "{:>10.2f} MB"),
-        ("Savings (%)", "saved_pct", "{:>10.2f} %"),
+        ("Savings (vs PNG)", "saved_pct", "{:>10.2f} %"),
+        ("Savings (vs PNM)", "saved_pnm_pct", "{:>10.2f} %"),
         ("BPP", "bpp", "{:>13.4f}"),
         ("Mean Ratio (%)", "mean_ratio", "{:>10.2f} %"),
         ("Median Ratio (%)", "median_ratio", "{:>10.2f} %"),
@@ -278,9 +299,10 @@ def show_codec_summary(s: Dict):
     print(f"\n{div}")
     print(f"  {s['name']} Performance Audit ({int(s.get('count',0))} images):")
     print(f"  Original Size   : {s['orig_mb']:6.2f} MB")
+    print(f"  PNM Size (Raw)  : {s['pnm_mb']:6.2f} MB")
     src_bpp = s['total_orig'] * 8.0 / s['total_pixels'] if s.get('total_pixels', 0) > 0 else 0
     print(f"  Source Density  : {src_bpp:6.4f} BPP (Disk)")
-    print(f"  Compressed Size : {s['comp_mb']:6.2f} MB | Saved {s['saved_pct']:3.2f}% | BPP {s['bpp']:6.4f}")
+    print(f"  Compressed Size : {s['comp_mb']:6.2f} MB | BPP {s['bpp']:6.4f} | Saved: PNG {s['saved_pct']:3.2f}% / PNM {s['saved_pnm_pct']:3.2f}%")
     print(f"  Comp. Ratio     : Mean {s['mean_ratio']:5.2f}% | Median {s['median_ratio']:5.2f}% | Range {s['range'][0]:5.1f}-{s['range'][1]:5.1f}%")
     print(f"  Avg Process Time: Enc {s['avg_e_ms']:7.1f} ms | Dec {s['avg_d_ms']:7.1f} ms")
     print(f"  Throughput      : Compress {s['sys_tp'][0]:6.2f} MB/s | Decompress {s['sys_tp'][1]:6.2f} MB/s")
@@ -341,8 +363,8 @@ def export_to_csv(stats_list: List[Dict], dataset_name: str):
     file_exists = os.path.exists(csv_path)
     # [v6.2.2] Harmonized Comprehensive Metric Set
     headers = [
-        "Timestamp", "Dataset", "Codec", "Images", "Orig_MB", "Comp_MB",
-        "Saved%", "BPP", "Ratio_Mean", "Ratio_Med", 
+        "Timestamp", "Dataset", "Codec", "Images", "Orig_MB", "PNM_MB", "Comp_MB",
+        "Saved_PNG%", "Saved_PNM%", "BPP", "Ratio_Mean", "Ratio_Med", 
         "Avg_Enc_ms", "Avg_Dec_ms", 
         "Enc_TP", "Dec_TP", "Core_E_TP", "Core_D_TP",
         "Wins_S", "Wins_E", "Wins_D", "MSE"
@@ -358,8 +380,8 @@ def export_to_csv(stats_list: List[Dict], dataset_name: str):
             if not s: continue
             writer.writerow([
                 now, dataset_name, s["name"], s.get("count", 0),
-                f"{s['orig_mb']:.2f}", f"{s['comp_mb']:.2f}",
-                f"{s['saved_pct']:.2f}", f"{s['bpp']:.4f}",
+                f"{s['orig_mb']:.2f}", f"{s['pnm_mb']:.2f}", f"{s['comp_mb']:.2f}",
+                f"{s['saved_pct']:.2f}", f"{s['saved_pnm_pct']:.2f}", f"{s['bpp']:.4f}",
                 f"{s['mean_ratio']:.2f}", f"{s['median_ratio']:.2f}",
                 f"{s.get('avg_e_ms', 0):.1f}", f"{s.get('avg_d_ms', 0):.1f}",
                 f"{s['sys_tp'][0]:.2f}", f"{s['sys_tp'][1]:.2f}",
@@ -429,7 +451,7 @@ def main():
             if not os.path.exists(src_dir):
                 print(f"  [!] Source {src_dir} missing. Skipping."); continue
             
-            all_files = [f for f in os.listdir(src_dir) if f.lower().endswith(('.png', '.bmp'))]
+            all_files = [f for f in os.listdir(src_dir) if f.lower().endswith(('.png', '.bmp', '.ppm', '.pgm', '.pnm'))]
             if len(all_files) < count:
                 print(f"  [!] Warning: {src_dir} only has {len(all_files)} files (requested {count}). Using all.")
                 selected = all_files
@@ -450,7 +472,7 @@ def main():
         print(f"❌ Error: Path {target_path} not found."); return
 
     if os.path.isdir(target_path):
-        files = [os.path.join(target_path, f) for f in os.listdir(target_path) if f.lower().endswith(('.png', '.bmp'))]
+        files = [os.path.join(target_path, f) for f in os.listdir(target_path) if f.lower().endswith(('.png', '.bmp', '.ppm', '.pgm', '.pnm'))]
         files.sort()
         files = files[args.offset:args.offset+args.num_tests] if args.num_tests else files[args.offset:]
     else:

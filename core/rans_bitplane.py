@@ -1,17 +1,17 @@
 """
-ZPNG-CSDE v7.5 [Stable Parallel Architecture]
+ZPNG-CSDE [Stable Parallel Architecture]
 Module: rans_bitplane
-Role: Grayscale entropy coding combining 42-shard gradient context with
+Role: Entropy coding combining N-shard gradient context with
       2-bit spatial bitplane context.
 
 Engineering Rationale:
-1. Pillar 4.5 - Residual Decomposition: 8-bit residuals are decomposed into 
-   four 2-bit layers (Layer 0: bits 0-1, Layer 1: bits 2-3, etc.). This reduces 
+1. Pillar 4.5 - Residual Decomposition: 8-bit residuals are decomposed into
+   four 2-bit layers (Layer 0: bits 0-1, Layer 1: bits 2-3, etc.). This reduces
    the alphabet size from 256 to 4 per operation, simplifying PDF modeling.
-2. Temporal-Causal Context: For every pixel, a 6-bit spatial context is derived 
-   from the already-decoded 2-bit values of the Left (L), Up (U), and North-West (NW) 
+2. Temporal-Causal Context: For every pixel, a 6-bit spatial context is derived
+   from the already-decoded 2-bit values of the Left (L), Up (U), and North-West (NW)
    neighbors.
-3. Shard Conditioning: Allows the engine to adapt to local gradient trends (BICC) 
+3. Shard Conditioning: Allows the engine to adapt to local gradient trends (BICC)
    while maintaining fine-grained spatial awareness.
 
 Technical Architecture:
@@ -19,11 +19,11 @@ For every pixel, the combined per-layer context is derived via:
     ctx = shard_id * N_SPATIAL + (L_2bit | U_2bit<<2 | NW_2bit<<4)
 
 Where:
-  - shard_id: 42-shard gradient context (Universal-42 Profile).
+  - shard_id: gradient shard context (N_SHARDS per profile).
   - L/U/NW_2bit: High-order bits of reconstructed spatial neighbors.
-  - Context Range: 42 x 64 = 2,688 contexts per layer.
+  - Context Range: N_SHARDS x N_SPATIAL contexts per layer.
 
-Bitstream Format (v7.5):
+Bitstream Format:
   [0xFF]                          1 byte  - Sharded format magic
   [tables_zstd_len: uint32]       4 bytes - Zstd compressed PDF block length
   [tables_zstd]                   N bytes - Flattened [4, 2688, 4] frequencies
@@ -38,12 +38,13 @@ graph TD
     Layer --> Ctx[Combine Contexts: 42 Shard x 64 Spatial]
     Ctx --> rANS[Sequential rANS: Layer 3 to 0]
     rANS --> Stream[Bitstream + Zstd PDF Table]
+    %% Ctx label: N Shard x 64 Spatial = N_CTX combined contexts
 ```
 """
 
 import numpy as np
 import numpy.typing as npt
-from numba import njit, uint8, uint64
+from numba import njit, prange, uint8, uint64, get_num_threads, get_thread_id
 from typing import Tuple
 import zstandard as zstd
 import concurrent.futures
@@ -55,8 +56,8 @@ from .predictor import from_zigzag
 # Constants
 # ---------------------------------------------------------------------------
 N_SPATIAL: int = 64                         # 2-bit L|U<<2|NW<<4 contexts
-N_SHARDS: int  = 42                         # Universal-42 profile
-N_CTX: int     = N_SHARDS * N_SPATIAL       # 2,688 combined contexts per layer
+N_SHARDS: int  = 42                         # Default for PROFILE_RGB; n_ctx recomputed dynamically per call
+N_CTX: int     = N_SHARDS * N_SPATIAL       # Default context count; JIT kernels receive n_ctx at runtime
 BITPLANE_MAGIC: int = 0xFF                  # first-byte sentinel
 
 _L_LOWER  = np.uint64(1 << 31)
@@ -82,12 +83,14 @@ def _mul_hi(a: uint64, b: uint64) -> uint64:
 # ---------------------------------------------------------------------------
 # Frequency table builder
 # ---------------------------------------------------------------------------
-@njit(cache=True, boundscheck=False)
+@njit(parallel=True, boundscheck=False, cache=True)
 def _build_pdf_sharded(resid_2d:  npt.NDArray[np.uint8],
                        gray_ch:   npt.NDArray[np.uint8],
                        shard_map: npt.NDArray[np.uint8],
-                       nsid: int) -> Tuple[npt.NDArray[np.uint64],
-                                           npt.NDArray[np.uint64]]:
+                       nsid: int,
+                       n_ctx: int,
+                       nt: int) -> Tuple[npt.NDArray[np.uint64],
+                                         npt.NDArray[np.uint64]]:
     """
     Single raster-order pass accumulating symbol counts into
     counts[layer, combined_ctx, symbol], then quantises to 12-bit
@@ -97,23 +100,24 @@ def _build_pdf_sharded(resid_2d:  npt.NDArray[np.uint8],
       f  - shape (4, N_CTX, 4) symbol frequencies (sum = 4096 per row)
       cf - shape (4, N_CTX, 5) cumulative frequencies (0-padded on left)
     """
-    h, w = resid_2d.shape
-    counts = np.zeros((4, N_CTX, 4), dtype=np.uint64)
+    h, w = resid_2d.shape[0] - 2, resid_2d.shape[1] - 2  # inputs are zero-padded (h+2, w+2)
+    counts_tls = np.zeros((nt, 4, n_ctx, 4), dtype=np.uint64)
 
-    for y in range(h):
-        for x in range(w):
+    for pi in prange(1, h + 1):
+        tid = get_thread_id()
+        for pj in range(1, w + 1):
             # ----- gradient-shard context from original pixel neighbors -----
-            ag = gray_ch[y, x-1] if x > 0 else np.uint8(0)
-            bg = gray_ch[y-1, x] if y > 0 else np.uint8(0)
-            cg = gray_ch[y-1, x-1] if (y > 0 and x > 0) else np.uint8(0)
+            ag = gray_ch[pi, pj-1]
+            bg = gray_ch[pi-1, pj]
+            cg = gray_ch[pi-1, pj-1]
             p_g = predict_med_standard(ag, bg, cg)
             sid = int(get_context_id_fast(ag, bg, cg, p_g, shard_map, nsid))
 
             # ----- bitplane spatial context from residual neighbors -----
-            r_l = resid_2d[y, x-1] if x > 0 else np.uint8(0)
-            r_u = resid_2d[y-1, x] if y > 0 else np.uint8(0)
-            r_n = resid_2d[y-1, x-1] if (y > 0 and x > 0) else np.uint8(0)
-            px  = resid_2d[y, x]
+            r_l = resid_2d[pi, pj-1]
+            r_u = resid_2d[pi-1, pj]
+            r_n = resid_2d[pi-1, pj-1]
+            px  = resid_2d[pi, pj]
 
             for k in range(4):
                 shift = np.uint8(k * 2)
@@ -123,15 +127,17 @@ def _build_pdf_sharded(resid_2d:  npt.NDArray[np.uint8],
                 bp_ctx = int(l_k) | (int(u_k) << 2) | (int(n_k) << 4)
                 ctx    = sid * N_SPATIAL + bp_ctx
                 sym    = int((px >> shift) & np.uint8(3))
-                counts[k, ctx, sym] += np.uint64(1)
+                counts_tls[tid, k, ctx, sym] += np.uint64(1)
+
+    counts = counts_tls.sum(axis=0)
 
     # ----- quantise to 12-bit rANS tables -----
     precision = np.uint64(4096)
-    f  = np.zeros((4, N_CTX, 4), dtype=np.uint64)
-    cf = np.zeros((4, N_CTX, 5), dtype=np.uint64)
+    f  = np.zeros((4, n_ctx, 4), dtype=np.uint64)
+    cf = np.zeros((4, n_ctx, 5), dtype=np.uint64)
 
     for k in range(4):
-        for c in range(N_CTX):
+        for c in range(n_ctx):
             t = np.uint64(0)
             for s in range(4):
                 t += counts[k, c, s]
@@ -179,14 +185,15 @@ def _rans_encode_sharded(resid_2d:  npt.NDArray[np.uint8],
                          all_cf:    npt.NDArray[np.uint64],
                          all_sf:    npt.NDArray[np.uint64],
                          shard_map: npt.NDArray[np.uint8],
-                         nsid: int) -> Tuple[npt.NDArray[np.uint64],
-                                             npt.NDArray[np.uint8]]:
+                         nsid: int,
+                         n_ctx: int) -> Tuple[npt.NDArray[np.uint64],
+                                              npt.NDArray[np.uint8]]:
     """
     Reverse-scan 4-way interleaved rANS encoder.
     Layers 3-0 encoded sequentially per pixel (matching decoder pull order).
     Returns (final_states[4], bitstream_bytes).
     """
-    h, w = resid_2d.shape
+    h, w = resid_2d.shape[0] - 2, resid_2d.shape[1] - 2  # inputs are zero-padded (h+2, w+2)
     l_lower = np.uint64(1 << 31)
     m_bits  = np.uint64(12)
     l_max   = (l_lower >> m_bits) << np.uint64(8)
@@ -194,9 +201,9 @@ def _rans_encode_sharded(resid_2d:  npt.NDArray[np.uint8],
     st0 = l_lower; st1 = l_lower; st2 = l_lower; st3 = l_lower
 
     # Precompute magic constants for branchless division
-    magic = np.zeros((4, N_CTX, 4), dtype=np.uint64)
+    magic = np.zeros((4, n_ctx, 4), dtype=np.uint64)
     for k in range(4):
-        for c in range(N_CTX):
+        for c in range(n_ctx):
             for s in range(4):
                 fv = all_sf[k, c, s]
                 if fv > np.uint64(0):
@@ -205,20 +212,20 @@ def _rans_encode_sharded(resid_2d:  npt.NDArray[np.uint8],
     out = np.zeros(h * w * 4 + 64, dtype=np.uint8)
     ptr = 0
 
-    for y in range(h - 1, -1, -1):
-        for x in range(w - 1, -1, -1):
+    for pi in range(h, 0, -1):
+        for pj in range(w, 0, -1):
             # ----- shard ID from original neighbors -----
-            ag = gray_ch[y, x-1] if x > 0 else np.uint8(0)
-            bg = gray_ch[y-1, x] if y > 0 else np.uint8(0)
-            cg = gray_ch[y-1, x-1] if (y > 0 and x > 0) else np.uint8(0)
+            ag = gray_ch[pi, pj-1]
+            bg = gray_ch[pi-1, pj]
+            cg = gray_ch[pi-1, pj-1]
             p_g = predict_med_standard(ag, bg, cg)
             sid = int(get_context_id_fast(ag, bg, cg, p_g, shard_map, nsid))
 
             # ----- bitplane spatial neighbors -----
-            r_l = resid_2d[y, x-1] if x > 0 else np.uint8(0)
-            r_u = resid_2d[y-1, x] if y > 0 else np.uint8(0)
-            r_n = resid_2d[y-1, x-1] if (y > 0 and x > 0) else np.uint8(0)
-            px  = resid_2d[y, x]
+            r_l = resid_2d[pi, pj-1]
+            r_u = resid_2d[pi-1, pj]
+            r_n = resid_2d[pi-1, pj-1]
+            px  = resid_2d[pi, pj]
 
             # ----- Layer 3 -----
             l3 = (r_l >> np.uint8(6)) & np.uint8(3)
@@ -302,27 +309,28 @@ def _rans_decode_sharded(bitstream:  npt.NDArray[np.uint8],
     from already-reconstructed original pixel neighbors.
     Returns resid_2d (ZigZag residuals) for downstream reconstruct_2d_channels.
     """
-    resid = np.zeros((h, w), dtype=np.uint8)
-    orig  = np.zeros((h, w), dtype=np.uint8)
+    # Zero-padded internal arrays: border stays 0, loop from 1..h+1 / 1..w+1
+    resid = np.zeros((h + 2, w + 2), dtype=np.uint8)
+    orig  = np.zeros((h + 2, w + 2), dtype=np.uint8)
 
     l_lower = np.uint64(1 << 31)
     m_bits  = np.uint64(12)
     mask    = np.uint64((1 << 12) - 1)
     ptr     = len(bitstream) - 1
 
-    for y in range(h):
-        for x in range(w):
+    for pi in range(1, h + 1):
+        for pj in range(1, w + 1):
             # ----- shard ID from reconstructed original neighbors -----
-            ag = orig[y, x-1] if x > 0 else np.uint8(0)
-            bg = orig[y-1, x] if y > 0 else np.uint8(0)
-            cg = orig[y-1, x-1] if (y > 0 and x > 0) else np.uint8(0)
+            ag = orig[pi, pj-1]
+            bg = orig[pi-1, pj]
+            cg = orig[pi-1, pj-1]
             p_g = predict_med_standard(ag, bg, cg)
             sid = int(get_context_id_fast(ag, bg, cg, p_g, shard_map, nsid))
 
             # ----- bitplane spatial contexts from decoded residual neighbors -----
-            r_l = resid[y, x-1] if x > 0 else np.uint8(0)
-            r_u = resid[y-1, x] if y > 0 else np.uint8(0)
-            r_n = resid[y-1, x-1] if (y > 0 and x > 0) else np.uint8(0)
+            r_l = resid[pi, pj-1]
+            r_u = resid[pi-1, pj]
+            r_n = resid[pi-1, pj-1]
 
             # ----- Decode Layer 0 -----
             l0 = r_l & np.uint8(3); u0 = r_u & np.uint8(3); n0 = r_n & np.uint8(3)
@@ -380,10 +388,10 @@ def _rans_decode_sharded(bitstream:  npt.NDArray[np.uint8],
 
             # ----- Assemble residual and update orig -----
             px = np.uint8(int(sym0) | (int(sym1) << 2) | (int(sym2) << 4) | (int(sym3) << 6))
-            resid[y, x] = px
-            orig[y, x]  = np.uint8((from_zigzag(px) + int(p_g)) & 0xFF)
+            resid[pi, pj] = px
+            orig[pi, pj]  = np.uint8((from_zigzag(px) + int(p_g)) & 0xFF)
 
-    return resid
+    return resid[1:h+1, 1:w+1]
 
 
 # ---------------------------------------------------------------------------
@@ -404,26 +412,27 @@ def _rans_decode_sharded_with_ref(bitstream:  npt.NDArray[np.uint8],
     encode and decode contexts are identical without any self-referential tracking.
     Returns resid_2d (ZigZag residuals) - caller passes to reconstruct_2d_channels.
     """
-    resid = np.zeros((h, w), dtype=np.uint8)
+    # ref_ch arrives pre-padded (h+2, w+2); resid padded for zero-border neighbor reads
+    resid = np.zeros((h + 2, w + 2), dtype=np.uint8)
 
     l_lower = np.uint64(1 << 31)
     m_bits  = np.uint64(12)
     mask    = np.uint64((1 << 12) - 1)
     ptr     = len(bitstream) - 1
 
-    for y in range(h):
-        for x in range(w):
+    for pi in range(1, h + 1):
+        for pj in range(1, w + 1):
             # ----- shard ID from decoded green reference -----
-            ag = ref_ch[y, x-1] if x > 0 else np.uint8(0)
-            bg = ref_ch[y-1, x] if y > 0 else np.uint8(0)
-            cg = ref_ch[y-1, x-1] if (y > 0 and x > 0) else np.uint8(0)
+            ag = ref_ch[pi, pj-1]
+            bg = ref_ch[pi-1, pj]
+            cg = ref_ch[pi-1, pj-1]
             p_g = predict_med_standard(ag, bg, cg)
             sid = int(get_context_id_fast(ag, bg, cg, p_g, shard_map, nsid))
 
             # ----- bitplane spatial contexts from own decoded residual neighbors -----
-            r_l = resid[y, x-1] if x > 0 else np.uint8(0)
-            r_u = resid[y-1, x] if y > 0 else np.uint8(0)
-            r_n = resid[y-1, x-1] if (y > 0 and x > 0) else np.uint8(0)
+            r_l = resid[pi, pj-1]
+            r_u = resid[pi-1, pj]
+            r_n = resid[pi-1, pj-1]
 
             # ----- Decode Layer 0 -----
             l0 = r_l & np.uint8(3); u0 = r_u & np.uint8(3); n0 = r_n & np.uint8(3)
@@ -479,9 +488,9 @@ def _rans_decode_sharded_with_ref(bitstream:  npt.NDArray[np.uint8],
                 if st3 < l_lower and ptr >= 0:
                     st3 = (st3 << np.uint64(8)) | np.uint64(bitstream[ptr]); ptr -= 1
 
-            resid[y, x] = np.uint8(int(sym0) | (int(sym1) << 2) | (int(sym2) << 4) | (int(sym3) << 6))
+            resid[pi, pj] = np.uint8(int(sym0) | (int(sym1) << 2) | (int(sym2) << 4) | (int(sym3) << 6))
 
-    return resid
+    return resid[1:h+1, 1:w+1]
 
 
 # ---------------------------------------------------------------------------
@@ -490,16 +499,18 @@ def _rans_decode_sharded_with_ref(bitstream:  npt.NDArray[np.uint8],
 def compress_bitplane_gray_sharded(gray_ch:   npt.NDArray[np.uint8],
                                    resid_2d:  npt.NDArray[np.uint8],
                                    shard_map: npt.NDArray[np.uint8],
-                                   v_bounds:  npt.NDArray[np.uint8],
-                                   i_segs:    npt.NDArray[np.uint8],
                                    nsid: int) -> bytes:
     """
     Primary orchestrator: builds shard-conditioned PDF tables, runs the
     reverse-scan rANS encoder, then serialises to bytes.
     """
-    f, cf = _build_pdf_sharded(resid_2d, gray_ch, shard_map, nsid)
+    n_shards = int(shard_map.max()) + 1 if nsid < 0 else nsid + 1
+    n_ctx = n_shards * N_SPATIAL
+    gray_ch_p  = np.pad(gray_ch,  1, constant_values=0)
+    resid_2d_p = np.pad(resid_2d, 1, constant_values=0)
+    f, cf = _build_pdf_sharded(resid_2d_p, gray_ch_p, shard_map, nsid, n_ctx, get_num_threads())
 
-    states, bitstream = _rans_encode_sharded(resid_2d, gray_ch, cf, f, shard_map, nsid)
+    states, bitstream = _rans_encode_sharded(resid_2d_p, gray_ch_p, cf, f, shard_map, nsid, n_ctx)
 
     # Compress frequency tables with Zstd (many uniform/zero rows - high ratio)
     tables_raw = f.astype(np.uint16).tobytes()
@@ -518,14 +529,15 @@ def compress_bitplane_gray_sharded(gray_ch:   npt.NDArray[np.uint8],
 def decompress_bitplane_gray_sharded(payload:   bytes,
                                      h: int, w: int,
                                      shard_map: npt.NDArray[np.uint8],
-                                     v_bounds:  npt.NDArray[np.uint8],
-                                     i_segs:    npt.NDArray[np.uint8],
                                      nsid: int) -> npt.NDArray[np.uint8]:
     """
     Restores the ZigZag residual array from a sharded bitplane payload.
     The caller passes the result to reconstruct_2d_channels for final MED
     reconstruction (same pipeline as the legacy bitplane path).
     """
+    n_shards = int(shard_map.max()) + 1 if nsid < 0 else nsid + 1
+    n_ctx = n_shards * N_SPATIAL
+
     raw = np.frombuffer(payload, dtype=np.uint8)
     ptr = 0
 
@@ -537,10 +549,10 @@ def decompress_bitplane_gray_sharded(payload:   bytes,
     tables_raw = zstd.ZstdDecompressor().decompress(raw[ptr:ptr+tables_len].tobytes())
     ptr += tables_len
 
-    f = np.frombuffer(tables_raw, dtype=np.uint16).reshape((4, N_CTX, 4)).astype(np.uint64)
+    f = np.frombuffer(tables_raw, dtype=np.uint16).reshape((4, n_ctx, 4)).astype(np.uint64)
 
     # Build cumulative frequencies (vectorised)
-    cf = np.zeros((4, N_CTX, 5), dtype=np.uint64)
+    cf = np.zeros((4, n_ctx, 5), dtype=np.uint64)
     cf[:, :, 1:] = np.cumsum(f, axis=2)
 
     states = np.frombuffer(raw[ptr:ptr+32], dtype=np.uint64)
@@ -564,8 +576,6 @@ def compress_bitplane_rgb_sharded(gr_ch:    npt.NDArray[np.uint8],
                                    rd_resid: npt.NDArray[np.uint8],
                                    bd_resid: npt.NDArray[np.uint8],
                                    shard_map: npt.NDArray[np.uint8],
-                                   v_bounds:  npt.NDArray[np.uint8],
-                                   i_segs:    npt.NDArray[np.uint8],
                                    nsid: int) -> bytes:
     """
     RGB sharded bitplane encoder.
@@ -577,10 +587,15 @@ def compress_bitplane_rgb_sharded(gr_ch:    npt.NDArray[np.uint8],
       [rd_channel_block]  - same structure
       [bd_channel_block]  - same structure
     """
+    n_shards = int(shard_map.max()) + 1 if nsid < 0 else nsid + 1
+    n_ctx = n_shards * N_SPATIAL
+
     def _pack_channel(resid: npt.NDArray[np.uint8],
                       ref:   npt.NDArray[np.uint8]) -> bytes:
-        f_nc, cf_nc = _build_pdf_sharded(resid, ref, shard_map, nsid)
-        states, bs = _rans_encode_sharded(resid, ref, cf_nc, f_nc, shard_map, nsid)
+        resid_p = np.pad(resid, 1, constant_values=0)
+        ref_p   = np.pad(ref,   1, constant_values=0)
+        f_nc, cf_nc = _build_pdf_sharded(resid_p, ref_p, shard_map, nsid, n_ctx, get_num_threads())
+        states, bs = _rans_encode_sharded(resid_p, ref_p, cf_nc, f_nc, shard_map, nsid, n_ctx)
         tables_zstd = zstd.ZstdCompressor(level=1).compress(f_nc.astype(np.uint16).tobytes())
         blk = bytearray()
         blk.extend(np.array([len(tables_zstd)], dtype=np.uint32).tobytes())
@@ -611,8 +626,6 @@ def compress_bitplane_rgb_sharded(gr_ch:    npt.NDArray[np.uint8],
 def decompress_bitplane_rgb_sharded(payload:   bytes,
                                      h: int, w: int,
                                      shard_map: npt.NDArray[np.uint8],
-                                     v_bounds:  npt.NDArray[np.uint8],
-                                     i_segs:    npt.NDArray[np.uint8],
                                      nsid: int):
     """
     RGB sharded bitplane decoder.
@@ -621,6 +634,9 @@ def decompress_bitplane_rgb_sharded(payload:   bytes,
     Returns (gr_rec, rd_rec, bd_rec) as (h, w) uint8 arrays ready for restore_channels.
     """
     from .transform import reconstruct_2d_channels
+
+    n_shards = int(shard_map.max()) + 1 if nsid < 0 else nsid + 1
+    n_ctx = n_shards * N_SPATIAL
 
     raw = np.frombuffer(payload, dtype=np.uint8)
     assert raw[0] == BITPLANE_MAGIC, "Not a sharded bitplane payload"
@@ -633,9 +649,9 @@ def decompress_bitplane_rgb_sharded(payload:   bytes,
         f = np.frombuffer(
             decomp.decompress(raw[ptr:ptr+tables_len].tobytes()),
             dtype=np.uint16
-        ).reshape((4, N_CTX, 4)).astype(np.uint64)
+        ).reshape((4, n_ctx, 4)).astype(np.uint64)
         ptr += tables_len
-        cf = np.zeros((4, N_CTX, 5), dtype=np.uint64)
+        cf = np.zeros((4, n_ctx, 5), dtype=np.uint64)
         cf[:, :, 1:] = np.cumsum(f, axis=2)
         states = np.frombuffer(raw[ptr:ptr+32], dtype=np.uint64).copy(); ptr += 32
         bs_len = int(np.frombuffer(raw[ptr:ptr+4], dtype=np.uint32)[0]); ptr += 4
@@ -652,20 +668,21 @@ def decompress_bitplane_rgb_sharded(payload:   bytes,
         bs_gr, st_gr[0], st_gr[1], st_gr[2], st_gr[3],
         h, w, cf_gr, f_gr, shard_map, nsid
     )
-    gr_rec = reconstruct_2d_channels(h, w, gr_resid)
+    gr_rec   = reconstruct_2d_channels(h, w, gr_resid)
+    gr_rec_p = np.pad(gr_rec, 1, constant_values=0)
 
-    # ---- Rd and Bd both read gr_rec (never write it) → parallel ----
+    # ---- Rd and Bd both read gr_rec_p (never write it) → parallel ----
     def _decode_rd():
         resid = _rans_decode_sharded_with_ref(
             bs_rd, st_rd[0], st_rd[1], st_rd[2], st_rd[3],
-            h, w, cf_rd, f_rd, gr_rec, shard_map, nsid
+            h, w, cf_rd, f_rd, gr_rec_p, shard_map, nsid
         )
         return reconstruct_2d_channels(h, w, resid)
 
     def _decode_bd():
         resid = _rans_decode_sharded_with_ref(
             bs_bd, st_bd[0], st_bd[1], st_bd[2], st_bd[3],
-            h, w, cf_bd, f_bd, gr_rec, shard_map, nsid
+            h, w, cf_bd, f_bd, gr_rec_p, shard_map, nsid
         )
         return reconstruct_2d_channels(h, w, resid)
 

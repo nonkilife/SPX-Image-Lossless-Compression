@@ -1,15 +1,15 @@
 """
-ZPNG-CSDE v7.5 [Stable Parallel Architecture]
-Module: zpng_codec
+ZPNG-CSDE [Stable Parallel Architecture]
+Module: codec
 Role: Bitstream Orchestration.
 Description: Logic for packing and unpacking the ZPNG tiered bitstream container.
 Architecture: Structured serialization layer bridging the Model and rANS pillars.
 Engineering Rationale:
-1. Deterministic Block Order: The header and SRB (Metadata) must appear first 
-   to define shard widths and medians, which are required for the decoder to 
+1. Deterministic Block Order: The header and SRB (Metadata) must appear first
+   to define shard widths and medians, which are required for the decoder to
    pre-allocate the rANS state buffers.
-2. Zero-Copy Parallelism: Shard payloads are stored with explicit byte-lengths 
-   preceding the content, allowing the decompressor to spawn independent threads 
+2. Zero-Copy Parallelism: Shard payloads are stored with explicit byte-lengths
+   preceding the content, allowing the decompressor to spawn independent threads
    that jump directly to their target payload without sequential bit-scanning.
 
 Bitstream Structure:
@@ -17,8 +17,10 @@ Bitstream Structure:
 graph TD
     Meta[Header: H, W, Flags] --> SRB[SRB Block: Widths, Medians, Modes]
     SRB --> PDF[PDF Block: Zstd Compacted Tables]
-    PDF --> Data[Shard Block: Interleaved rANS Payloads]
-    Data --> End[Metadata & Alpha]
+    PDF --> SC[Shard Counts Block]
+    SC --> Data[Shard Block: rANS Payloads]
+    Data --> Alpha[Alpha Block, if RGBA]
+    Alpha --> End[Trailing Metadata]
 ```
 """
 
@@ -38,7 +40,7 @@ from .rans import (
     compact_pdf_tables
 )
 
-def pack_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: bool,
+def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: bool,
                      shard_counts: npt.NDArray[np.uint32], shard_offsets_p1: npt.NDArray[np.uint32],
                      shard_widths: npt.NDArray[np.uint16],
                      shard_medians: npt.NDArray[np.uint8],
@@ -48,7 +50,7 @@ def pack_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsu
     """
     Serializes compressed data into the final ZPNG file block.
     
-    Bitstream Architecture (v7.5):
+    Bitstream Architecture:
     [0-15]     Global Header (Height, Width, Metadata Length, Bit Flags)
     [16-N]     SRB Chunk: Widths (n_shards per channel), Medians, Modes
     [N-M]      PDF Chunk (Zstd): Compacted frequency tables for Dynamic Modes (0, 1)
@@ -74,19 +76,22 @@ def pack_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsu
         header_widths: bytes = (shard_widths[:, :n_shards] % 256).astype(np.uint8).tobytes()
         header_medians: bytes = shard_medians[:, :n_shards].tobytes()
     
-    # 1. ANS Frequency Modeling & Mode Selection
     sharded_payload: bytearray = bytearray()
-    
+
+    # Split res_flat into per-channel shard views
     gr_len = int(np.sum(shard_counts[0]))
     shard_gr = res_flat[0:gr_len]
     gr_shards: List[npt.NDArray[np.uint8]] = [shard_gr[shard_offsets_p1[0,s]:shard_offsets_p1[0,s]+shard_counts[0,s]] for s in range(n_shards)]
-    
+
     if not is_grayscale:
         rd_len = int(np.sum(shard_counts[1]))
         shard_rd = res_flat[gr_len : gr_len + rd_len]
         shard_bd = res_flat[gr_len + rd_len :]
         rd_shards: List[npt.NDArray[np.uint8]] = [shard_rd[shard_offsets_p1[1,s]:shard_offsets_p1[1,s]+shard_counts[1,s]] for s in range(n_shards)]
         bd_shards: List[npt.NDArray[np.uint8]] = [shard_bd[shard_offsets_p1[2,s]:shard_offsets_p1[2,s]+shard_counts[2,s]] for s in range(n_shards)]
+
+    # Build frequency tables (PDF modeling)
+    if not is_grayscale:
         gr_cum, gr_sym, gr_modes = build_pdf_tables_from_shards(gr_shards, shard_widths[0])
         rd_cum, rd_sym, rd_modes = build_pdf_tables_from_shards(rd_shards, shard_widths[1])
         bd_cum, bd_sym, bd_modes = build_pdf_tables_from_shards(bd_shards, shard_widths[2])
@@ -95,7 +100,7 @@ def pack_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsu
     
     if is_grayscale:
         all_sym_freqs_flat = gr_sym
-        all_widths_flat = shard_widths[0]
+        all_widths_flat = shard_widths[0, :n_shards]
         header_modes: bytes = gr_modes.tobytes()
         all_modes_internal = gr_modes
     else:
@@ -110,16 +115,16 @@ def pack_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsu
     
     c_pdf = zstd.ZstdCompressor(level=1).compress(pdf_compact_block.tobytes())
 
-    # 1a. Write PDF block
+    # Step 1: Write PDF block
     sharded_payload += np.array([len(c_pdf)], dtype='<u4').tobytes() + c_pdf
 
-    # 1b. Write Shard Counts
+    # Step 2: Write shard counts
     if is_grayscale:
         sharded_payload += np.array([shard_counts[0].nbytes], dtype='<u4').tobytes() + shard_counts[0].tobytes()
     else:
         sharded_payload += np.array([shard_counts.nbytes], dtype='<u4').tobytes() + shard_counts.tobytes()
 
-    # 1c. rANS Encode Shards
+    # Step 3: rANS encode shards
     if is_grayscale:
         shard_lengths_ans: npt.NDArray[np.uint32] = shard_counts[0].ravel().astype(np.uint32)
         all_cum_stack: npt.NDArray[np.uint64] = gr_cum
@@ -145,7 +150,7 @@ def pack_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsu
             off = int(bs_offsets[idx])
             sharded_payload += bitstreams_flat[off:off+int(bs_lengths[idx])].tobytes()
 
-    # 1d. Encode Alpha (Zstd)
+    # Step 4: Encode alpha (Zstd)
     if is_rgba:
         c_alpha = zstd.ZstdCompressor(level=1).compress(res_a.tobytes())
         sharded_payload += np.array([len(c_alpha)], dtype='<u4').tobytes() + c_alpha
@@ -158,17 +163,17 @@ def pack_bitstream_v5(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsu
     return b"ZPNGCSDE" + header + bytes(sharded_payload) + metadata_bytes, modes_diag
 
 
-def unpack_bitstream_v5(compressed_data: Union[bytes, BinaryIO], h: int, w: int, is_rgba: bool, is_grayscale: bool,
-                       shard_widths: npt.NDArray[np.uint16], shard_modes: npt.NDArray[np.uint8],
-                       flag: int, metadata_len: int) -> Tuple:
+def unpack_bitstream(compressed_data: Union[bytes, BinaryIO], h: int, w: int, is_rgba: bool, is_grayscale: bool,
+                     shard_widths: npt.NDArray[np.uint16], shard_modes: npt.NDArray[np.uint8],
+                     flag: int, metadata_len: int) -> Tuple:
     """
     Deserializes the ZPNG bitstream format back into parsed frequency tables and residuals.
 
     Processing Steps:
     1. Parses the Shard Metadata block (Widths, Medians, Modes) dynamically.
     2. Uses Zstd to de-compact the internal PDF dictionary arrays.
-    3. Interprets the Shard Lengths matrix to carve up the rANS payloads array.
-    4. Triggers the 4-Way SIMD rANS parallel decoding block for all channels.
+    3. Reads shard counts to determine output allocation per shard.
+    4. Parallel rANS decoding via ThreadPoolExecutor (GIL released by Numba workers).
     """
     def read_bytes(src: Union[bytes, BinaryIO], n: int, pos: int) -> Tuple[bytes, int]:
         if isinstance(src, bytes):
@@ -181,11 +186,11 @@ def unpack_bitstream_v5(compressed_data: Union[bytes, BinaryIO], h: int, w: int,
                 raise ValueError(f"Unexpected End of Stream: Expected {n} bytes, got {len(data)}")
             return data, 0 # Pos is not used for streams
 
-    def read_block_meta_stream(src: Union[bytes, BinaryIO], pos: int) -> Tuple[int, bytes, int]:
+    def read_block_meta_stream(src: Union[bytes, BinaryIO], pos: int) -> Tuple[bytes, int]:
         b_raw, pos = read_bytes(src, 4, pos)
         b_len = int.from_bytes(b_raw, 'little')
         payload, pos = read_bytes(src, b_len, pos)
-        return b_len, payload, pos
+        return payload, pos
 
     from .rans import (
         rans_decode_4way_core, build_all_lookups,
@@ -198,20 +203,20 @@ def unpack_bitstream_v5(compressed_data: Union[bytes, BinaryIO], h: int, w: int,
             profile = PROFILE_RGB
             gray_res = decompress_bitplane_gray_sharded(
                 compressed_data, h, w,
-                profile.shard_map, profile.v_boundaries_gr,
-                profile.intensity_segments, profile.noise_shard_id
+                profile.shard_map, profile.noise_shard_id
             ).flatten()
             return gray_res, None, None, None, None, None, None, None
         else:
-            raise NotImplementedError("Color Bitplane unpacking not yet implemented.")
+            # RGB bitplane is decoded upstream in decompress.py via decompress_bitplane_rgb_sharded
+            # before unpack_bitstream is ever called — this branch is unreachable in normal flow.
+            raise NotImplementedError("RGB bitplane should not reach unpack_bitstream.")
 
-    # [v6.6] Determine Shard Count
     profile = PROFILE_RGB
     n_shards = profile.total_shards
 
     p: int = 0
     # 1. Read compacted PDF frequencies
-    _, pdf_raw_bytes, p = read_block_meta_stream(compressed_data, p)
+    pdf_raw_bytes, p = read_block_meta_stream(compressed_data, p)
     pdf_raw: npt.NDArray[np.uint8] = np.frombuffer(dctx.decompress(pdf_raw_bytes), dtype=np.uint8)
     
     if is_grayscale:
@@ -231,7 +236,7 @@ def unpack_bitstream_v5(compressed_data: Union[bytes, BinaryIO], h: int, w: int,
         all_cum_freqs[:, :, 1:] = np.cumsum(all_sym_freqs, axis=2)
 
     # 2. Read Shard Counts
-    _, sc_raw_bytes, p = read_block_meta_stream(compressed_data, p)
+    sc_raw_bytes, p = read_block_meta_stream(compressed_data, p)
     sc_block: npt.NDArray[np.uint32] = np.frombuffer(sc_raw_bytes, dtype='<u4')
     
     shard_counts: npt.NDArray[np.uint32] = np.zeros((3, n_shards), dtype=np.uint32)
@@ -240,10 +245,10 @@ def unpack_bitstream_v5(compressed_data: Union[bytes, BinaryIO], h: int, w: int,
     else:
         shard_counts = sc_block.copy().reshape((3, n_shards))
 
-    # 3. Parallel rANS Decoding (v7.2 [HIGH-THROUGHPUT])
+    # 3. Parallel rANS Decoding
     all_lookups: npt.NDArray[np.uint8] = build_all_lookups(all_cum_freqs)
-    
-    # [v7.2] Flatten stacks to maximize multi-core thread saturation
+
+    # Flatten stacks to maximize multi-core thread saturation
     if is_grayscale:
         counts_stack = shard_counts[0]
         all_cum_stack = all_cum_freqs[0]
@@ -263,12 +268,12 @@ def unpack_bitstream_v5(compressed_data: Union[bytes, BinaryIO], h: int, w: int,
     if num_targets > 0:
         out_offsets[1:] = np.cumsum(counts_stack[:-1], dtype=np.uint32)
 
-    # Phase 1 & 2: Streaming Producer-Consumer Decoder (v7.6 [STREAMING])
-    # [v7.6] Overlaps I/O and rANS decoding using ThreadPoolExecutor
+    # Phase 1 & 2: Streaming Producer-Consumer Decoder
+    # Overlaps I/O and rANS decoding using ThreadPoolExecutor
     futures = []
     with concurrent.futures.ThreadPoolExecutor() as executor:
         for idx in range(num_targets):
-            # 1. Read Shard Header (36 bytes: 4 states, 1 length)
+            # 1. Read shard header: 4×uint64 states (as 2×uint32 each) + 1×uint32 length = 36 bytes
             h_raw, p = read_bytes(compressed_data, 36, p)
             chunk_meta: npt.NDArray[np.uint32] = np.frombuffer(h_raw, dtype='<u4')
             
@@ -319,12 +324,12 @@ def unpack_bitstream_v5(compressed_data: Union[bytes, BinaryIO], h: int, w: int,
         res_bd_flat = all_res_flat[gr_len+rd_len:]
         
         gr_offs = out_offsets[:n_shards]
-        rd_offs = out_offsets[n_shards:2*n_shards] - np.uint32(gr_len)
-        bd_offs = out_offsets[2*n_shards:] - np.uint32(gr_len + rd_len)
+        rd_offs = (out_offsets[n_shards:2*n_shards].astype(np.int64) - gr_len).astype(np.uint32)
+        bd_offs = (out_offsets[2*n_shards:].astype(np.int64) - (gr_len + rd_len)).astype(np.uint32)
 
     res_a_flat: Optional[npt.NDArray[np.uint8]] = None
     if is_rgba:
-        _, a_raw_bytes, p = read_block_meta_stream(compressed_data, p)
+        a_raw_bytes, p = read_block_meta_stream(compressed_data, p)
         res_a_flat = np.frombuffer(dctx.decompress(a_raw_bytes), dtype=np.uint8)
         
     return res_gr_flat, res_rd_flat, res_bd_flat, gr_offs, rd_offs, bd_offs, shard_counts, res_a_flat

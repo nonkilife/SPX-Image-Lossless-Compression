@@ -1,6 +1,6 @@
 """
-ZPNG-CSDE v7.5 [Universal-42 Architecture]
-Module: zpng_common
+ZPNG-CSDE [Flexible Shard Architecture]
+Module: common
 Role: Pillar 1 - Foundation & Protocol.
 Description: Authoritative definitions for constants, sharding matrices, and header flags.
 Architecture: Flexible Sharding Hub utilizing 3D Mapping LUTs for context ID derivation.
@@ -12,11 +12,10 @@ graph TD
     In --> IL[Intensity Lookup: INTENSITY_LUT]
     ST --> Feat[Extract: v_tier, t_idx, ns_hit]
     IL --> Feat
-    Feat --> ShMap[Universal-42 Shard Map]
+    Feat --> ShMap[ShardProfile.shard_map]
     ShMap --> CID[Final Context ID]
-    
-    Note: Spatial lookup uses (ag-cg, bg-cg) to achieve DC-invariance.
-    Packing Format: [V_Tier:5 bits] | [Trend:2 bits] | [Noise:1 bit]
+    %% Spatial lookup uses ag-cg, bg-cg to achieve DC-invariance.
+    %% Packing Format: [V_Tier:5 bits] | [Trend:2 bits] | [Noise:1 bit]
 ```
 """
 
@@ -27,13 +26,13 @@ from typing import Tuple, Optional, List
 from dataclasses import dataclass, field
 from .predictor import to_zigzag, from_zigzag, predict_med_standard
 
-# Empirical distribution template library for codec and rans modules (v6.6 Data-Driven)
+# Empirical distribution template library for codec and rans modules.
 # Extracted from 6185 real image shards via K-Means clustering, including symmetric and asymmetric distributions.
 
-def _build_empirical_templates() -> tuple[npt.NDArray[np.uint64], ...]:
-    """ 
-    V6.1 T3 Template Stack (30-Template Matrix).
-    Derived from 6 PHOTOGRAPHIC CENTROIDS across 5 SIGMA SCALES [0.5, 0.75, 1.0, 1.25, 1.5].
+def _build_empirical_templates() -> Tuple[npt.NDArray[np.uint64], ...]:
+    """
+    30-template matrix: 6 photographic centroids × 5 sigma scales [0.5, 0.75, 1.0, 1.25, 1.5].
+    Derived from 6185 real image shards via K-Means clustering.
     """
     P_LIST = [
         np.array([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,3,3,3,3,3,4,4,5,5,6,6,7,8,9,10,11,12,14,16,18,22,27,32,39,50,66,86,115,170,233,305,401,656,399,305,234,171,116,87,67,51,39,32,27,22,19,16,14,12,11,10,9,8,7,6,6,5,5,4,4,3,3,3,3,2,2,2,2,2,2,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0], dtype=np.uint64),
@@ -61,7 +60,7 @@ def _build_empirical_templates() -> tuple[npt.NDArray[np.uint64], ...]:
             final_templates.append(scaled_v)
     return tuple(final_templates)
 
-EMPIRICAL_TEMPLATES: tuple[npt.NDArray[np.uint64], ...] = _build_empirical_templates()
+EMPIRICAL_TEMPLATES: Tuple[npt.NDArray[np.uint64], ...] = _build_empirical_templates()
 
 # --- 1. Protocol Constants (Header Flags) ---
 FLAG_RGBA: int        = 0x01
@@ -71,9 +70,9 @@ FLAG_PASSTHROUGH: int = 0x08  # Original File Storage (PNG/JPG)
 FLAG_GRAYSCALE: int   = 0x10  # Hardware-accelerated true monochrome bypassing CR
 FLAG_COLOR_GSUB: int   = 0x20  # Adaptive Green-Subtract Transform (Smooth Image Optimization)
 FLAG_BITPLANE: int    = 0x40  # 2D Bit-Context engine
-FLAG_TEMPLATE_MODE: int = 0x80 # [v6.5] Use Laplace-Template entropy coding
+FLAG_TEMPLATE_MODE: int = 0x80 # Use Laplace-Template entropy coding
 
-# --- 2. Sharding Profile System [v5.7 Systematic Alignment] ---
+# --- 2. Sharding Profile System ---
 
 @dataclass(frozen=True)
 class ShardProfile:
@@ -91,12 +90,12 @@ class ShardProfile:
     total_shards: int
     shard_map: npt.NDArray[np.uint8] # [v_level][intensity_idx][trend_idx]
 
-# 2. Unified Profile Settings (v6.6)
+# --- 2a. Default Profile Settings ---
 V_BOUND_RGB = np.array([0, 1, 2, 4, 8, 16, 32, 255], dtype=np.uint8)
 INTENSITY_SEG_RGB = np.array([0, 60, 190, 255], dtype=np.uint8)
 
 def build_shard_map_universal_42() -> npt.NDArray[np.uint8]:
-    """ Unified 42-shard Balanced Architecture (v6.6). """
+    """ Unified 42-shard balanced architecture: 3I×1T flat | 3I×3T full | 1I×3T trend-only. """
     s_map = np.zeros((8, 3, 3), dtype=np.uint8)
     # Tier 0 (V=0): Intensity Split (IDs 0-2)
     for i in range(3): s_map[0, i, :] = i
@@ -130,7 +129,7 @@ PROFILE_RGB = ShardProfile(
     shard_map=build_shard_map_universal_42()
 )
 
-# Legacy Compatibility Aliases (to minimize breaking changes in other files)
+# Used internally by ZpngResult defaults and get_shard_labels; not imported by other modules.
 TOTAL_SHARDS = 42
 
 # --- Per-Shard Dispatch Tables ---
@@ -151,11 +150,11 @@ BITPLANE_MIN_PIXELS: int = 1_000_000
 
 ENABLE_DIAGNOSTICS: bool = False  # Production Gate
 
-def get_shard_labels() -> List[str]:
-    """ Automatically generates descriptive labels for all shards. """
-    labels = [f"Shard_{i}" for i in range(TOTAL_SHARDS)]
-    # We could make this semantic, but for now generic index is safer for mixed modes
-    return labels
+def get_shard_labels(n_shards: Optional[int] = None) -> List[str]:
+    """ Generates generic index labels for all shards in the given (or current) profile. """
+    if n_shards is None:
+        n_shards = PROFILE_RGB.total_shards
+    return [f"Shard_{i}" for i in range(n_shards)]
 
 SHARD_LABELS: List[str] = get_shard_labels()
 
@@ -181,26 +180,26 @@ class ZpngResult:
     res_sums: npt.NDArray[np.uint64] = field(default_factory=lambda: np.zeros(4, dtype=np.uint64))
     
     
-    # Sharding
-    shard_counts: npt.NDArray[np.uint32] = field(default_factory=lambda: np.zeros((3, TOTAL_SHARDS), dtype=np.uint32))
+    # Sharding (sized to active profile at instantiation time)
+    shard_counts: npt.NDArray[np.uint32] = field(default_factory=lambda: np.zeros((3, PROFILE_RGB.total_shards), dtype=np.uint32))
     shard_ptrs: Optional[Tuple] = None
-    shard_stats: npt.NDArray[np.uint32] = field(default_factory=lambda: np.zeros((3, TOTAL_SHARDS, 256), dtype=np.uint32))
-    shard_widths: npt.NDArray[np.uint16] = field(default_factory=lambda: np.zeros((3, TOTAL_SHARDS), dtype=np.uint16))
-    
-    # [v4.10.2] Channel Statistical Data (Global Histograms: Grn, RD, BD)
+    shard_stats: npt.NDArray[np.uint32] = field(default_factory=lambda: np.zeros((3, PROFILE_RGB.total_shards, 256), dtype=np.uint32))
+    shard_widths: npt.NDArray[np.uint16] = field(default_factory=lambda: np.zeros((3, PROFILE_RGB.total_shards), dtype=np.uint16))
+
+    # Channel Statistical Data (Global Histograms: Grn, RD, BD)
     channel_hists: npt.NDArray[np.uint32] = field(default_factory=lambda: np.zeros((3, 256), dtype=np.uint32))
-    
-    # [v4.11.0] Noise Prediction Modes
+
+    # Noise Prediction Modes
     channel_modes: npt.NDArray[np.uint8] = field(default_factory=lambda: np.zeros(3, dtype=np.uint8))
-    
+
     # Extracted data (for verification)
     channels: Optional[Tuple] = None
-    # [v6.5] Median Normalization Metrics (3x42 uint8)
-    shard_medians: npt.NDArray[np.uint8] = field(default_factory=lambda: np.zeros((3, TOTAL_SHARDS), dtype=np.uint8))
-    # [v6.6] Template Selection Modes (3x42 uint8)
-    shard_modes: npt.NDArray[np.uint8] = field(default_factory=lambda: np.zeros((3, TOTAL_SHARDS), dtype=np.uint8))
-    
-    # [v2.15] Memory Optimization: Store final payload for in-memory benchmarks
+    # Median normalization metrics (3 × n_shards)
+    shard_medians: npt.NDArray[np.uint8] = field(default_factory=lambda: np.zeros((3, PROFILE_RGB.total_shards), dtype=np.uint8))
+    # Template selection modes (3 × n_shards)
+    shard_modes: npt.NDArray[np.uint8] = field(default_factory=lambda: np.zeros((3, PROFILE_RGB.total_shards), dtype=np.uint8))
+
+    # Final compressed payload for in-memory benchmarks
     payload: Optional[bytes] = field(default=None, repr=False)
     mode: str = "RGB"
     aad: float = 0.0
@@ -228,9 +227,9 @@ def extract_srb_metadata(shard_stats: npt.NDArray[np.uint32]) -> npt.NDArray[np.
 @njit(parallel=True, fastmath=True, cache=True)
 def apply_median_to_stats(shard_stats: npt.NDArray[np.uint32], medians: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint32]:
     """
-    [v6.1 BICC] Median Normalization Transformation.
+    Median Normalization Transformation (BICC).
     Shifts centered histograms to align the distribution peak (median) to 0 in ZigZag space.
-    This ensures that different shards with similar variances but different bias offsets 
+    This ensures that different shards with similar variances but different bias offsets
     can be modeled by the same static Laplacian template.
     """
     n_colors, n_shards, _ = shard_stats.shape
@@ -252,8 +251,8 @@ def apply_median_to_stats(shard_stats: npt.NDArray[np.uint32], medians: npt.NDAr
 
 @njit(fastmath=True, error_model='numpy', cache=True)
 def calculate_channel_stats(hist: npt.NDArray[np.uint32]) -> Tuple[float, int, int]:
-    """ 
-    [v4.10.2] Derived O(256) Metrics from Global Channel Histograms.
+    """
+    Derived O(256) metrics from a global channel histogram.
     Returns (Mean, Median, Mode).
     """
     total = np.sum(hist)
@@ -287,26 +286,30 @@ def calculate_channel_stats(hist: npt.NDArray[np.uint32]) -> Tuple[float, int, i
 
 
 
-# --- [v6.6] High-Performance Context Dispatcher LUTs ---
+# --- High-Performance Context Dispatcher LUTs ---
 SPATIAL_TRANS_LUT = np.zeros((511, 511), dtype=np.uint8)
 INTENSITY_LUT = np.zeros(256, dtype=np.uint8)
+FINAL_DISPATCH_LUT = np.zeros(1024, dtype=np.uint8)  # index = (packed<<2)|i_idx
 
-def initialize_luts_python(v_bounds, i_segs):
-    """ 
+def initialize_luts_python(v_bounds, i_segs, shard_map, nsid: int):
+    """
     Fills global LUTs with precomputed context features.
-    
+
     Engineering Logic:
     1. Spatial Consistency: Uses (ag-cg) and (bg-cg) to derive a 2D gradient vector.
-       By subtracting the top-left neighbor (cg), we isolate the local 'slope' 
-       from the absolute pixel offset, ensuring the same context is recognized 
+       By subtracting the top-left neighbor (cg), we isolate the local 'slope'
+       from the absolute pixel offset, ensuring the same context is recognized
        regardless of the global brightness level.
-    2. Zero-Latency Dispatch: Pre-packs V (Variance), T (Trend), and N (Noise) 
-       into a single uint8. This allows get_context_id_fast to perform 
+    2. Zero-Latency Dispatch: Pre-packs V (Variance), T (Trend), and N (Noise)
+       into a single uint8. This allows get_context_id_fast to perform
        feature extraction using bit-shifts instead of branching logic.
     """
-    # 1. Intensity LUT (vectorized)
+    # 1. Intensity LUT — generalized: one threshold crossing per i_segs[1:-1] boundary
     i_arr = np.arange(256, dtype=np.uint8)
-    INTENSITY_LUT[:] = (i_arr > i_segs[1]).astype(np.uint8) + (i_arr > i_segs[2]).astype(np.uint8)
+    i_result = np.zeros(256, dtype=np.uint8)
+    for thr in i_segs[1:-1]:
+        i_result += (i_arr > int(thr)).astype(np.uint8)
+    INTENSITY_LUT[:] = i_result
 
     # 2. Spatial Transition LUT (511x511, vectorized)
     d = np.arange(-255, 256, dtype=np.int16)
@@ -329,45 +332,54 @@ def initialize_luts_python(v_bounds, i_segs):
     # Packing: [V:5][T:2][N:1]
     SPATIAL_TRANS_LUT[:] = ((v_tier << 3) | (t_idx << 1) | ns_hit).astype(np.uint8)
 
+    # 3. Final Dispatch LUT — collapses branch + 3D shard_map lookup into a single
+    #    1024-byte table. index = (packed<<2)|i_idx; result = shard_id.
+    n_v = shard_map.shape[0]
+    n_t = shard_map.shape[2]
+    for pk in range(256):
+        vt = pk >> 3
+        ti = (pk >> 1) & 0x03
+        ns = pk & 0x01
+        for ii in range(3):
+            idx = (pk << 2) | ii
+            if ns != 0 and nsid >= 0:
+                FINAL_DISPATCH_LUT[idx] = np.uint8(nsid)
+            elif vt < n_v and ti < n_t:
+                FINAL_DISPATCH_LUT[idx] = shard_map[vt, ii, ti]
+
 # Auto-initialize with default Universal-42 bounds (Internal Cache)
 _LAST_V_BOUNDS = np.zeros(8, dtype=np.uint8)
 _LAST_I_SEGS = np.zeros(4, dtype=np.uint8)
+_LAST_NSID: int = -2  # sentinel: forces first-run initialization
 
-def sync_luts_if_needed(v_bounds, i_segs):
-    """ 
-    [v6.6 Defensive] Ensures global LUTs match the requested profile.
+def sync_luts_if_needed(v_bounds, i_segs, shard_map, nsid: int):
+    """
+    Ensures global LUTs match the requested profile.
     Must be called from Python context before entering JIT kernels.
     """
-    global _LAST_V_BOUNDS, _LAST_I_SEGS
-    if not np.array_equal(_LAST_V_BOUNDS, v_bounds) or not np.array_equal(_LAST_I_SEGS, i_segs):
-        initialize_luts_python(v_bounds, i_segs)
+    global _LAST_V_BOUNDS, _LAST_I_SEGS, _LAST_NSID
+    if (not np.array_equal(_LAST_V_BOUNDS, v_bounds) or
+            not np.array_equal(_LAST_I_SEGS, i_segs) or
+            _LAST_NSID != nsid):
+        initialize_luts_python(v_bounds, i_segs, shard_map, nsid)
         _LAST_V_BOUNDS = v_bounds.copy()
         _LAST_I_SEGS = i_segs.copy()
+        _LAST_NSID = nsid
 
 # Initial load
-sync_luts_if_needed(V_BOUND_RGB, INTENSITY_SEG_RGB)
+sync_luts_if_needed(V_BOUND_RGB, INTENSITY_SEG_RGB, PROFILE_RGB.shard_map, PROFILE_RGB.noise_shard_id)
+
 
 @njit(fastmath=True, cache=True)
-def get_context_id_fast(ag: uint8, bg: uint8, cg: uint8, intensity: uint8, 
-                       shard_map: npt.NDArray[np.uint8], nsid: int) -> uint8:
-    """ 
-    ZPNG v6.6 Ultra-Fast Dispatcher: Double LUT Lookup.
-    Replaces get_context_id_flexible with O(1) complexity.
+def get_context_id_fast(ag: uint8, bg: uint8, cg: uint8, intensity: uint8,
+                        shard_map: npt.NDArray[np.uint8], nsid: int) -> uint8:
     """
-    # 1. Double Feature Lookup
-    # Note: ag, bg, cg must be cast to signed int for the difference
+    Triple LUT dispatch: SPATIAL_TRANS_LUT → INTENSITY_LUT → FINAL_DISPATCH_LUT.
+    shard_map/nsid are baked into FINAL_DISPATCH_LUT at sync time; kept in
+    signature for caller compatibility.
+    """
     packed = SPATIAL_TRANS_LUT[int(ag) - int(cg) + 255, int(bg) - int(cg) + 255]
-    i_idx = INTENSITY_LUT[intensity]
-    
-    # 2. Extract Features
-    v_tier = packed >> 3
-    t_idx = (packed >> 1) & 0x03
-    ns_hit = packed & 0x01
-    
-    # 3. Final Mapping
-    if ns_hit != 0 and nsid >= 0:
-        return np.uint8(nsid)
-        
-    return shard_map[v_tier, i_idx, t_idx]
+    i_idx  = INTENSITY_LUT[intensity]
+    return FINAL_DISPATCH_LUT[(packed << 2) | i_idx]
 
 # --- End of Flexible Sharding Hub ---
