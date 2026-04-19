@@ -2,7 +2,7 @@
 ZPNG-CSDE PDF Template Selector (rans_selector)
 
 Available PDF Modes:
-- Mode 0/1 (Dense/Sparse): Custom pixel-perfect PDF table generated from the exact shard distribution.
+- Mode 0 (Custom Dynamic): Custom pixel-perfect PDF table generated from the exact shard distribution.
   Requires saving the arrays in the bitstream header (High Overhead / "Header Tax").
 - Mode 3 (Uniform/Empty): Zero-entropy mode for completely flat shards (all pixels predicted perfectly).
   Requires 0 bytes of header overhead.
@@ -102,8 +102,9 @@ def _decide_shard_mode_core(counts: npt.NDArray[np.uint64], width: int,
                             templates: npt.NDArray[np.uint64],
                             disable_templates: bool) -> tuple[uint8, npt.NDArray[np.uint64]]:
     
+    # 1. Build Custom Dynamic PDF
     dense_pdf = build_pdf_from_counts(counts, width)
-    
+
     if disable_templates:
         return uint8(0), dense_pdf.astype(np.uint64)
 
@@ -138,7 +139,7 @@ def _decide_shard_mode_core(counts: npt.NDArray[np.uint64], width: int,
 def decide_shard_mode(counts: npt.NDArray[np.uint64], width: int, header_penalty_bits: float = 120.0) -> tuple[uint8, npt.NDArray[np.uint64]]:
     """ 
     Heuristic decision engine with Audit Switch.
-    Default header penalty (120 bits) represents a ~15-byte serialization cost.
+    Default header penalty (120 bits) represents a 15-byte serialization cost.
     """
     disable = is_templates_disabled()
     # Pass templates array for Njit compatibility

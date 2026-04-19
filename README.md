@@ -14,14 +14,15 @@ This approach manages data representation for lossless compression.
 > [!IMPORTANT]
 > **Focused on 8-bit RGB/RGBA**: ZPNG is architected specifically for the universal standard of 8-bit digital imaging used in web, game assets, and professional digital photography workflows.
 
-### v6.2.0 Highlights (Flexible-Shard Architecture)
+### v7.2.0 Highlights (Flexible-Shard Architecture)
+- **Core Workflow**: Optimized pipeline featuring **G-sub** $\rightarrow$ **MED** $\rightarrow$ **Sharding** $\rightarrow$ **rANS**.
 - **Context-Aware Path Architecture**: 
     - **RGB Path**: Universal-42 sharding matrix optimized for cross-channel chrominance residuals.
     - **Grayscale Fast-Path**: Hardware-accelerated monochrome bypass utilizing serialized Green-channel isolation.
 - **Universal Sharding Hub (USH)**: Unified matrix-driven context ID derivation using the Universal-42 architecture.
-- **BICC (Bias Cancellation)**: Intelligent PDF centering applied to the Green foundation to minimize dispersion.
-- **Bitplane rANS (Experimental)**: Hierarchical entropy modeling that treats 8-bit planes as distinct context layers, maximizing redundancy extraction in smooth monochrome gradients.
-- **4-Way Interleaved rANS Core**: Branchless decoding achieving high throughput in JIT environments.
+- **BICC (Bias Cancellation)**: Intelligent PDF centering applied to residuals to minimize dispersion.
+- **Bitplane rANS**: Hierarchical entropy modeling that treats 8-bit planes as distinct context layers, maximizing redundancy extraction in smooth monochrome gradients.
+- **4-Way Interleaved rANS Core**: Branchless decoding achieving high throughput (~35 MB/s) in JIT environments.
 
 ---
 
@@ -83,10 +84,17 @@ print(f"Dec Time: {dec_time:.2f}s")
 
 ---
 
-## 5. Technical Architecture
+## 5. Technical Architecture & Execution Flow
 
-ZPNG follows the **Flexible-Shard Architecture**:
-- **Pillar 1: G-sub RCT**: Median-based reversible color transform extracting a stable Green channel foundation.
+ZPNG follows a strictly defined **Four-Step Pipeline** to transform raw pixels into a highly compressed bitstream:
+
+### 5.1 Scientific Execution Workflow
+1.  **Step 1: G-sub (Green-Subtract RCT)**: Extracts the Green (G) channel as the foundation and calculates residuals ($RD = R - G$, $BD = B - G$) to eliminate inter-channel redundancy.
+2.  **Step 2: MED (Median Edge Detector) Prediction**: Performs spatial decorrelation on each channel independently to convert structural pixel data into error residuals.
+3.  **Step 3: Sharding (Contextual Hub)**: Maps residuals into **42 discrete Shards** (Universal-42) based on local intensity and gradient-tier ($V$-Tier) behavior.
+4.  **Step 4: rANS (Entropy Coding)**: Consumes the sharded data using a **4-way interleaved Range ANS** engine for near-optimal bit-perfect compression.
+
+- **Pillar 1: G-sub RCT**: Reversible color transform using Green-subtraction for chrominance decorrelation.
 - **Pillar 2: MED Predictor**: Spatial decorrelation using the Median Edge Detector.
 - **Pillar 3: Flexible Sharding Hub (FSH)**: Dynamic 42-shard context mapping based on local intensity and gradient strength (V-Tier).
 - **Pillar 4: Interleaved rANS**: 4-way interleaved entropy core for high-instruction-level parallelism.
@@ -105,22 +113,24 @@ graph TD
     F --> G[ZPNG Bitstream]
 ```
 
-### 5.1 Dual-Path Strategy
+### 5.2 Dual-Path Strategy
 ZPNG implements a **Context-Aware Bypass** logic to handle different image types with optimal efficiency:
 
 *   **RGB Route**: Utilizing the **G-sub RCT**, it extracts a Green foundation (Lead) followed by RD/BD residuals (Lag). It uses a staggered processing window to maintain context consistency across channels.
 *   **Grayscale Route**: If R=G=B is detected, the engine activates a specialized monochrome bypass, pruning ~65% of computational overhead. This path is highly optimized for **Bitplane rANS**, which decomposes the 8-bit signal into hierarchical layers to maximize redundancy extraction.
 
-### 5.2 Universal-42 Sharding & Template Matrix
-The backbone of ZPNG is the **Universal-42 profile**, mapping pixels into 42 contexts based on V-Tier (gradient strength), Intensity, and Trend. 
+### 5.3 Universal-42 Sharding & Template Matrix
+The backbone of ZPNG is the **Universal-42 profile**, mapping pixels into 42 contexts based on V-Tier (gradient strength), Intensity, and Trend. This "Sharding" application allows the coder to isolate edges from smooth gradients, applying unique probability models to each.
 
 For entropy coding, the engine utilizes a **30-Mode Template Matrix**:
 - **6 Base Centroids**: Data-driven probability shapes derived from 6,000+ real-world image shards.
 - **5 Sigma Scales**: Each centroid is scaled from `0.5` to `1.5` to adapt to different noise levels.
 - **Zero-Overhead**: These 30 empirical modes are hardcoded in the decoder, allowing optimal PDF matching without the "Header Tax" of custom frequency tables.
 
-### 5.3 Bitplane rANS (rans_bitplane.py)
+### 5.4 Bitplane rANS & entropy core
 For high-density images, ZPNG employs **Shard-Conditioned Bitplane rANS**. Instead of treating the residual as a single 256-symbol alphabet, it decomposes the signal into 2-bit layers. Each layer uses a massive **2,688-way context model** ($42 \text{ Shards} \times 64 \text{ Spatial Patterns}$), allowing the rANS core to isolate structural predictable bits from stochastic noise bits.
+
+The **Interleaved rANS** engine further optimizes throughput by managing multiple state variables in a single loop, effectively treating the entropy coding as a vectorized operation.
 
 ---
 

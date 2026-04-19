@@ -51,19 +51,13 @@ import concurrent.futures
 
 from .common import predict_med_standard, get_context_id_fast
 from .predictor import from_zigzag
+from .transform import reconstruct_2d_channels
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 N_SPATIAL: int = 64                         # 2-bit L|U<<2|NW<<4 contexts
-N_SHARDS: int  = 42                         # Default for PROFILE_RGB; n_ctx recomputed dynamically per call
-N_CTX: int     = N_SHARDS * N_SPATIAL       # Default context count; JIT kernels receive n_ctx at runtime
 BITPLANE_MAGIC: int = 0xFF                  # first-byte sentinel
-
-_L_LOWER  = np.uint64(1 << 31)
-_M_BITS   = np.uint64(12)
-_MASK     = np.uint64((1 << 12) - 1)
-_L_MAX    = (_L_LOWER >> _M_BITS) << np.uint64(8)
 
 
 # ---------------------------------------------------------------------------
@@ -97,8 +91,8 @@ def _build_pdf_sharded(resid_2d:  npt.NDArray[np.uint8],
     rANS frequencies.
 
     Returns:
-      f  - shape (4, N_CTX, 4) symbol frequencies (sum = 4096 per row)
-      cf - shape (4, N_CTX, 5) cumulative frequencies (0-padded on left)
+      f  - shape (4, n_ctx, 4) symbol frequencies (sum = 4096 per row)
+      cf - shape (4, n_ctx, 5) cumulative frequencies (0-padded on left)
     """
     h, w = resid_2d.shape[0] - 2, resid_2d.shape[1] - 2  # inputs are zero-padded (h+2, w+2)
     counts_tls = np.zeros((nt, 4, n_ctx, 4), dtype=np.uint64)
@@ -541,7 +535,8 @@ def decompress_bitplane_gray_sharded(payload:   bytes,
     raw = np.frombuffer(payload, dtype=np.uint8)
     ptr = 0
 
-    assert raw[ptr] == BITPLANE_MAGIC, "Not a sharded bitplane payload"
+    if raw[ptr] != BITPLANE_MAGIC:
+        raise ValueError("Not a sharded bitplane payload")
     ptr += 1
 
     tables_len = int(np.frombuffer(raw[ptr:ptr+4], dtype=np.uint32)[0])
@@ -639,20 +634,19 @@ def compress_bitplane_rgb_sharded(gr_ch:    npt.NDArray[np.uint8],
 def decompress_bitplane_rgb_sharded(payload:   bytes,
                                      h: int, w: int,
                                      shard_map: npt.NDArray[np.uint8],
-                                     nsid: int):
+                                     nsid: int) -> Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint8]]:
     """
     RGB sharded bitplane decoder.
     Decodes green first (self-referential), then Rd and Bd in parallel using
     the reconstructed green channel for shard context.
     Returns (gr_rec, rd_rec, bd_rec) as (h, w) uint8 arrays ready for restore_channels.
     """
-    from .transform import reconstruct_2d_channels
-
     n_shards = int(shard_map.max()) + 1 if nsid < 0 else nsid + 1
     n_ctx = n_shards * N_SPATIAL
 
     raw = np.frombuffer(payload, dtype=np.uint8)
-    assert raw[0] == BITPLANE_MAGIC, "Not a sharded bitplane payload"
+    if raw[0] != BITPLANE_MAGIC:
+        raise ValueError("Not a sharded bitplane payload")
     ptr = 1
 
     decomp = zstd.ZstdDecompressor()

@@ -2,7 +2,7 @@
 ZPNG-CSDE [Stable Parallel Architecture]
 Module: rans
 Role: Pillar 4 - Entropy Engine (Unified).
-Description: Integrated 4-way interleaved rANS core and Bit-Context 2D rANS Engine.
+Description: Integrated 4-way interleaved rANS core with sharded parallel encoding and decoding.
 Architecture: Precision-indexed SIMD-optimized symbols for O(1) branchless decoding.
 
 Engineering Rationale:
@@ -24,34 +24,6 @@ from .common import (
 )
 from .rans_selector import _decide_shard_mode_core
 
-# Pre-compute empirical cumulative/slot tables for decoder
-def _precompute_empirical():
-    syms = []
-    cums = []
-    lookups = []
-    for tpl in EMPIRICAL_TEMPLATES:
-        sf = tpl.astype(np.uint64)
-        syms.append(sf)
-        
-        cf = np.zeros(257, dtype=np.uint64)
-        acc = 0 # Use Python int for safe accumulation
-        for i in range(256):
-            cf[i] = uint64(acc)
-            acc += int(sf[i])
-        cf[256] = uint64(acc)
-        cums.append(cf)
-        
-        # Build O(1) slot lookup
-        lk = np.zeros(4096, dtype=np.uint8)
-        for sym_idx in range(256):
-            s, e = int(cf[sym_idx]), int(cf[sym_idx+1])
-            for v in range(s, e):
-                lk[v] = uint8(sym_idx)
-        lookups.append(lk)
-    return syms, cums, lookups
-
-EMP_SYM_FREQS, EMP_CUM_FREQS, EMP_LOOKUPS = _precompute_empirical()
-
 # =============================================================================
 # --- Global Industrial Constants ---
 # =============================================================================
@@ -62,8 +34,6 @@ L_MAX_BOUND: uint64 = (L_LOWER >> M_BITS) << 8 # Normalization threshold
 M_TOTAL: uint64 = uint64(1 << M_BITS)
 M_MASK: uint64  = M_TOTAL - 1
 SENTINEL_BYTES: int = 8       # Memory safety offset for 64-bit state flushing
-
-
 
 
 # =============================================================================
@@ -296,16 +266,6 @@ def expand_pdf_tables(compacted_data: npt.NDArray[np.uint8], shard_widths: npt.N
                 expanded[s, symbols] = freqs.astype(np.uint64)
 
     return expanded
-
-@njit(fastmath=True, cache=True)
-def build_lookup_table(cum_freqs: npt.NDArray[np.uint64]) -> npt.NDArray[np.uint8]:
-    lookup: npt.NDArray[np.uint8] = np.empty(4096, dtype=np.uint8)
-    for s_idx in range(256):
-        start_v, end_v = cum_freqs[s_idx], cum_freqs[s_idx+1]
-        for slot_v in range(start_v, end_v):
-            lookup[slot_v] = uint8(s_idx)
-    return lookup
-
 
 @njit(parallel=True, fastmath=True, cache=True)
 def rans_encode_shards_parallel(shard_data_flat: npt.NDArray[np.uint8], 
