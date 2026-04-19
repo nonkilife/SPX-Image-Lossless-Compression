@@ -580,8 +580,12 @@ def compress_bitplane_rgb_sharded(gr_ch:    npt.NDArray[np.uint8],
     """
     RGB sharded bitplane encoder.
     All three channels use the green channel (gr_ch) for shard context, matching
-    shard_rgb.py's convention. All three channels are encoded in parallel via
-    threads (Numba kernels release the GIL via nogil=True). Bitstream format:
+    shard_rgb.py's convention. Two-phase parallel strategy:
+      Phase 1 (sequential): _build_pdf_sharded uses prange internally — each of the
+        three calls gets exclusive use of all Numba threads, avoiding oversubscription.
+      Phase 2 (concurrent): _rans_encode_sharded is single-threaded with nogil=True —
+        three threads run on three separate cores with zero contention.
+    Bitstream format:
       [0xFF]
       [gr_channel_block]  - tables_zstd_len:u32, tables_zstd, states:4*u64, bs_len:u32, bitstream
       [rd_channel_block]  - same structure
@@ -589,14 +593,33 @@ def compress_bitplane_rgb_sharded(gr_ch:    npt.NDArray[np.uint8],
     """
     n_shards = int(shard_map.max()) + 1 if nsid < 0 else nsid + 1
     n_ctx = n_shards * N_SPATIAL
+    nt = get_num_threads()
 
-    def _pack_channel(resid: npt.NDArray[np.uint8],
-                      ref:   npt.NDArray[np.uint8]) -> bytes:
-        resid_p = np.pad(resid, 1, constant_values=0)
-        ref_p   = np.pad(ref,   1, constant_values=0)
-        f_nc, cf_nc = _build_pdf_sharded(resid_p, ref_p, shard_map, nsid, n_ctx, get_num_threads())
-        states, bs = _rans_encode_sharded(resid_p, ref_p, cf_nc, f_nc, shard_map, nsid, n_ctx)
-        tables_zstd = zstd.ZstdCompressor(level=1).compress(f_nc.astype(np.uint16).tobytes())
+    # Pad inputs once, shared across all phases.
+    gr_ref_p = np.pad(gr_ch,    1, constant_values=0)
+    gr_p     = np.pad(gr_resid, 1, constant_values=0)
+    rd_p     = np.pad(rd_resid, 1, constant_values=0)
+    bd_p     = np.pad(bd_resid, 1, constant_values=0)
+
+    # Phase 1: histogram — sequential, each call gets full prange parallelism.
+    f_gr, cf_gr = _build_pdf_sharded(gr_p, gr_ref_p, shard_map, nsid, n_ctx, nt)
+    f_rd, cf_rd = _build_pdf_sharded(rd_p, gr_ref_p, shard_map, nsid, n_ctx, nt)
+    f_bd, cf_bd = _build_pdf_sharded(bd_p, gr_ref_p, shard_map, nsid, n_ctx, nt)
+
+    # Phase 2: encode — concurrent, each kernel is single-threaded + nogil.
+    def _encode(resid_p, f, cf):
+        return _rans_encode_sharded(resid_p, gr_ref_p, cf, f, shard_map, nsid, n_ctx)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+        fut_gr = ex.submit(_encode, gr_p, f_gr, cf_gr)
+        fut_rd = ex.submit(_encode, rd_p, f_rd, cf_rd)
+        fut_bd = ex.submit(_encode, bd_p, f_bd, cf_bd)
+        states_gr, bs_gr = fut_gr.result()
+        states_rd, bs_rd = fut_rd.result()
+        states_bd, bs_bd = fut_bd.result()
+
+    def _serialise(f, states, bs) -> bytes:
+        tables_zstd = zstd.ZstdCompressor(level=1).compress(f.astype(np.uint16).tobytes())
         blk = bytearray()
         blk.extend(np.array([len(tables_zstd)], dtype=np.uint32).tobytes())
         blk.extend(tables_zstd)
@@ -605,21 +628,11 @@ def compress_bitplane_rgb_sharded(gr_ch:    npt.NDArray[np.uint8],
         blk.extend(bs.tobytes())
         return bytes(blk)
 
-    # All three channels read gr_ch (never write it) → no data hazard.
-    # Numba kernels have nogil=True so they run in true parallel threads.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
-        fut_gr = ex.submit(_pack_channel, gr_resid, gr_ch)
-        fut_rd = ex.submit(_pack_channel, rd_resid, gr_ch)
-        fut_bd = ex.submit(_pack_channel, bd_resid, gr_ch)
-        blk_gr = fut_gr.result()
-        blk_rd = fut_rd.result()
-        blk_bd = fut_bd.result()
-
     out = bytearray()
     out.append(BITPLANE_MAGIC)
-    out.extend(blk_gr)
-    out.extend(blk_rd)
-    out.extend(blk_bd)
+    out.extend(_serialise(f_gr, states_gr, bs_gr))
+    out.extend(_serialise(f_rd, states_rd, bs_rd))
+    out.extend(_serialise(f_bd, states_bd, bs_bd))
     return bytes(out)
 
 
