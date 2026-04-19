@@ -30,7 +30,6 @@ import zstandard as zstd
 import threading
 from .common import (
     ZpngResult, FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE,
-    apply_median_to_stats,
     calculate_channel_stats, PROFILE_RGB,
     extract_srb_metadata,
     BITPLANE_WIDTH_THRESHOLD, BITPLANE_MIN_PIXELS
@@ -265,12 +264,9 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
         
 
         
-        # [v6.5] Median Normalization Alignment: Transform centered Pass 1 stats to normalized ZigZag stats
-        biased_stats: npt.NDArray[np.uint32] = apply_median_to_stats(shard_stats, shard_medians)
-        
-        # [v4.7.2-STABLE] Metadata Extraction (NOW USING NORMALIZED RANGES)
+        # [v4.7.2-STABLE] Metadata Extraction
         shard_widths: npt.NDArray[np.uint16]
-        shard_widths = extract_srb_metadata(biased_stats)
+        shard_widths = extract_srb_metadata(shard_stats)
 
         # [v7.5] Per-Image Coder Selection: auto-detect bitplane vs standard rANS.
         # Grayscale always uses bitplane - the shard-conditioned bitplane coder was

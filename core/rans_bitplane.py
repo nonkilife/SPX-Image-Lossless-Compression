@@ -19,7 +19,7 @@ For every pixel, the combined per-layer context is derived via:
     ctx = shard_id * N_SPATIAL + (L_2bit | U_2bit<<2 | NW_2bit<<4)
 
 Where:
-  - shard_id: gradient shard context (N_SHARDS per profile).
+  - shard_id: gradient shard context (n_shards, dynamic per call).
   - L/U/NW_2bit: High-order bits of reconstructed spatial neighbors.
   - Context Range: N_SHARDS x N_SPATIAL contexts per layer.
 
@@ -38,7 +38,7 @@ graph TD
     Layer --> Ctx[Combine Contexts: 42 Shard x 64 Spatial]
     Ctx --> rANS[Sequential rANS: Layer 3 to 0]
     rANS --> Stream[Bitstream + Zstd PDF Table]
-    %% Ctx label: N Shard x 64 Spatial = N_CTX combined contexts
+    %% Ctx label: n_shards x 64 spatial = n_ctx combined contexts
 ```
 """
 

@@ -16,8 +16,8 @@ Engineering Rationale:
 
 import numpy as np
 import numpy.typing as npt
-from numba import njit, prange, uint8, uint16, uint32, uint64, int32
-from typing import Tuple, List, Optional
+from numba import njit, prange, uint8, uint16, uint32, uint64
+from typing import Tuple, List
 
 from .common import (
     EMPIRICAL_TEMPLATES,
@@ -62,7 +62,6 @@ def mul_hi(a, b):
 # =============================================================================
 # --- 4-Way Multi-Symbol rANS Engine (Standard Shards) ---
 # =============================================================================
-
 
 @njit(boundscheck=False, cache=True)
 def rans_decode_4way_core(st0: uint64, st1: uint64, st2: uint64, st3: uint64, 

@@ -30,7 +30,7 @@ import zstandard as zstd
 import concurrent.futures
 from typing import Tuple, List, Optional, Union, BinaryIO
 from .common import (
-    FLAG_RGBA, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE,
+    FLAG_RGBA, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE, FLAG_MED_ADJ,
     PROFILE_RGB
 )
 from .rans_bitplane import decompress_bitplane_gray_sharded
@@ -62,6 +62,7 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
     flag: int = FLAG_RGBA if is_rgba else 0
     if is_grayscale: flag |= FLAG_GRAYSCALE
     if use_gsub: flag |= FLAG_COLOR_GSUB
+    flag |= FLAG_MED_ADJ
 
     metadata_len = len(metadata_bytes)
     header_base: bytes = np.array([h, w, metadata_len, flag], dtype='<u4').tobytes()

@@ -21,7 +21,7 @@ import numpy.typing as npt
 from numba import njit, prange, uint8, uint16, uint32, uint64
 from typing import Tuple, List, Optional
 from .common import (
-    to_zigzag, from_zigzag, predict_med_standard, get_context_id_fast
+    to_zigzag, predict_med_standard, med_edge_tuned, get_context_id_fast
 )
 
 @njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
@@ -74,7 +74,7 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
                 bg = gr_ch[pi-1, 1]        # top neighbor; border=0 when i=0
                 cg = np.uint8(0)           # top-left corner border
 
-                pg = predict_med_standard(ag, bg, cg)
+                pg = med_edge_tuned(ag, bg, cg)
                 curr_valg = gr_ch[pi, 1]
                 ctxg = int(get_context_id_fast(ag, bg, cg, pg, shard_map, nsid))
                 diffg = (int(curr_valg) - int(pg)) & 0xFF
@@ -90,7 +90,7 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
                 ag = gr_ch[pi, pj-1]
                 bg = gr_ch[pi-1, pj]
                 cg = gr_ch[pi-1, pj-1]
-                pg = predict_med_standard(ag, bg, cg)
+                pg = med_edge_tuned(ag, bg, cg)
                 curr_valg = gr_ch[pi, pj]
                 ctxg = int(get_context_id_fast(ag, bg, cg, pg, shard_map, nsid))
                 diffg = (int(curr_valg) - int(pg)) & 0xFF
@@ -107,8 +107,8 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
                     a2 = bd_ch[pi, ptj-1]; b2 = bd_ch[pi-1, ptj]; c2 = bd_ch[pi-1, ptj-1]
                     ctx1 = int(get_context_id_fast(a1, b1, c1, prev_valg, shard_map, nsid))
                     ctx2 = int(get_context_id_fast(a2, b2, c2, prev_valg, shard_map, nsid))
-                    p1 = predict_med_standard(a1, b1, c1)
-                    p2 = predict_med_standard(a2, b2, c2)
+                    p1 = med_edge_tuned(a1, b1, c1)
+                    p2 = med_edge_tuned(a2, b2, c2)
                     diff1 = (int(val1) - int(p1)) & 0xFF
                     diff2 = (int(val2) - int(p2)) & 0xFF
                     res1_c, res2_c = (diff1 + 128) & 0xFF, (diff2 + 128) & 0xFF
@@ -128,8 +128,8 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
                 a2 = bd_ch[pi, ptj-1]; b2 = bd_ch[pi-1, ptj]; c2 = bd_ch[pi-1, ptj-1]
                 ctx1 = int(get_context_id_fast(a1, b1, c1, prev_valg, shard_map, nsid))
                 ctx2 = int(get_context_id_fast(a2, b2, c2, prev_valg, shard_map, nsid))
-                p1 = predict_med_standard(a1, b1, c1)
-                p2 = predict_med_standard(a2, b2, c2)
+                p1 = med_edge_tuned(a1, b1, c1)
+                p2 = med_edge_tuned(a2, b2, c2)
                 diff1 = (int(val1) - int(p1)) & 0xFF
                 diff2 = (int(val2) - int(p2)) & 0xFF
                 res1_c, res2_c = (diff1 + 128) & 0xFF, (diff2 + 128) & 0xFF
@@ -211,11 +211,11 @@ def predict_pass_2(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
             ag = np.uint8(0)           # left border
             bg = gr_ch[pi-1, 1]        # top neighbor; border=0 when i=0
             cg = np.uint8(0)           # top-left corner border
-            pg = predict_med_standard(ag, bg, cg)
+            pg = med_edge_tuned(ag, bg, cg)
             curr_valg = gr_ch[pi, 1]
             ctxg = int(get_context_id_fast(ag, bg, cg, pg, shard_map, nsid))
-            diffg = int(curr_valg) - int(pg) - (int(shard_medians[0, ctxg]) - 128)
-            shard_gr[local_ptr_gr[ctxg]] = to_zigzag(diffg)
+            diffg = int(curr_valg) - int(pg)
+            shard_gr[local_ptr_gr[ctxg]] = np.uint8((diffg + 128) & 0xFF)
             local_ptr_gr[ctxg] += 1
             prev_valg = curr_valg
 
@@ -225,11 +225,11 @@ def predict_pass_2(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
             ag = gr_ch[pi, pj-1]
             bg = gr_ch[pi-1, pj]
             cg = gr_ch[pi-1, pj-1]
-            pg = predict_med_standard(ag, bg, cg)
+            pg = med_edge_tuned(ag, bg, cg)
             curr_valg = gr_ch[pi, pj]
             ctxg = int(get_context_id_fast(ag, bg, cg, pg, shard_map, nsid))
-            diffg = int(curr_valg) - int(pg) - (int(shard_medians[0, ctxg]) - 128)
-            shard_gr[local_ptr_gr[ctxg]] = to_zigzag(diffg)
+            diffg = int(curr_valg) - int(pg)
+            shard_gr[local_ptr_gr[ctxg]] = np.uint8((diffg + 128) & 0xFF)
             local_ptr_gr[ctxg] += 1
 
             # 2. RD/BD Channels (Lag): pixel at ptj = pj-1
@@ -240,12 +240,12 @@ def predict_pass_2(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
                 a2 = bd_ch[pi, ptj-1]; b2 = bd_ch[pi-1, ptj]; c2 = bd_ch[pi-1, ptj-1]
                 ctx1 = int(get_context_id_fast(a1, b1, c1, prev_valg, shard_map, nsid))
                 ctx2 = int(get_context_id_fast(a2, b2, c2, prev_valg, shard_map, nsid))
-                p1 = predict_med_standard(a1, b1, c1)
-                p2 = predict_med_standard(a2, b2, c2)
-                diff1 = int(val1) - int(p1) - (int(shard_medians[1, ctx1]) - 128)
-                diff2 = int(val2) - int(p2) - (int(shard_medians[2, ctx2]) - 128)
-                shard_rd[local_ptr_rd[ctx1]] = to_zigzag(diff1)
-                shard_bd[local_ptr_bd[ctx2]] = to_zigzag(diff2)
+                p1 = med_edge_tuned(a1, b1, c1)
+                p2 = med_edge_tuned(a2, b2, c2)
+                diff1 = int(val1) - int(p1)
+                diff2 = int(val2) - int(p2)
+                shard_rd[local_ptr_rd[ctx1]] = np.uint8((diff1 + 128) & 0xFF)
+                shard_bd[local_ptr_bd[ctx2]] = np.uint8((diff2 + 128) & 0xFF)
                 local_ptr_rd[ctx1] += 1; local_ptr_bd[ctx2] += 1
 
             prev_valg = curr_valg
@@ -258,12 +258,12 @@ def predict_pass_2(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
             a2 = bd_ch[pi, ptj-1]; b2 = bd_ch[pi-1, ptj]; c2 = bd_ch[pi-1, ptj-1]
             ctx1 = int(get_context_id_fast(a1, b1, c1, prev_valg, shard_map, nsid))
             ctx2 = int(get_context_id_fast(a2, b2, c2, prev_valg, shard_map, nsid))
-            p1 = predict_med_standard(a1, b1, c1)
-            p2 = predict_med_standard(a2, b2, c2)
-            diff1 = int(val1) - int(p1) - (int(shard_medians[1, ctx1]) - 128)
-            diff2 = int(val2) - int(p2) - (int(shard_medians[2, ctx2]) - 128)
-            shard_rd[local_ptr_rd[ctx1]] = to_zigzag(diff1)
-            shard_bd[local_ptr_bd[ctx2]] = to_zigzag(diff2)
+            p1 = med_edge_tuned(a1, b1, c1)
+            p2 = med_edge_tuned(a2, b2, c2)
+            diff1 = int(val1) - int(p1)
+            diff2 = int(val2) - int(p2)
+            shard_rd[local_ptr_rd[ctx1]] = np.uint8((diff1 + 128) & 0xFF)
+            shard_bd[local_ptr_bd[ctx2]] = np.uint8((diff2 + 128) & 0xFF)
             local_ptr_rd[ctx1] += 1; local_ptr_bd[ctx2] += 1
 
         if is_rgba:
@@ -304,10 +304,10 @@ def reconstruct_channels(h, w, res_gr, res_rd, res_bd, off_gr, off_rd, off_bd,
             ag = gr_rec[pi, pj-1]
             bg = gr_rec[pi-1, pj]
             cg = gr_rec[pi-1, pj-1]
-            pg = predict_med_standard(ag, bg, cg)
+            pg = med_edge_tuned(ag, bg, cg)
             ctxg = int(get_context_id_fast(ag, bg, cg, pg, shard_map, nsid))
-            resg = from_zigzag(res_gr[ptr_gr[ctxg]]); ptr_gr[ctxg] += 1
-            gr_rec[pi, pj] = np.uint8((int(resg) + int(pg) + (int(shard_medians[0, ctxg]) - 128)) & 0xFF)
+            resg = int(res_gr[ptr_gr[ctxg]]) - 128; ptr_gr[ctxg] += 1
+            gr_rec[pi, pj] = np.uint8((resg + int(pg)) & 0xFF)
 
     # Pass 2: Chroma Dispatch (Parallel Lag)
     if not is_grayscale:
@@ -320,10 +320,10 @@ def reconstruct_channels(h, w, res_gr, res_rd, res_bd, off_gr, off_rd, off_bd,
                         a = rd_rec[pi, pj-1]
                         b = rd_rec[pi-1, pj]
                         c = rd_rec[pi-1, pj-1]
-                        p = predict_med_standard(a, b, c)
+                        p = med_edge_tuned(a, b, c)
                         ctx = int(get_context_id_fast(a, b, c, cur_g, shard_map, nsid))
-                        res = from_zigzag(res_rd[ptr_rd[ctx]]); ptr_rd[ctx] += 1
-                        rd_rec[pi, pj] = np.uint8((int(res) + int(p) + (int(shard_medians[1, ctx]) - 128)) & 0xFF)
+                        res = int(res_rd[ptr_rd[ctx]]) - 128; ptr_rd[ctx] += 1
+                        rd_rec[pi, pj] = np.uint8((res + int(p)) & 0xFF)
             else:
                 # Reconstruct BD Channel
                 for pi in range(1, h + 1):
@@ -332,10 +332,10 @@ def reconstruct_channels(h, w, res_gr, res_rd, res_bd, off_gr, off_rd, off_bd,
                         a = bd_rec[pi, pj-1]
                         b = bd_rec[pi-1, pj]
                         c = bd_rec[pi-1, pj-1]
-                        p = predict_med_standard(a, b, c)
+                        p = med_edge_tuned(a, b, c)
                         ctx = int(get_context_id_fast(a, b, c, cur_g, shard_map, nsid))
-                        res = from_zigzag(res_bd[ptr_bd[ctx]]); ptr_bd[ctx] += 1
-                        bd_rec[pi, pj] = np.uint8((int(res) + int(p) + (int(shard_medians[2, ctx]) - 128)) & 0xFF)
+                        res = int(res_bd[ptr_bd[ctx]]) - 128; ptr_bd[ctx] += 1
+                        bd_rec[pi, pj] = np.uint8((res + int(p)) & 0xFF)
 
     if not is_grayscale:
         return gr_rec[1:h+1, 1:w+1], rd_rec[1:h+1, 1:w+1], bd_rec[1:h+1, 1:w+1]

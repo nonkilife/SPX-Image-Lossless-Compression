@@ -23,8 +23,7 @@ import numpy.typing as npt
 from numba import njit, prange, uint8, uint64
 from typing import Tuple
 from .common import (
-    to_zigzag, predict_med_standard,
-    get_context_id_fast
+    to_zigzag, predict_med_standard, med_edge_tuned, get_context_id_fast
 )
 
 
@@ -62,7 +61,7 @@ def predict_pass_1_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
                 a = gray_ch[pi, pj-1]
                 b = gray_ch[pi-1, pj]
                 c = gray_ch[pi-1, pj-1]
-                p = predict_med_standard(a, b, c)
+                p = med_edge_tuned(a, b, c)
                 val = gray_ch[pi, pj]
                 ctx = int(get_context_id_fast(a, b, c, p, shard_map, nsid))
                 diff = (int(val) - int(p)) & 0xFF
@@ -138,10 +137,10 @@ def predict_pass_2_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
     """
     Stage 2: O(N) Encoding Payload Construction for grayscale.
 
-    Retraces the same raster scan as Pass 1, applies median normalization per
-    shard (shard_medians[0, ctx]), and writes ZigZag-encoded residuals into the
-    pre-allocated shard_out buffer using the row_global_offsets write-pointer
-    table (channel 0 slice).
+    Retraces the same raster scan as Pass 1 and writes ZigZag-encoded residuals
+    into the pre-allocated shard_out buffer using the row_global_offsets write-pointer
+    table (channel 0 slice). shard_medians are fixed at 128 (neutral) for grayscale,
+    so the median normalization term is always zero (no-op).
 
     Alpha channel handling mirrors shard_rgb.predict_pass_2 for RGBA images.
     """
@@ -157,12 +156,11 @@ def predict_pass_2_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
             a = gray_ch[pi, pj-1]
             b = gray_ch[pi-1, pj]
             c = gray_ch[pi-1, pj-1]
-            p = predict_med_standard(a, b, c)
+            p = med_edge_tuned(a, b, c)
             val = gray_ch[pi, pj]
             ctx = int(get_context_id_fast(a, b, c, p, shard_map, nsid))
-            # Median-normalize residual
-            diff = int(val) - int(p) - (int(shard_medians[0, ctx]) - 128)
-            shard_out[local_ptr[ctx]] = to_zigzag(diff)
+            diff = int(val) - int(p)
+            shard_out[local_ptr[ctx]] = np.uint8((diff + 128) & 0xFF)
             local_ptr[ctx] += 1
 
         if is_rgba:

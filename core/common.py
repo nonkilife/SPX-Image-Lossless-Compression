@@ -24,7 +24,7 @@ import numpy.typing as npt
 from numba import njit, prange, uint8
 from typing import Tuple, Optional, List
 from dataclasses import dataclass, field
-from .predictor import to_zigzag, from_zigzag, predict_med_standard
+from .predictor import to_zigzag, from_zigzag, predict_med_standard, med_edge_tuned
 
 # Empirical distribution template library for codec and rans modules.
 # Extracted from 6185 real image shards via K-Means clustering, including symmetric and asymmetric distributions.
@@ -70,6 +70,7 @@ FLAG_PASSTHROUGH: int = 0x08  # Original File Storage (PNG/JPG)
 FLAG_GRAYSCALE: int   = 0x10  # Hardware-accelerated true monochrome bypassing CR
 FLAG_COLOR_GSUB: int   = 0x20  # Adaptive Green-Subtract Transform (Smooth Image Optimization)
 FLAG_BITPLANE: int    = 0x40  # 2D Bit-Context engine
+FLAG_MED_ADJ: int    = 0x80  # v7.3.0 Edge-Tuned MED (jump>50 neighbor inversion)
 
 # --- 2. Sharding Profile System ---
 
@@ -220,30 +221,6 @@ def extract_srb_metadata(shard_stats: npt.NDArray[np.uint32]) -> npt.NDArray[np.
                 widths[c, s] = np.uint16(int(indices[-1]) + 1)
     return widths
 
-@njit(parallel=True, fastmath=True, cache=True)
-def apply_median_to_stats(shard_stats: npt.NDArray[np.uint32], medians: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint32]:
-    """
-    Median Normalization Transformation (BICC).
-    Shifts centered histograms to align the distribution peak (median) to 0 in ZigZag space.
-    This ensures that different shards with similar variances but different bias offsets
-    can be modeled by the same static Laplacian template.
-    """
-    n_colors, n_shards, _ = shard_stats.shape
-    aligned_stats = np.zeros((n_colors, n_shards, 256), dtype=np.uint32)
-    
-    for c in range(n_colors):
-        for s in prange(n_shards):
-            m = int(medians[c, s])
-            hist = shard_stats[c, s]
-            if np.sum(hist) == 0: continue
-            for centered_val in range(256):
-                count = hist[centered_val]
-                if count == 0: continue
-                # Align peak to 0 before ZigZag mapping
-                norm_res = centered_val - m
-                z_aligned = int(to_zigzag(np.uint8(norm_res & 0xFF)))
-                aligned_stats[c, s, z_aligned] += count
-    return aligned_stats
 
 @njit(fastmath=True, error_model='numpy', cache=True)
 def calculate_channel_stats(hist: npt.NDArray[np.uint32]) -> Tuple[float, int, int]:
