@@ -98,7 +98,7 @@ def predict_2d_residuals(data_ch: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8
     Returns a 2D residual matrix with the same shape as the input channel.
     """
     h, w = data_ch.shape
-    res = np.zeros((h, w), dtype=uint8)
+    res = np.empty((h, w), dtype=uint8)
     if w == 0:
         return res
     for i in prange(h):

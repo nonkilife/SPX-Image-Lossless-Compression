@@ -370,7 +370,7 @@ def sync_luts_if_needed(v_bounds, i_segs, shard_map, nsid: int):
 sync_luts_if_needed(V_BOUND_RGB, INTENSITY_SEG_RGB, PROFILE_RGB.shard_map, PROFILE_RGB.noise_shard_id)
 
 
-@njit(fastmath=True, cache=True)
+@njit(inline='always', fastmath=True, cache=True)
 def get_context_id_fast(ag: uint8, bg: uint8, cg: uint8, intensity: uint8,
                         shard_map: npt.NDArray[np.uint8], nsid: int) -> uint8:
     """

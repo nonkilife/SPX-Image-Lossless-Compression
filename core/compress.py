@@ -349,32 +349,35 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
                     f"-> {'bitplane' if use_bitplane else 'standard'}"
                 )
 
-        # 5. Zero-Copy rANS Buffer Allocation (v4.9.2)
-        total_res_size: int = int(shard_counts.sum())
-        all_shards_flat: npt.NDArray[np.uint8] = np.empty(total_res_size, dtype=np.uint8)
-        
-        # Create zero-copy views for each channel
-        gr_size: int = int(shard_counts[0].sum())
-        rd_size: int = int(shard_counts[1].sum())
-        shard_gr = all_shards_flat[0 : gr_size]
-        shard_rd = all_shards_flat[gr_size : gr_size + rd_size]
-        shard_bd = all_shards_flat[gr_size + rd_size :]
-        
-        # 6. Predict & Shard (Pass 2: Direct Write to Unified Buffer)
-        res_a: npt.NDArray[np.uint8]
-        a_hits: np.uint64
-        a_sum: float
-        if is_grayscale:
-            res_a, (a_hits, a_sum) = \
-                predict_pass_2_gray(h, w, gr_map_p, a_map, is_rgba,
-                                    profile.shard_map, profile.noise_shard_id,
-                                    row_global_offsets, shard_medians, shard_gr)
-        else:
-            res_a, (a_hits, a_sum) = \
-                predict_pass_2(h, w, gr_map_p, rd_map_p, bd_map_p, a_map, is_rgba, False,
-                               profile.shard_map, profile.noise_shard_id,
-                               row_global_offsets, shard_medians,
-                               shard_gr, shard_rd, shard_bd)
+        # 5 & 6. Buffer allocation and Pass 2 are only needed for standard rANS.
+        # Bitplane path uses predict_2d_residuals and does not consume shard buffers.
+        if not use_bitplane:
+            total_res_size: int = int(shard_counts.sum())
+            all_shards_flat: npt.NDArray[np.uint8] = np.empty(total_res_size, dtype=np.uint8)
+            gr_size: int = int(shard_counts[0].sum())
+            rd_size: int = int(shard_counts[1].sum())
+            shard_gr = all_shards_flat[0 : gr_size]
+            shard_rd = all_shards_flat[gr_size : gr_size + rd_size]
+            shard_bd = all_shards_flat[gr_size + rd_size :]
+
+            res_a: npt.NDArray[np.uint8]
+            a_hits: np.uint64
+            a_sum: float
+            if is_grayscale:
+                res_a, (a_hits, a_sum) = \
+                    predict_pass_2_gray(h, w, gr_map_p, a_map, is_rgba,
+                                        profile.shard_map, profile.noise_shard_id,
+                                        row_global_offsets, shard_medians, shard_gr)
+            else:
+                res_a, (a_hits, a_sum) = \
+                    predict_pass_2(h, w, gr_map_p, rd_map_p, bd_map_p, a_map, is_rgba, False,
+                                   profile.shard_map, profile.noise_shard_id,
+                                   row_global_offsets, shard_medians,
+                                   shard_gr, shard_rd, shard_bd)
+
+            if is_rgba:
+                hits_total_p1[3] = np.uint32(a_hits)
+                sums_total_p1[3] = np.uint64(a_sum)
 
         # [v6.5] Phase 1 Delivery: Reporting Median Normalization Statistics
         if os.environ.get("ZPNG_REPORT_MEDIAN"):
@@ -389,17 +392,11 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
                     for s_i in range(n_shards):
                         m_val = shard_medians[c_idx, s_i]
                         median_sum += shard_stats[c_idx, s_i, m_val]
-                    
+
                     raw_occ = (raw_zero / total_samples) * 100
                     med_occ = (median_sum / total_samples) * 100
                     print(f"Channel {chan}: Raw Zero: {raw_occ:.2f}% -> Median-Shifted Zero: {med_occ:.2f}% (Gain: {med_occ-raw_occ:+.2f}%)")
             print("-------------------------------------------\n")
-
-        
-        # [Fix] Merge Alpha stats into global diagnostic arrays
-        if is_rgba:
-            hits_total_p1[3] = np.uint32(a_hits)
-            sums_total_p1[3] = np.uint64(a_sum)
         
         metadata_bytes: bytes = extract_png_metadata(img_path)
         metadata_len: int = len(metadata_bytes)

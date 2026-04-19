@@ -209,7 +209,7 @@ def _rans_encode_sharded(resid_2d:  npt.NDArray[np.uint8],
                 if fv > np.uint64(0):
                     magic[k, c, s] = np.uint64(0xFFFFFFFFFFFFFFFF) // fv
 
-    out = np.zeros(h * w * 4 + 64, dtype=np.uint8)
+    out = np.empty(h * w * 4 + 64, dtype=np.uint8)
     ptr = 0
 
     for pi in range(h, 0, -1):
