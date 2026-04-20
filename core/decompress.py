@@ -40,7 +40,7 @@ import threading
 from typing import Tuple, Optional, Union
 from .common import (
     FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE,
-    FLAG_BITPLANE, FLAG_COLOR_GSUB, FLAG_MED_ADJ,
+    FLAG_BITPLANE, FLAG_COLOR_GSUB,
     PROFILE_RGB, sync_luts_if_needed
 )
 from . import env

@@ -4,9 +4,9 @@ ZPNG-CSDE PDF Template Selector (rans_selector)
 Available PDF Modes:
 - Mode 0 (Custom Dynamic): Custom pixel-perfect PDF table generated from the exact shard distribution.
   Requires saving the arrays in the bitstream header (High Overhead / "Header Tax").
-- Mode 3 (Uniform/Empty): Zero-entropy mode for empty/unseen shards (no pixels observed in this context).
+- Mode 3 (Uniform/Empty): Zero-entropy mode for completely flat shards (all pixels predicted perfectly).
   Requires 0 bytes of header overhead.
-- Mode 4-33 (Empirical Templates): 30 pre-baked static probability distributions (6 photographic bases × 5 sigma scales).
+- Mode 4-9 (Empirical Templates): 6 pre-baked static probability distributions (Laplacian decay curves).
   These distributions are hardcoded in the decoder and require 0 bytes of header overhead.
 
 Decision Logic (Cross-Entropy vs Penalty):

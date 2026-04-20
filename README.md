@@ -89,9 +89,9 @@ print(f"Dec Time: {dec_time:.2f}s")
 ZPNG follows a strictly defined **Four-Step Pipeline** to transform raw pixels into a highly compressed bitstream:
 
 ### 5.1 Scientific Execution Workflow
-1.  **Step 1: G-sub (Green-Subtract RCT)**: Extracts the Green (G) channel as the foundation and calculates residuals (RD = R - G, BD = B - G) to eliminate inter-channel redundancy.
+1.  **Step 1: G-sub (Green-Subtract RCT)**: Extracts the Green (G) channel as the foundation and calculates residuals ($RD = R - G$, $BD = B - G$) to eliminate inter-channel redundancy.
 2.  **Step 2: MED (Median Edge Detector) Prediction**: Performs spatial decorrelation on each channel independently to convert structural pixel data into error residuals.
-3.  **Step 3: Sharding (Contextual Hub)**: Maps residuals into **42 discrete Shards** (Universal-42) based on local intensity and gradient-tier (V-Tier) behavior.
+3.  **Step 3: Sharding (Contextual Hub)**: Maps residuals into **42 discrete Shards** (Universal-42) based on local intensity and gradient-tier ($V$-Tier) behavior.
 4.  **Step 4: rANS (Entropy Coding)**: Consumes the sharded data using a **4-way interleaved Range ANS** engine for near-optimal bit-perfect compression.
 
 - **Pillar 1: G-sub RCT**: Reversible color transform using Green-subtraction for chrominance decorrelation.
@@ -128,7 +128,7 @@ For entropy coding, the engine utilizes a **30-Mode Template Matrix**:
 - **Zero-Overhead**: These 30 empirical modes are hardcoded in the decoder, allowing optimal PDF matching without the "Header Tax" of custom frequency tables.
 
 ### 5.4 Bitplane rANS & entropy core
-For high-density images, ZPNG employs **Shard-Conditioned Bitplane rANS**. Instead of treating the residual as a single 256-symbol alphabet, it decomposes the signal into 2-bit layers. Each layer uses a massive **2,688-way context model** (42 Shards x 64 Spatial Patterns), allowing the rANS core to isolate structural predictable bits from stochastic noise bits.
+For high-density images, ZPNG employs **Shard-Conditioned Bitplane rANS**. Instead of treating the residual as a single 256-symbol alphabet, it decomposes the signal into 2-bit layers. Each layer uses a massive **2,688-way context model** ($42 \text{ Shards} \times 64 \text{ Spatial Patterns}$), allowing the rANS core to isolate structural predictable bits from stochastic noise bits.
 
 The **Interleaved rANS** engine further optimizes throughput by managing multiple state variables in a single loop, effectively treating the entropy coding as a vectorized operation.
 
