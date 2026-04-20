@@ -33,7 +33,7 @@ from .common import (
     apply_median_to_stats,
     calculate_channel_stats, PROFILE_RGB,
     extract_srb_metadata,
-    BITPLANE_WIDTH_THRESHOLD, BITPLANE_MIN_PIXELS
+    BITPLANE_H_THRESHOLD, BITPLANE_HIT_RATE_THRESHOLD, BITPLANE_P90_THRESHOLD
 )
 from .transform import (
     extract_channels, predict_2d_residuals,
@@ -272,34 +272,38 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
         shard_widths: npt.NDArray[np.uint16]
         shard_widths = extract_srb_metadata(biased_stats)
 
-        # [v7.5] Per-Image Coder Selection: auto-detect bitplane vs standard rANS.
-        # Grayscale always uses bitplane - the shard-conditioned bitplane coder was
-        # optimized for high-res low-entropy textures.
-        
-        # p90 capturing tail behavior - bitplane needs the entire distribution
-        # to be narrow, not just the median. Natural images have wide high-energy
-        # boundary shards that inflate the tail even when the median is low - mean
-        # and median are blind to this, p90 is not. Empirical: Tecnick p90 > 95,
-        # DIV2K p90 > 70.5; threshold 85 gives 99% classification accuracy.
-        # A minimum pixel gate (BITPLANE_MIN_PIXELS) guards against fixed table
-        # overhead dominating on small images (Kodak, small CLIC).
+        # [v7.6] Per-Image Coder Selection: auto-detect bitplane vs standard rANS.
+        # Gate: H < 3.3 AND hit_rate > 0.20 AND p90 < 175
+        # H = mean Shannon entropy across 3 channels; hit_rate = zero-residual fraction.
         # The caller can override by passing use_bitplane=True/False explicitly.
         if use_bitplane is None:
             if is_grayscale:
                 use_bitplane = True
             else:
                 active_mask = shard_counts > 0
-                if active_mask.any():
-                    p90_width = float(np.percentile(shard_widths[active_mask], 90))
-                else:
-                    p90_width = 256.0
-                pixel_count = h * w
+                p90_width = float(np.percentile(shard_widths[active_mask], 90)) if active_mask.any() else 256.0
+
+                global_hist = biased_stats.sum(axis=1)  # (3, 256) - collapse shards
+                h_vals = []
+                for c_idx in range(3):
+                    total = float(global_hist[c_idx].sum())
+                    if total > 0:
+                        probs = global_hist[c_idx].astype(np.float64) / total
+                        mask = probs > 0
+                        h_vals.append(-float(np.sum(probs[mask] * np.log2(probs[mask]))))
+                H = float(np.mean(h_vals)) if h_vals else 8.0
+
+                total_hits = float(hits_total_p1[0]) + float(hits_total_p1[1]) + float(hits_total_p1[2])
+                total_px = float(shard_counts[0].sum() + shard_counts[1].sum() + shard_counts[2].sum())
+                hit_rate = total_hits / total_px if total_px > 0 else 0.0
+
                 use_bitplane = bool(
-                    p90_width <= BITPLANE_WIDTH_THRESHOLD
-                    and pixel_count >= BITPLANE_MIN_PIXELS
+                    H < BITPLANE_H_THRESHOLD
+                    and hit_rate > BITPLANE_HIT_RATE_THRESHOLD
+                    and p90_width < BITPLANE_P90_THRESHOLD
                 )
                 logger.debug(
-                    f"Coder auto-select: p90_width={p90_width:.1f} pixels={pixel_count} "
+                    f"Coder auto-select: H={H:.3f} hit_rate={hit_rate:.3f} p90={p90_width:.1f} "
                     f"-> {'bitplane' if use_bitplane else 'standard'}"
                 )
 

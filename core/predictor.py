@@ -34,4 +34,21 @@ def predict_med_standard(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     p: int = min(int(mx), max(int(mn), gap))
     return np.uint8(p)
 
+@njit(error_model='numpy', inline='always', cache=True)
+def med_edge_tuned(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
+    """
+    Edge-Tuned MED v7.3.0 — branchless correction for extreme neighbor jumps.
+    When max(a,b)-min(a,b) is 1-3 (smooth edge) but c deviates by >50 (step edge),
+    the standard MED output is nudged by ±diff to track the dominant neighbor.
+    """
+    max_ab: int = int(max(a, b))
+    min_ab: int = int(min(a, b))
+    diff: int = max_ab - min_ab
+    ci: int = int(c)
+    p: int = min(max_ab, max(min_ab, int(a) + int(b) - ci))
+    in_range: int = int(diff >= 1) * int(diff <= 3)
+    flip1: int = int(ci - max_ab > 50) * in_range
+    flip2: int = int(min_ab - ci > 50) * in_range
+    return np.uint8((p + diff * (flip1 - flip2)) & 0xFF)
+
 

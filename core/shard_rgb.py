@@ -21,7 +21,7 @@ import numpy.typing as npt
 from numba import njit, prange, uint8, uint16, uint32, uint64
 from typing import Tuple, List, Optional
 from .common import (
-    to_zigzag, from_zigzag, predict_med_standard, get_context_id_fast
+    to_zigzag, from_zigzag, predict_med_standard, predict_med_standard, get_context_id_fast
 )
 
 @njit(parallel=True, fastmath=True, error_model='numpy', cache=True)

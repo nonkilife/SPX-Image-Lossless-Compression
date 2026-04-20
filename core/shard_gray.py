@@ -23,7 +23,7 @@ import numpy.typing as npt
 from numba import njit, prange, uint8, uint64
 from typing import Tuple
 from .common import (
-    to_zigzag, predict_med_standard,
+    to_zigzag, predict_med_standard, predict_med_standard,
     get_context_id_fast
 )
 
