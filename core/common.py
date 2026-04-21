@@ -25,7 +25,7 @@ from numba import njit, prange, uint8
 from typing import Tuple, Optional, List
 from dataclasses import dataclass, field
 from .predictor import to_zigzag, from_zigzag, selected_predictor, med_edge_tuned
-from .sharding import ShardProfile, PROFILE_RGB, SHARD_LABELS, sync_luts_if_needed, get_context_id_fast
+from .sharding import ShardProfile, PROFILE_RGB, SHARD_LABELS, get_context_id_fast
 
 # --- 0. Empirical Model Pillars ---
 

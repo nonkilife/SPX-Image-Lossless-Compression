@@ -35,7 +35,7 @@ from .common import (
     extract_srb_metadata,
     BITPLANE_H_THRESHOLD, BITPLANE_HIT_RATE_THRESHOLD, BITPLANE_P90_THRESHOLD
 )
-from .sharding import PROFILE_RGB, sync_luts_if_needed
+from .sharding import PROFILE_RGB
 from .transform import (
     extract_channels, predict_2d_residuals,
     calculate_aad_estimate
@@ -224,11 +224,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
         aad_val: float = calculate_aad_estimate(gr_map)
         
         # [v6.6] Unified RGB Sharding
-        from .sharding import ShardProfile, sync_luts_if_needed
-        profile: ShardProfile = PROFILE_RGB
-        
-        # [v6.6 Defensive] Ensure global Context LUTs match requested profile
-        sync_luts_if_needed(profile.v_boundaries_gr, profile.intensity_segments, profile.shard_map, profile.noise_shard_id)
+        profile = PROFILE_RGB
         
         n_shards: int = profile.total_shards
         
@@ -257,12 +253,14 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
             shard_counts, shard_stats, shard_offsets_p1, row_global_offsets, \
             (hits_total_p1, sums_total_p1) = \
                 predict_pass_1_gray(h, w, gr_map_p,
-                                    profile.shard_map, profile.noise_shard_id)
+                                    profile.shard_map, profile.noise_shard_id,
+                                    profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut)
         else:
             shard_counts, shard_stats, shard_offsets_p1, row_global_offsets, \
             (hits_total_p1, sums_total_p1) = \
                 predict_pass_1(h, w, gr_map_p, rd_map_p, bd_map_p, False,
-                               profile.shard_map, profile.noise_shard_id)
+                               profile.shard_map, profile.noise_shard_id,
+                               profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut)
         
         # [v8.0] Static Residual Normalization: Transform centered Pass 1 stats to normalized ZigZag stats
         normalized_stats: npt.NDArray[np.uint32] = normalize_shard_stats(shard_stats)
@@ -324,11 +322,13 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
                 res_a, (a_hits, a_sum) = \
                     predict_pass_2_gray(h, w, gr_map_p, a_map, is_rgba,
                                         profile.shard_map, profile.noise_shard_id,
+                                        profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut,
                                         row_global_offsets, shard_gr)
             else:
                 res_a, (a_hits, a_sum) = \
                     predict_pass_2(h, w, gr_map_p, rd_map_p, bd_map_p, a_map, is_rgba, False,
                                    profile.shard_map, profile.noise_shard_id,
+                                   profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut,
                                    row_global_offsets,
                                    shard_gr, shard_rd, shard_bd)
 
@@ -389,7 +389,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
             bit_payload = bytearray(compress_bitplane_gray_sharded(
                 h, w,
                 gr_map, resid_2d,
-                profile.shard_map, profile.noise_shard_id
+                profile
             ))
             if is_rgba:
                 res_a = predict_2d_residuals(a_map)
@@ -408,7 +408,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
                 h, w,
                 gr_map, rd_map, bd_map,
                 gr_resid, rd_resid, bd_resid,
-                profile.shard_map, profile.noise_shard_id
+                profile
             ))
             if is_rgba:
                 res_a = predict_2d_residuals(a_map)

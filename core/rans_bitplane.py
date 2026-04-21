@@ -50,7 +50,7 @@ import zstandard as zstd
 import concurrent.futures
 
 from .common import selected_predictor
-from .sharding import get_context_id_fast
+from .sharding import get_context_id_fast, ShardProfile
 from .predictor import from_zigzag
 from .transform import reconstruct_2d_channels
 
@@ -64,7 +64,7 @@ BITPLANE_MAGIC: int = 0xFF                  # first-byte sentinel
 # ---------------------------------------------------------------------------
 # Math helper (inlined by Numba)
 # ---------------------------------------------------------------------------
-@njit(inline='always', cache=True)
+@njit(inline='always', fastmath=True, cache=True)
 def _mul_hi(a: uint64, b: uint64) -> uint64:
     a_lo = a & np.uint64(0xFFFFFFFF); a_hi = a >> np.uint64(32)
     b_lo = b & np.uint64(0xFFFFFFFF); b_hi = b >> np.uint64(32)
@@ -81,8 +81,9 @@ def _mul_hi(a: uint64, b: uint64) -> uint64:
 @njit(parallel=True, boundscheck=False, cache=True)
 def _build_pdf_sharded(resid_2d:  npt.NDArray[np.uint8],
                        gray_ch:   npt.NDArray[np.uint8],
-                       shard_map: npt.NDArray[np.uint8],
-                       nsid: int,
+                       s_lut: npt.NDArray[np.uint8],
+                       i_lut: npt.NDArray[np.uint8],
+                       d_lut: npt.NDArray[np.uint8],
                        n_ctx: int,
                        nt: int,
                        is_chroma: bool) -> Tuple[npt.NDArray[np.uint64],
@@ -110,7 +111,7 @@ def _build_pdf_sharded(resid_2d:  npt.NDArray[np.uint8],
                 intensity = gray_ch[pi, pj]
             else:
                 intensity = selected_predictor(ag, bg, cg)
-            sid = int(get_context_id_fast(ag, bg, cg, intensity, shard_map, nsid))
+            sid = int(get_context_id_fast(ag, bg, cg, intensity, s_lut, i_lut, d_lut))
 
             # ----- bitplane spatial context from residual neighbors -----
             r_l = resid_2d[pi, pj-1]
@@ -183,8 +184,9 @@ def _rans_encode_sharded(resid_2d:  npt.NDArray[np.uint8],
                          gray_ch:   npt.NDArray[np.uint8],
                          all_cf:    npt.NDArray[np.uint64],
                          all_sf:    npt.NDArray[np.uint64],
-                         shard_map: npt.NDArray[np.uint8],
-                         nsid: int,
+                         s_lut: npt.NDArray[np.uint8],
+                         i_lut: npt.NDArray[np.uint8],
+                         d_lut: npt.NDArray[np.uint8],
                          n_ctx: int,
                          is_chroma: bool) -> Tuple[npt.NDArray[np.uint64],
                                               npt.NDArray[np.uint8]]:
@@ -222,7 +224,7 @@ def _rans_encode_sharded(resid_2d:  npt.NDArray[np.uint8],
                 intensity = gray_ch[pi, pj]
             else:
                 intensity = selected_predictor(ag, bg, cg)
-            sid = int(get_context_id_fast(ag, bg, cg, intensity, shard_map, nsid))
+            sid = int(get_context_id_fast(ag, bg, cg, intensity, s_lut, i_lut, d_lut))
 
             # ----- bitplane spatial neighbors -----
             r_l = resid_2d[pi, pj-1]
@@ -304,8 +306,9 @@ def _rans_decode_sharded(bitstream:  npt.NDArray[np.uint8],
                          h: int, w: int,
                          all_cf:    npt.NDArray[np.uint64],
                          all_sf:    npt.NDArray[np.uint64],
-                         shard_map: npt.NDArray[np.uint8],
-                         nsid: int) -> npt.NDArray[np.uint8]:
+                         s_lut: npt.NDArray[np.uint8],
+                         i_lut: npt.NDArray[np.uint8],
+                         d_lut: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8]:
     """
     Forward-scan decoder.
     Maintains orig[h,w] alongside resid[h,w] so shard IDs are computable
@@ -328,7 +331,7 @@ def _rans_decode_sharded(bitstream:  npt.NDArray[np.uint8],
             bg = orig[pi-1, pj]
             cg = orig[pi-1, pj-1]
             p_g = selected_predictor(ag, bg, cg)
-            sid = int(get_context_id_fast(ag, bg, cg, p_g, shard_map, nsid))
+            sid = int(get_context_id_fast(ag, bg, cg, p_g, s_lut, i_lut, d_lut))
 
             # ----- bitplane spatial contexts from decoded residual neighbors -----
             r_l = resid[pi, pj-1]
@@ -407,8 +410,9 @@ def _rans_decode_sharded_with_ref(bitstream:  npt.NDArray[np.uint8],
                                    all_cf:    npt.NDArray[np.uint64],
                                    all_sf:    npt.NDArray[np.uint64],
                                    ref_ch:    npt.NDArray[np.uint8],
-                                   shard_map: npt.NDArray[np.uint8],
-                                   nsid: int) -> npt.NDArray[np.uint8]:
+                                   s_lut: npt.NDArray[np.uint8],
+                                   i_lut: npt.NDArray[np.uint8],
+                                   d_lut: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8]:
     """
     Forward-scan decoder for Rd/Bd channels.
     Shard_id is derived from ref_ch (the already-decoded green channel) so that
@@ -430,7 +434,7 @@ def _rans_decode_sharded_with_ref(bitstream:  npt.NDArray[np.uint8],
             bg = ref_ch[pi-1, pj]
             cg = ref_ch[pi-1, pj-1]
             intensity = ref_ch[pi, pj]
-            sid = int(get_context_id_fast(ag, bg, cg, intensity, shard_map, nsid))
+            sid = int(get_context_id_fast(ag, bg, cg, intensity, s_lut, i_lut, d_lut))
 
             # ----- bitplane spatial contexts from own decoded residual neighbors -----
             r_l = resid[pi, pj-1]
@@ -502,19 +506,18 @@ def _rans_decode_sharded_with_ref(bitstream:  npt.NDArray[np.uint8],
 def compress_bitplane_gray_sharded(h: int, w: int,
                                    gray_ch:   npt.NDArray[np.uint8],
                                    resid_2d:  npt.NDArray[np.uint8],
-                                   shard_map: npt.NDArray[np.uint8],
-                                   nsid: int) -> bytes:
+                                   profile:   ShardProfile) -> bytes:
     """
     Primary orchestrator: builds shard-conditioned PDF tables, runs the
     reverse-scan rANS encoder, then serialises to bytes.
     """
-    n_shards = int(shard_map.max()) + 1 if nsid < 0 else nsid + 1
+    n_shards = profile.total_shards
     n_ctx = n_shards * N_SPATIAL
     gray_ch_p  = np.pad(gray_ch,  1, constant_values=0)
     resid_2d_p = np.pad(resid_2d, 1, constant_values=0)
-    f, cf = _build_pdf_sharded(resid_2d_p, gray_ch_p, shard_map, nsid, n_ctx, get_num_threads(), False)
+    f, cf = _build_pdf_sharded(resid_2d_p, gray_ch_p, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut, n_ctx, get_num_threads(), False)
 
-    states, bitstream = _rans_encode_sharded(resid_2d_p, gray_ch_p, cf, f, shard_map, nsid, n_ctx, False)
+    states, bitstream = _rans_encode_sharded(resid_2d_p, gray_ch_p, cf, f, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut, n_ctx, False)
 
     # Compress frequency tables with Zstd (many uniform/zero rows - high ratio)
     tables_raw = f.astype(np.uint16).tobytes()
@@ -532,14 +535,13 @@ def compress_bitplane_gray_sharded(h: int, w: int,
 
 def decompress_bitplane_gray_sharded(payload:   bytes,
                                      h: int, w: int,
-                                     shard_map: npt.NDArray[np.uint8],
-                                     nsid: int) -> Tuple[npt.NDArray[np.uint8], int]:
+                                     profile:   ShardProfile) -> Tuple[npt.NDArray[np.uint8], int]:
     """
     Restores the ZigZag residual array from a sharded bitplane payload.
     The caller passes the result to reconstruct_2d_channels for final MED
     reconstruction (same pipeline as the legacy bitplane path).
     """
-    n_shards = int(shard_map.max()) + 1 if nsid < 0 else nsid + 1
+    n_shards = profile.total_shards
     n_ctx = n_shards * N_SPATIAL
 
     raw = np.frombuffer(payload, dtype=np.uint8)
@@ -571,7 +573,7 @@ def decompress_bitplane_gray_sharded(payload:   bytes,
     return _rans_decode_sharded(
         bitstream,
         states[0], states[1], states[2], states[3],
-        h, w, cf, f, shard_map, nsid
+        h, w, cf, f, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut
     ), ptr
 
 
@@ -582,8 +584,7 @@ def compress_bitplane_rgb_sharded(h: int, w: int,
                                    gr_resid: npt.NDArray[np.uint8],
                                    rd_resid: npt.NDArray[np.uint8],
                                    bd_resid: npt.NDArray[np.uint8],
-                                   shard_map: npt.NDArray[np.uint8],
-                                   nsid: int) -> bytes:
+                                   profile:  ShardProfile) -> bytes:
     """
     RGB sharded bitplane encoder.
     All three channels use the green channel (gr_ch) for shard context, matching
@@ -598,7 +599,7 @@ def compress_bitplane_rgb_sharded(h: int, w: int,
       [rd_channel_block]  - same structure
       [bd_channel_block]  - same structure
     """
-    n_shards = int(shard_map.max()) + 1 if nsid < 0 else nsid + 1
+    n_shards = profile.total_shards
     n_ctx = n_shards * N_SPATIAL
     nt = get_num_threads()
 
@@ -609,13 +610,13 @@ def compress_bitplane_rgb_sharded(h: int, w: int,
     bd_p     = np.pad(bd_resid, 1, constant_values=0)
 
     # Phase 1: histogram — sequential, each call gets full prange parallelism.
-    f_gr, cf_gr = _build_pdf_sharded(gr_p, gr_ref_p, shard_map, nsid, n_ctx, nt, False)
-    f_rd, cf_rd = _build_pdf_sharded(rd_p, gr_ref_p, shard_map, nsid, n_ctx, nt, True)
-    f_bd, cf_bd = _build_pdf_sharded(bd_p, gr_ref_p, shard_map, nsid, n_ctx, nt, True)
+    f_gr, cf_gr = _build_pdf_sharded(gr_p, gr_ref_p, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut, n_ctx, nt, False)
+    f_rd, cf_rd = _build_pdf_sharded(rd_p, gr_ref_p, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut, n_ctx, nt, True)
+    f_bd, cf_bd = _build_pdf_sharded(bd_p, gr_ref_p, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut, n_ctx, nt, True)
 
     # Phase 2: encode — concurrent, each kernel is single-threaded + nogil.
     def _encode(resid_p, f, cf, is_chroma):
-        return _rans_encode_sharded(resid_p, gr_ref_p, cf, f, shard_map, nsid, n_ctx, is_chroma)
+        return _rans_encode_sharded(resid_p, gr_ref_p, cf, f, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut, n_ctx, is_chroma)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
         fut_gr = ex.submit(_encode, gr_p, f_gr, cf_gr, False)
@@ -645,15 +646,14 @@ def compress_bitplane_rgb_sharded(h: int, w: int,
 
 def decompress_bitplane_rgb_sharded(payload:   bytes,
                                      h: int, w: int,
-                                     shard_map: npt.NDArray[np.uint8],
-                                     nsid: int) -> Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint8], int]:
+                                     profile:   ShardProfile) -> Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint8], int]:
     """
     RGB sharded bitplane decoder.
     Decodes green first (self-referential), then Rd and Bd in parallel using
     the reconstructed green channel for shard context.
     Returns (gr_rec, rd_rec, bd_rec) as (h, w) uint8 arrays ready for restore_channels.
     """
-    n_shards = int(shard_map.max()) + 1 if nsid < 0 else nsid + 1
+    n_shards = profile.total_shards
     n_ctx = n_shards * N_SPATIAL
 
     raw = np.frombuffer(payload, dtype=np.uint8)
@@ -685,7 +685,7 @@ def decompress_bitplane_rgb_sharded(payload:   bytes,
     # ---- Green must be decoded first (shard context is self-referential) ----
     gr_resid = _rans_decode_sharded(
         bs_gr, st_gr[0], st_gr[1], st_gr[2], st_gr[3],
-        h, w, cf_gr, f_gr, shard_map, nsid
+        h, w, cf_gr, f_gr, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut
     )
     gr_rec   = reconstruct_2d_channels(h, w, gr_resid)
     gr_rec_p = np.pad(gr_rec, 1, constant_values=0)
@@ -694,14 +694,14 @@ def decompress_bitplane_rgb_sharded(payload:   bytes,
     def _decode_rd():
         resid = _rans_decode_sharded_with_ref(
             bs_rd, st_rd[0], st_rd[1], st_rd[2], st_rd[3],
-            h, w, cf_rd, f_rd, gr_rec_p, shard_map, nsid
+            h, w, cf_rd, f_rd, gr_rec_p, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut
         )
         return reconstruct_2d_channels(h, w, resid)
 
     def _decode_bd():
         resid = _rans_decode_sharded_with_ref(
             bs_bd, st_bd[0], st_bd[1], st_bd[2], st_bd[3],
-            h, w, cf_bd, f_bd, gr_rec_p, shard_map, nsid
+            h, w, cf_bd, f_bd, gr_rec_p, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut
         )
         return reconstruct_2d_channels(h, w, resid)
 

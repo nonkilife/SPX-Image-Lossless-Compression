@@ -64,7 +64,8 @@ from .sharding import get_context_id_fast
 @njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
 def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDArray[np.uint8],
                    bd_ch: npt.NDArray[np.uint8], is_grayscale: bool,
-                   shard_map: npt.NDArray[np.uint8], nsid: int) -> Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint8], Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint64]]]:
+                   shard_map: npt.NDArray[np.uint8], nsid: int,
+                   s_lut: npt.NDArray[np.uint8], i_lut: npt.NDArray[np.uint8], d_lut: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint8], Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint64]]]:
     """
     Stage 1: O(N) Shard Profiling & Histogram Generation.
 
@@ -114,7 +115,7 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
                 pg = selected_predictor(ag, bg, cg)
                 curr_valg = gr_ch[pi, 1]
                 # Luma Context: Uses PREDICTOR as intensity baseline (self-referential)
-                ctxg = int(get_context_id_fast(ag, bg, cg, pg, shard_map, nsid))
+                ctxg = int(get_context_id_fast(ag, bg, cg, pg, s_lut, i_lut, d_lut))
                 diffg = (int(curr_valg) - int(pg)) & 0xFF
                 resg_c = (diffg + 128) & 0xFF
                 local_hists[0, int(ctxg), resg_c] += 1; row_ptrs[i, 0, int(ctxg)] += 1
@@ -131,7 +132,7 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
                 pg = selected_predictor(ag, bg, cg)
                 curr_valg = gr_ch[pi, pj]
                 # Luma Context: Uses PREDICTOR as intensity baseline
-                ctxg = int(get_context_id_fast(ag, bg, cg, pg, shard_map, nsid))
+                ctxg = int(get_context_id_fast(ag, bg, cg, pg, s_lut, i_lut, d_lut))
                 diffg = (int(curr_valg) - int(pg)) & 0xFF
                 resg_c = (diffg + 128) & 0xFF
                 local_hists[0, int(ctxg), resg_c] += 1; row_ptrs[i, 0, int(ctxg)] += 1
@@ -145,8 +146,8 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
                     a1 = rd_ch[pi, ptj-1]; b1 = rd_ch[pi-1, ptj]; c1 = rd_ch[pi-1, ptj-1]
                     a2 = bd_ch[pi, ptj-1]; b2 = bd_ch[pi-1, ptj]; c2 = bd_ch[pi-1, ptj-1]
                     # Chroma Context: Uses ACTUAL GREEN as intensity baseline (cross-channel BICC)
-                    ctx1 = int(get_context_id_fast(a1, b1, c1, prev_valg, shard_map, nsid))
-                    ctx2 = int(get_context_id_fast(a2, b2, c2, prev_valg, shard_map, nsid))
+                    ctx1 = int(get_context_id_fast(a1, b1, c1, prev_valg, s_lut, i_lut, d_lut))
+                    ctx2 = int(get_context_id_fast(a2, b2, c2, prev_valg, s_lut, i_lut, d_lut))
                     p1 = selected_predictor(a1, b1, c1)
                     p2 = selected_predictor(a2, b2, c2)
                     diff1 = (int(val1) - int(p1)) & 0xFF
@@ -166,8 +167,8 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
                 val1, val2 = rd_ch[pi, ptj], bd_ch[pi, ptj]
                 a1 = rd_ch[pi, ptj-1]; b1 = rd_ch[pi-1, ptj]; c1 = rd_ch[pi-1, ptj-1]
                 a2 = bd_ch[pi, ptj-1]; b2 = bd_ch[pi-1, ptj]; c2 = bd_ch[pi-1, ptj-1]
-                ctx1 = int(get_context_id_fast(a1, b1, c1, prev_valg, shard_map, nsid))
-                ctx2 = int(get_context_id_fast(a2, b2, c2, prev_valg, shard_map, nsid))
+                ctx1 = int(get_context_id_fast(a1, b1, c1, prev_valg, s_lut, i_lut, d_lut))
+                ctx2 = int(get_context_id_fast(a2, b2, c2, prev_valg, s_lut, i_lut, d_lut))
                 p1 = selected_predictor(a1, b1, c1)
                 p2 = selected_predictor(a2, b2, c2)
                 diff1 = (int(val1) - int(p1)) & 0xFF
@@ -216,6 +217,7 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
 def predict_pass_2(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDArray[np.uint8],
                    bd_ch: npt.NDArray[np.uint8], a_ch: npt.NDArray[np.uint8], is_rgba: bool, is_grayscale: bool,
                    shard_map: npt.NDArray[np.uint8], nsid: int,
+                   s_lut: npt.NDArray[np.uint8], i_lut: npt.NDArray[np.uint8], d_lut: npt.NDArray[np.uint8],
                    row_global_offsets: npt.NDArray[np.uint32],
                    shard_gr: npt.NDArray[np.uint8], shard_rd: npt.NDArray[np.uint8], shard_bd: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8], Tuple[np.uint64, np.float64]]:
     """
@@ -249,7 +251,7 @@ def predict_pass_2(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
             cg = np.uint8(0)           # top-left corner border
             pg = selected_predictor(ag, bg, cg)
             curr_valg = gr_ch[pi, 1]
-            ctxg = int(get_context_id_fast(ag, bg, cg, pg, shard_map, nsid))
+            ctxg = int(get_context_id_fast(ag, bg, cg, pg, s_lut, i_lut, d_lut))
             diffg = int(curr_valg) - int(pg)
             shard_gr[local_ptr_gr[ctxg]] = to_zigzag(diffg)
             local_ptr_gr[ctxg] += 1
@@ -263,7 +265,7 @@ def predict_pass_2(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
             cg = gr_ch[pi-1, pj-1]
             pg = selected_predictor(ag, bg, cg)
             curr_valg = gr_ch[pi, pj]
-            ctxg = int(get_context_id_fast(ag, bg, cg, pg, shard_map, nsid))
+            ctxg = int(get_context_id_fast(ag, bg, cg, pg, s_lut, i_lut, d_lut))
             diffg = int(curr_valg) - int(pg)
             shard_gr[local_ptr_gr[ctxg]] = to_zigzag(diffg)
             local_ptr_gr[ctxg] += 1
@@ -274,8 +276,8 @@ def predict_pass_2(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
                 val1, val2 = rd_ch[pi, ptj], bd_ch[pi, ptj]
                 a1 = rd_ch[pi, ptj-1]; b1 = rd_ch[pi-1, ptj]; c1 = rd_ch[pi-1, ptj-1]
                 a2 = bd_ch[pi, ptj-1]; b2 = bd_ch[pi-1, ptj]; c2 = bd_ch[pi-1, ptj-1]
-                ctx1 = int(get_context_id_fast(a1, b1, c1, prev_valg, shard_map, nsid))
-                ctx2 = int(get_context_id_fast(a2, b2, c2, prev_valg, shard_map, nsid))
+                ctx1 = int(get_context_id_fast(a1, b1, c1, prev_valg, s_lut, i_lut, d_lut))
+                ctx2 = int(get_context_id_fast(a2, b2, c2, prev_valg, s_lut, i_lut, d_lut))
                 p1 = selected_predictor(a1, b1, c1)
                 p2 = selected_predictor(a2, b2, c2)
                 diff1 = int(val1) - int(p1)
@@ -292,8 +294,8 @@ def predict_pass_2(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
             val1, val2 = rd_ch[pi, ptj], bd_ch[pi, ptj]
             a1 = rd_ch[pi, ptj-1]; b1 = rd_ch[pi-1, ptj]; c1 = rd_ch[pi-1, ptj-1]
             a2 = bd_ch[pi, ptj-1]; b2 = bd_ch[pi-1, ptj]; c2 = bd_ch[pi-1, ptj-1]
-            ctx1 = int(get_context_id_fast(a1, b1, c1, prev_valg, shard_map, nsid))
-            ctx2 = int(get_context_id_fast(a2, b2, c2, prev_valg, shard_map, nsid))
+            ctx1 = int(get_context_id_fast(a1, b1, c1, prev_valg, s_lut, i_lut, d_lut))
+            ctx2 = int(get_context_id_fast(a2, b2, c2, prev_valg, s_lut, i_lut, d_lut))
             p1 = selected_predictor(a1, b1, c1)
             p2 = selected_predictor(a2, b2, c2)
             diff1 = int(val1) - int(p1) - (128 - 128)
@@ -326,7 +328,8 @@ def reconstruct_channels(h: int, w: int, res_gr: npt.NDArray[np.uint8], res_rd: 
                          res_bd: npt.NDArray[np.uint8], off_gr: npt.NDArray[np.uint32],
                          off_rd: npt.NDArray[np.uint32], off_bd: npt.NDArray[np.uint32],
                          shard_counts: npt.NDArray[np.uint32],
-                         is_grayscale: bool, shard_map: npt.NDArray[np.uint8], nsid: int):
+                         is_grayscale: bool, shard_map: npt.NDArray[np.uint8], nsid: int,
+                         s_lut: npt.NDArray[np.uint8], i_lut: npt.NDArray[np.uint8], d_lut: npt.NDArray[np.uint8]):
     """
     Stage 3 (Decompression): Parallel Channel Reconstruction Engine. (Phase 2b)
     """
@@ -343,7 +346,7 @@ def reconstruct_channels(h: int, w: int, res_gr: npt.NDArray[np.uint8], res_rd: 
             bg = gr_rec[pi-1, pj]
             cg = gr_rec[pi-1, pj-1]
             pg = selected_predictor(ag, bg, cg)
-            ctxg = int(get_context_id_fast(ag, bg, cg, pg, shard_map, nsid))
+            ctxg = int(get_context_id_fast(ag, bg, cg, pg, s_lut, i_lut, d_lut))
             resg = from_zigzag(res_gr[ptr_gr[ctxg]]); ptr_gr[ctxg] += 1
             gr_rec[pi, pj] = np.uint8((int(resg) + int(pg)) & 0xFF)
 
@@ -359,7 +362,7 @@ def reconstruct_channels(h: int, w: int, res_gr: npt.NDArray[np.uint8], res_rd: 
                         b = rd_rec[pi-1, pj]
                         c = rd_rec[pi-1, pj-1]
                         p = selected_predictor(a, b, c)
-                        ctx = int(get_context_id_fast(a, b, c, cur_g, shard_map, nsid))
+                        ctx = int(get_context_id_fast(a, b, c, cur_g, s_lut, i_lut, d_lut))
                         res = from_zigzag(res_rd[ptr_rd[ctx]]); ptr_rd[ctx] += 1
                         rd_rec[pi, pj] = np.uint8((int(res) + int(p)) & 0xFF)
             else:
@@ -371,7 +374,7 @@ def reconstruct_channels(h: int, w: int, res_gr: npt.NDArray[np.uint8], res_rd: 
                         b = bd_rec[pi-1, pj]
                         c = bd_rec[pi-1, pj-1]
                         p = selected_predictor(a, b, c)
-                        ctx = int(get_context_id_fast(a, b, c, cur_g, shard_map, nsid))
+                        ctx = int(get_context_id_fast(a, b, c, cur_g, s_lut, i_lut, d_lut))
                         res = from_zigzag(res_bd[ptr_bd[ctx]]); ptr_bd[ctx] += 1
                         bd_rec[pi, pj] = np.uint8((int(res) + int(p)) & 0xFF)
 

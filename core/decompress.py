@@ -42,7 +42,7 @@ from .common import (
     FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE,
     FLAG_BITPLANE, FLAG_COLOR_GSUB
 )
-from .sharding import PROFILE_RGB, sync_luts_if_needed
+from .sharding import PROFILE_RGB
 from . import env
 
 # --- Startup: Validate Dependencies ---
@@ -168,7 +168,6 @@ def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = No
             is_grayscale: bool = bool(flag & FLAG_GRAYSCALE)
             
             profile = PROFILE_RGB
-            sync_luts_if_needed(profile.v_boundaries_gr, profile.intensity_segments, profile.shard_map, profile.noise_shard_id)
             n_shards = profile.total_shards
             nsid = profile.noise_shard_id
             shard_widths: npt.NDArray[np.uint16] = np.zeros((3, n_shards), dtype=np.uint16)
@@ -230,15 +229,14 @@ def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = No
                     from .rans_bitplane import decompress_bitplane_gray_sharded
                     if is_grayscale:
                         res_gr_flat, ptr = decompress_bitplane_gray_sharded(
-                            compressed_data, h, w, profile.shard_map, nsid
+                            compressed_data, h, w, profile
                         )
                         gr_rec = reconstruct_2d_channels(h, w, res_gr_flat)
                         rd_rec = np.zeros((h, w), dtype=np.uint8)
                         bd_rec = np.zeros((h, w), dtype=np.uint8)
                     else:
                         gr_rec, rd_rec, bd_rec, ptr = decompress_bitplane_rgb_sharded(
-                            compressed_data, h, w,
-                            profile.shard_map, nsid
+                            compressed_data, h, w, profile
                         )
                     
                     if is_rgba:
@@ -252,7 +250,7 @@ def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = No
                     gr_rec, rd_rec, bd_rec = reconstruct_channels(
                         h, w, res_gr_flat, res_rd_flat, res_bd_flat,
                         gr_offs, rd_offs, bd_offs, shard_counts, is_grayscale,
-                        profile.shard_map, nsid
+                        profile.shard_map, nsid, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut
                     )
 
                 # np.zeros ensures opaque default for RGBA bitplane images (res_a_flat is None there).

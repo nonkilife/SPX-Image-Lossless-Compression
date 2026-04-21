@@ -44,9 +44,10 @@ from .common import to_zigzag, selected_predictor
 from .sharding import get_context_id_fast
 
 
-@njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
+@njit(parallel=True, fastmath=True, error_model='numpy')
 def predict_pass_1_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
-                        shard_map: npt.NDArray[np.uint8], nsid: int) -> Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint8], Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint64]]]:
+                        shard_map: npt.NDArray[np.uint8], nsid: int,
+                        s_lut: npt.NDArray[np.uint8], i_lut: npt.NDArray[np.uint8], d_lut: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint8], Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint64]]]:
     """
     Stage 1: O(N) Shard Profiling & Histogram Generation for grayscale.
 
@@ -55,7 +56,7 @@ def predict_pass_1_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
     predict_pass_1 for drop-in compatibility with compress.py - channel 0 is
     populated, channels 1 and 2 are left as zeros.
     """
-    n_shards = shard_map.max() + 1 if nsid < 0 else nsid + 1
+    n_shards = int(shard_map.max()) + 1 if nsid < 0 else nsid + 1
     num_chunks = int(min(16, h)) if h > 0 else 1
     chunk_size = (h + num_chunks - 1) // num_chunks
     chunk_shard_hists = np.zeros((num_chunks, n_shards, 256), dtype=np.uint32)
@@ -81,7 +82,7 @@ def predict_pass_1_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
                 p = selected_predictor(a, b, c)
                 val = gray_ch[pi, pj]
                 # Luma Context: Uses PREDICTOR as intensity baseline (self-referential)
-                ctx = int(get_context_id_fast(a, b, c, p, shard_map, nsid))
+                ctx = int(get_context_id_fast(a, b, c, p, s_lut, i_lut, d_lut))
                 diff = (int(val) - int(p)) & 0xFF
                 # Centered storage: 0 residual maps to 128
                 res_c = (diff + 128) & 0xFF
@@ -142,10 +143,11 @@ def predict_pass_1_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
     return shard_counts_out, shard_stats_out, shard_offsets_out, row_global_offsets_out, (hits_out, sums_out)
 
 
-@njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
+@njit(parallel=True, fastmath=True, error_model='numpy')
 def predict_pass_2_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
                         a_ch: npt.NDArray[np.uint8], is_rgba: bool,
                         shard_map: npt.NDArray[np.uint8], nsid: int,
+                        s_lut: npt.NDArray[np.uint8], i_lut: npt.NDArray[np.uint8], d_lut: npt.NDArray[np.uint8],
                         row_global_offsets: npt.NDArray[np.uint32],
                         shard_out: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8], Tuple[np.uint64, np.float64]]:
     """
@@ -171,7 +173,7 @@ def predict_pass_2_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
             c = gray_ch[pi-1, pj-1]
             p = selected_predictor(a, b, c)
             val = gray_ch[pi, pj]
-            ctx = int(get_context_id_fast(a, b, c, p, shard_map, nsid))
+            ctx = int(get_context_id_fast(a, b, c, p, s_lut, i_lut, d_lut))
             # Residual calculation
             diff = int(val) - int(p)
             shard_out[local_ptr[ctx]] = to_zigzag(diff)
