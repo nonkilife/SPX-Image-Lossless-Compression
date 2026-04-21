@@ -280,7 +280,7 @@ def print_comparison_table(stats_list: List[Dict], dataset_name: str):
     ]
     
     total_width = sum(col_widths) + (len(headers) * 3) + 1
-    print("\n" + "═" * total_width)
+    print("\n" + "=" * total_width)
     
     # Header
     header_str = "|"
@@ -323,23 +323,23 @@ def print_comparison_table(stats_list: List[Dict], dataset_name: str):
         print(row_str)
     
     # Bottom border
-    print("═" * total_width + "\n")
+    print("=" * total_width + "\n")
 
 def show_codec_summary(s: Dict):
     if not s or 'name' not in s: return
     div = "---------------------------------------------------------------------------------------------------"
-    print(f"\n{div}")
-    print(f"  {s['name']} Performance Audit ({int(s.get('count',0))} images):")
-    print(f"  PNM Size        : {s['pnm_mb']:6.2f} MB | BPP {s['pnm_bpp']:6.4f}")
-    print(f"  Dataset Size ({int(s.get('count',0))} imgs): {s['orig_mb']:6.2f} MB | BPP {s['src_bpp']:6.4f}")
-    print(f"  ZPNG Size       : {s['comp_mb']:6.2f} MB | BPP {s['bpp']:6.4f}")
-    print(f"  Savings %       : vs PNM {s['saved_pnm_pct']:5.2f}% | vs PNG {s['saved_pct']:5.2f}%")
-    print(f"  Comp. Ratio     : Mean {s['mean_ratio']:5.2f}% | Median {s['median_ratio']:5.2f}% | Range {s['range'][0]:5.1f}-{s['range'][1]:5.1f}%")
-    print(f"  Avg Process Time: Enc {s['avg_e_ms']:7.1f} ms | Dec {s['avg_d_ms']:7.1f} ms")
-    print(f"  Throughput      : Compress {s['sys_tp'][0]:6.2f} MB/s | Decompress {s['sys_tp'][1]:6.2f} MB/s")
-    print(f"  Core Efficiency : Compress {s['core_tp'][0]:5.2f} MB/s | Decompress {s['core_tp'][1]:5.2f} MB/s")
-    print(f"  Wall-clock      : {s['wall_s']:6.2f} s       | MSE (Quality): {s['mse']:13.8f}")
-    print(f"{div}\n")
+    print(f"\n{div}".ljust(100))
+    print(f"  {s['name']} Performance Audit ({int(s.get('count',0))} images):".ljust(100))
+    print(f"  PNM Size      : {s['pnm_mb']:6.2f} MB | BPP {s['pnm_bpp']:6.4f}".ljust(100))
+    print(f"  Dataset Size  : {s['orig_mb']:6.2f} MB | BPP {s['src_bpp']:6.4f}".ljust(100))
+    print(f"  ZPNG Size     : {s['comp_mb']:6.2f} MB | BPP {s['bpp']:6.4f}".ljust(100))
+    print(f"  Savings %     : vs PNM {s['saved_pnm_pct']:5.2f}% | vs PNG {s['saved_pct']:5.2f}%".ljust(100))
+    print(f"  Comp. Ratio   : Mean {s['mean_ratio']:5.2f}% | Median {s['median_ratio']:5.2f}% | Range {s['range'][0]:5.1f}-{s['range'][1]:5.1f}%".ljust(100))
+    print(f"  Avg File Speed: Enc {s['avg_e_ms']:7.1f} ms | Dec {s['avg_d_ms']:7.1f} ms".ljust(100))
+    print(f"  Throughput    : Enc {s['sys_tp'][0]:6.2f} MB/s | Dec {s['sys_tp'][1]:6.2f} MB/s".ljust(100))
+    print(f"  Single Core   : Enc {s['core_tp'][0]:6.2f} MB/s | Dec {s['core_tp'][1]:6.2f} MB/s".ljust(100))
+    print(f"  Wall-clock    : {s['wall_s']:6.2f} s       | MSE (Quality): {s['mse']:13.8f}".ljust(100))
+    print(f"{div}\n".ljust(100))
 
 # =============================================================================
 # --- Main Orchestrator ---
@@ -351,7 +351,7 @@ def run_codec_benchmark(codec_name: str, worker_fn: Any, files: List[str], worke
     results = {}
     
     try:
-        # --- [關鍵修正 1]：單執行緒獨立 Warmup ---
+        # --- [Critical Fix 1]: Isolated Single-Threaded Warmup ---
         msg_warmup = f"  [Warmup] Compiling (Single Thread)..."
         print(msg_warmup, end='\r', flush=True)
         w_start = time.perf_counter()
@@ -361,7 +361,7 @@ def run_codec_benchmark(codec_name: str, worker_fn: Any, files: List[str], worke
         done_msg = f"  [Warmup] Completed in {t_warmup:.2f}s"
         print(done_msg.ljust(len(msg_warmup) + 5))
 
-        # --- [關鍵修正 2]：正式進入多執行緒壓測 ---
+        # --- [Critical Fix 2]: Parallelized Stress Testing ---
         t_proc_start = time.perf_counter()
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {executor.submit(worker_fn, p): p for p in files}
@@ -380,7 +380,7 @@ def run_codec_benchmark(codec_name: str, worker_fn: Any, files: List[str], worke
         print("\n[!] Aborted.")
         raise
     except Exception as e:
-        print(f"\n❌ FATAL ERROR in run_codec_benchmark: {e}")
+        print(f"\n[!] FATAL ERROR in run_codec_benchmark: {e}")
         import traceback
         traceback.print_exc()
         raise
@@ -499,10 +499,10 @@ def main() -> None:
         if not args.path: return # Exit if only building
 
     if not args.path:
-        print("❌ Error: Path is required for benchmarking."); return
+        print("[!] Error: Path is required for benchmarking."); return
     target_path = mapping.get(args.path.lower(), args.path)
     if not os.path.exists(target_path):
-        print(f"❌ Error: Path {target_path} not found."); return
+        print(f"[!] Error: Path {target_path} not found."); return
 
     if os.path.isdir(target_path):
         files = [os.path.join(target_path, f) for f in os.listdir(target_path) if f.lower().endswith(('.png', '.bmp', '.ppm', '.pgm', '.pnm'))]

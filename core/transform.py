@@ -38,7 +38,8 @@ def extract_channels(rgb: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8],
     
     for i in prange(h):
         for j in range(w):
-            r, g, b = rgb[i, j, 0], rgb[i, j, 1], rgb[i, j, 2]
+            pix = rgb[i, j]
+            r, g, b = pix[0], pix[1], pix[2]
             gr_map[i, j] = g
             rd_v = np.uint8((int(r) - int(g)) & 0xFF)
             bd_v = np.uint8((int(b) - int(g)) & 0xFF)
@@ -47,11 +48,9 @@ def extract_channels(rgb: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8],
             row_hists[i, 0, g] += 1
             row_hists[i, 1, rd_v] += 1
             row_hists[i, 2, bd_v] += 1
+            if c == 4:
+                a_map[i, j] = pix[3]
 
-    if c == 4:
-        for i in prange(h):
-            for j in range(w):
-                a_map[i, j] = rgb[i, j, 3]
 
     global_hists = row_hists.sum(axis=0)
     return gr_map, rd_map, bd_map, a_map, global_hists
@@ -63,19 +62,27 @@ def restore_channels(gr_rec: npt.NDArray[np.uint8], rd_rec: npt.NDArray[np.uint8
     """ Inverse G-sub RCT transform (Parallelized). apply_gsub mirrors FLAG_COLOR_GSUB. """
     h, w = gr_rec.shape
     rgb = np.zeros((h, w, 4 if is_rgba else 3), dtype=np.uint8)
-    for i in prange(h):
-        for j in range(w):
-            g = gr_rec[i, j]
-            if is_grayscale:
-                r, b = g, g
-            elif apply_gsub:
+    
+    if is_grayscale:
+        for i in prange(h):
+            for j in range(w):
+                g = gr_rec[i, j]
+                rgb[i, j, 0], rgb[i, j, 1], rgb[i, j, 2] = g, g, g
+                if is_rgba: rgb[i, j, 3] = a_ch[i, j]
+    elif apply_gsub:
+        for i in prange(h):
+            for j in range(w):
+                g = gr_rec[i, j]
                 r = np.uint8((int(rd_rec[i, j]) + int(g)) & 0xFF)
                 b = np.uint8((int(bd_rec[i, j]) + int(g)) & 0xFF)
-            else:
-                r = rd_rec[i, j]
-                b = bd_rec[i, j]
-            rgb[i, j, 0], rgb[i, j, 1], rgb[i, j, 2] = r, g, b
-            if is_rgba: rgb[i, j, 3] = a_ch[i, j]
+                rgb[i, j, 0], rgb[i, j, 1], rgb[i, j, 2] = r, g, b
+                if is_rgba: rgb[i, j, 3] = a_ch[i, j]
+    else:
+        for i in prange(h):
+            for j in range(w):
+                g = gr_rec[i, j]
+                rgb[i, j, 0], rgb[i, j, 1], rgb[i, j, 2] = rd_rec[i, j], g, bd_rec[i, j]
+                if is_rgba: rgb[i, j, 3] = a_ch[i, j]
     return rgb
 
 @njit(error_model='numpy', cache=True)
@@ -102,7 +109,7 @@ def predict_2d_residuals(data_ch: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8
     """
     h, w = data_ch.shape
     res = np.empty((h, w), dtype=uint8)
-    if w == 0:
+    if h == 0 or w == 0:
         return res
     for i in prange(h):
         # Boundary pixel (j=0): no left or upper-left neighbor
@@ -122,7 +129,7 @@ def predict_2d_residuals(data_ch: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8
 def reconstruct_2d_channels(h: int, w: int, res_ch: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8]:
     """ Inverse MED reconstruction from a 2D ZigZag residual matrix. """
     rec = np.zeros((h, w), dtype=uint8)
-    if w == 0:
+    if h == 0 or w == 0:
         return rec
     for i in range(h):
         # Boundary pixel (j=0): no left or upper-left neighbor
@@ -142,6 +149,8 @@ def reconstruct_2d_channels(h: int, w: int, res_ch: npt.NDArray[np.uint8]) -> np
 def calculate_aad_estimate(data_ch: npt.NDArray[np.uint8]) -> float:
     """ Fast AAD (Average Absolute Deviation) estimation using MED residuals. """
     h, w = data_ch.shape
+    if h == 0 or w == 0:
+        return 0.0
     total_abs_err = 0.0
     for i in prange(h):
         row_sum = 0.0
