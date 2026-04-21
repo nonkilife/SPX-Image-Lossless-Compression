@@ -57,8 +57,9 @@ import numpy.typing as npt
 from numba import njit, prange, uint8, uint16, uint32, uint64
 from typing import Tuple, List, Optional
 from .common import (
-    to_zigzag, from_zigzag, selected_predictor, get_context_id_fast
+    to_zigzag, from_zigzag, selected_predictor
 )
+from .sharding import get_context_id_fast
 
 @njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
 def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDArray[np.uint8],

@@ -30,9 +30,9 @@ import zstandard as zstd
 import concurrent.futures
 from typing import Tuple, List, Optional, Union, BinaryIO
 from .common import (
-    FLAG_RGBA, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE,
-    PROFILE_RGB
+    FLAG_RGBA, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE
 )
+from .sharding import PROFILE_RGB
 from .rans_bitplane import decompress_bitplane_gray_sharded
 from .rans import (
     rans_encode_shards_parallel,

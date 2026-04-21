@@ -40,10 +40,8 @@ import numpy as np
 import numpy.typing as npt
 from numba import njit, prange, uint8, uint64
 from typing import Tuple
-from .common import (
-    to_zigzag, selected_predictor,
-    get_context_id_fast
-)
+from .common import to_zigzag, selected_predictor
+from .sharding import get_context_id_fast
 
 
 @njit(parallel=True, fastmath=True, error_model='numpy', cache=True)

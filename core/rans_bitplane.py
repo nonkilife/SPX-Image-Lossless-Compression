@@ -49,7 +49,8 @@ from typing import Tuple
 import zstandard as zstd
 import concurrent.futures
 
-from .common import selected_predictor, get_context_id_fast
+from .common import selected_predictor
+from .sharding import get_context_id_fast
 from .predictor import from_zigzag
 from .transform import reconstruct_2d_channels
 

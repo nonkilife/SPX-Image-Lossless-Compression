@@ -25,6 +25,7 @@ from numba import njit, prange, uint8
 from typing import Tuple, Optional, List
 from dataclasses import dataclass, field
 from .predictor import to_zigzag, from_zigzag, selected_predictor, med_edge_tuned
+from .sharding import ShardProfile, PROFILE_RGB, SHARD_LABELS, sync_luts_if_needed, get_context_id_fast
 
 # --- 0. Empirical Model Pillars ---
 
@@ -41,7 +42,7 @@ def _build_empirical_templates() -> Tuple[npt.NDArray[np.uint64], ...]:
         np.array([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,2,4,7,17,47,133,357,810,1329,812,357,135,48,18,8,4,2,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0], dtype=np.uint64),
         np.array([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,2,3,8,23,78,276,828,1647,833,279,79,23,8,3,2,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0], dtype=np.uint64),
         np.array([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,3,3,3,3,4,4,5,5,6,7,8,9,10,12,13,15,18,21,25,29,35,41,49,58,70,83,98,116,136,158,180,203,224,241,270,240,221,199,176,153,132,113,96,81,68,58,49,41,35,30,25,22,19,16,14,12,11,9,8,7,7,6,5,5,4,4,3,3,3,3,2,2,2,2,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0], dtype=np.uint64),
-        np.array([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,3,3,3,4,4,4,5,6,6,7,8,9,10,12,13,15,17,19,22,25,28,32,36,41,46,52,59,66,75,84,95,107,120,135,152,170,190,210,248,212,191,171,151,134,118,105,93,82,73,65,58,52,46,41,36,32,28,25,23,20,18,16,14,13,11,10,9,8,7,7,6,5,5,4,4,4,3,3,3,2,2,2,2,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0], dtype=np.uint64),
+        np.array([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,3,3,3,4,4,4,5,6,6,7,8,9,10,12,13,15,17,19,22,25,28,32,36,41,46,52,59,66,75,84,95,107,120,135,152,170,190,210,248,212,191,171,151,134,118,105,93,82,73,65,58,52,46,41,36,32,28,25,23,20,18,16,14,13,11,10,9,8,7,7,6,5,5,4,4,4,3,3,3,2,2,2,2,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0], dtype=np.uint64),
         np.array([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,2,2,3,4,6,9,14,23,45,93,204,431,761,989,714,396,190,89,43,23,14,9,6,4,3,2,2,2,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0], dtype=np.uint64),
         np.array([0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,3,3,3,3,4,4,5,5,6,6,7,8,8,9,10,11,12,14,15,17,19,20,23,25,27,30,33,37,41,44,49,53,59,64,70,77,84,92,100,110,120,131,145,159,174,207,174,158,144,130,117,106,97,88,80,73,66,60,55,50,46,42,38,35,31,29,26,24,22,20,18,16,15,14,12,11,10,9,9,8,7,7,6,5,5,5,4,4,4,3,3,3,3,2,2,2,2,2,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0], dtype=np.uint64),
     ]
@@ -74,87 +75,7 @@ FLAG_GRAYSCALE: int   = 0x10  # Hardware-accelerated true monochrome bypassing C
 FLAG_COLOR_GSUB: int   = 0x20  # Adaptive Green-Subtract Transform (Smooth Image Optimization)
 FLAG_BITPLANE: int    = 0x40  # 2D Bit-Context engine (BICC Stage 2)
 
-# --- 2. Sharding Profile System ---
-
-@dataclass(frozen=True)
-class ShardProfile:
-    """ 
-    Authoritative physical architecture defining how context boundaries segment statistical space.
-    
-    The Shard Map establishes a rigid mathematical space utilizing intensity limits, 
-    gradient variance tiers, and local curve slopes to reliably bucket pixels with exactly 
-    matching neighborhood configurations into the same dynamic compression container.
-    """
-    name: str
-    v_boundaries_gr: npt.NDArray[np.uint8]
-    intensity_segments: npt.NDArray[np.uint8]
-    noise_shard_id: int  # -1 if no noise shard
-    total_shards: int
-    shard_map: npt.NDArray[np.uint8] # [v_level][intensity_idx][trend_idx]
-
-# --- 2a. Default Profile Settings ---
-V_BOUND_RGB = np.array([0, 1, 2, 4, 8, 16, 32, 255], dtype=np.uint8)
-INTENSITY_SEG_RGB = np.array([0, 60, 190, 255], dtype=np.uint8)
-
-def build_shard_map_universal_42() -> npt.NDArray[np.uint8]:
-    """ Unified 42-shard balanced architecture: 3I×1T flat | 3I×3T full | 1I×3T trend-only. """
-    s_map = np.zeros((8, 3, 3), dtype=np.uint8)
-    # Tier 0 (V=0): Intensity Split (IDs 0-2)
-    for i in range(3): s_map[0, i, :] = i
-    
-    # Tier 1, 2, 3 (V=1, 2, 3): Intensity * Trend (IDs 3-29)
-    # 3 tiers * 9 = 27 shards
-    for v in range(1, 4):
-        for i in range(3):
-            base = 3 + (v-1) * 9 + i * 3
-            s_map[v, i, 0] = base + 0
-            s_map[v, i, 1] = base + 1
-            s_map[v, i, 2] = base + 2
-            
-    # Tiers 4, 5, 6, 7 (V >= 4): Trend-only (IDs 30-41)
-    # 4 tiers * 3 trends = 12 shards
-    for v in range(4, 8):
-        for i in range(3):
-            base = 30 + (v-4) * 3
-            s_map[v, i, 0] = base + 0
-            s_map[v, i, 1] = base + 1
-            s_map[v, i, 2] = base + 2
-            
-    return s_map
-    
-PROFILE_RGB = ShardProfile(
-    name="Universal-42",
-    v_boundaries_gr=V_BOUND_RGB,
-    intensity_segments=INTENSITY_SEG_RGB,
-    noise_shard_id=-1,
-    total_shards=42,
-    shard_map=build_shard_map_universal_42()
-)
-
-# --- Per-Shard Dispatch Tables ---
-
-# Bitplane-width threshold: 90th-percentile ZigZag residual width over active
-# shards.  p90 captures tail behaviour - bitplane needs the entire distribution
-# to be narrow, not just the average.  Natural images have wide high-energy
-# boundary shards that inflate the tail even when the median is low.
-# Empirically: Tecnick p90 max = 95, DIV2K p90 min = 70.5 (at 1 Mpx+ gate).
-# Threshold 85 gives 99% classification accuracy vs 96% for mean@53.
-BITPLANE_H_THRESHOLD: float = 3.3          # Shannon Entropy Gating (bits/symbol)
-BITPLANE_HIT_RATE_THRESHOLD: float = 0.20    # Minimum Zero-Residual Fraction
-BITPLANE_P90_THRESHOLD: int = 175             # Max 90th-percentile ZigZag symbol width
-
-ENABLE_DIAGNOSTICS: bool = False  # Production Gate
-
-def get_shard_labels(n_shards: Optional[int] = None) -> List[str]:
-    """ Generates generic index labels for all shards in the given (or current) profile. """
-    if n_shards is None:
-        n_shards = PROFILE_RGB.total_shards
-    return [f"Shard_{i}" for i in range(n_shards)]
-
-SHARD_LABELS: List[str] = get_shard_labels()
-
-
-# --- 3. Data Structures ---
+# --- 2. Data Structures ---
 
 @dataclass
 class SpxResult:
@@ -278,100 +199,16 @@ def calculate_channel_stats(hist: npt.NDArray[np.uint32]) -> Tuple[float, int, i
     return mean_val, median_val, mode_val
 
 
-# --- High-Performance Context Dispatcher LUTs ---
-SPATIAL_TRANS_LUT = np.zeros((511, 511), dtype=np.uint8)
-INTENSITY_LUT = np.zeros(256, dtype=np.uint8)
-FINAL_DISPATCH_LUT = np.zeros(1024, dtype=np.uint8)  # index = (packed<<2)|i_idx
+# --- Per-Shard Dispatch Tables ---
 
-def initialize_luts_python(v_bounds, i_segs, shard_map, nsid: int):
-    """
-    Fills global LUTs with precomputed context features.
+# Bitplane-width threshold: 90th-percentile ZigZag residual width over active
+# shards.  p90 captures tail behaviour - bitplane needs the entire distribution
+# to be narrow, not just the average.  Natural images have wide high-energy
+# boundary shards that inflate the tail even when the median is low.
+# Empirically: Tecnick p90 max = 95, DIV2K p90 min = 70.5 (at 1 Mpx+ gate).
+# Threshold 85 gives 99% classification accuracy vs 96% for mean@53.
+BITPLANE_H_THRESHOLD: float = 3.3          # Shannon Entropy Gating (bits/symbol)
+BITPLANE_HIT_RATE_THRESHOLD: float = 0.20    # Minimum Zero-Residual Fraction
+BITPLANE_P90_THRESHOLD: int = 175             # Max 90th-percentile ZigZag symbol width
 
-    Engineering Logic:
-    1. Spatial Consistency: Uses (ag-cg) and (bg-cg) to derive a 2D gradient vector.
-       By subtracting the top-left neighbor (cg), we isolate the local 'slope'
-       from the absolute pixel offset, ensuring the same context is recognized
-       regardless of the global brightness level.
-    2. Zero-Latency Dispatch: Pre-packs V (Variance), T (Trend), and N (Noise)
-       into a single uint8. This allows get_context_id_fast to perform
-       feature extraction using bit-shifts instead of branching logic.
-    """
-    # 1. Intensity LUT — generalized: one threshold crossing per i_segs[1:-1] boundary
-    i_arr = np.arange(256, dtype=np.uint8)
-    i_result = np.zeros(256, dtype=np.uint8)
-    for thr in i_segs[1:-1]:
-        i_result += (i_arr > int(thr)).astype(np.uint8)
-    INTENSITY_LUT[:] = i_result
-
-    # 2. Spatial Transition LUT (511x511, vectorized)
-    d = np.arange(-255, 256, dtype=np.int16)
-    DA, DB = np.meshgrid(d, d, indexing='ij')   # (511, 511)
-
-    # Strength (V): count how many boundaries are exceeded
-    v = np.maximum(np.abs(DA), np.abs(DB))
-    v_tier = (v > 0).astype(np.uint8)
-    for i in range(1, len(v_bounds) - 1):
-        v_tier += (v > int(v_bounds[i])).astype(np.uint8)
-
-    # Trend (T)
-    rising  = ((DA > 0) & (DB > 0)).astype(np.uint8)
-    falling = ((DA < 0) & (DB < 0)).astype(np.uint8)
-    t_idx   = (falling + 2 * (1 - rising - falling)).astype(np.uint8)
-
-    # Noise Flag (N)
-    ns_hit = ((np.abs(DA) > 12) & (np.abs(DB) > 12)).astype(np.uint8)
-
-    # Packing: [V:3][T:2][N:1]
-    SPATIAL_TRANS_LUT[:] = ((v_tier << 3) | (t_idx << 1) | ns_hit).astype(np.uint8)
-
-    # 3. Final Dispatch LUT — collapses branch + 3D shard_map lookup into a single
-    #    1024-byte table. index = (packed<<2)|i_idx; result = shard_id.
-    n_v = shard_map.shape[0]
-    n_t = shard_map.shape[2]
-    for pk in range(256):
-        vt = pk >> 3
-        ti = (pk >> 1) & 0x03
-        ns = pk & 0x01
-        for ii in range(3):
-            idx = (pk << 2) | ii
-            if ns != 0 and nsid >= 0:
-                FINAL_DISPATCH_LUT[idx] = np.uint8(nsid)
-            elif vt < n_v and ti < n_t:
-                FINAL_DISPATCH_LUT[idx] = shard_map[vt, ii, ti]
-
-# Auto-initialize with default Universal-42 bounds (Internal Cache)
-_LAST_V_BOUNDS = np.zeros(8, dtype=np.uint8)
-_LAST_I_SEGS = np.zeros(4, dtype=np.uint8)
-_LAST_NSID: int = -2  # sentinel: forces first-run initialization
-
-def sync_luts_if_needed(v_bounds, i_segs, shard_map, nsid: int):
-    """
-    Ensures global LUTs match the requested profile.
-    Must be called from Python context before entering JIT kernels.
-    """
-    global _LAST_V_BOUNDS, _LAST_I_SEGS, _LAST_NSID
-    if (not np.array_equal(_LAST_V_BOUNDS, v_bounds) or
-            not np.array_equal(_LAST_I_SEGS, i_segs) or
-            _LAST_NSID != nsid):
-        initialize_luts_python(v_bounds, i_segs, shard_map, nsid)
-        _LAST_V_BOUNDS = v_bounds.copy()
-        _LAST_I_SEGS = i_segs.copy()
-        _LAST_NSID = nsid
-
-# Initial load
-sync_luts_if_needed(V_BOUND_RGB, INTENSITY_SEG_RGB, PROFILE_RGB.shard_map, PROFILE_RGB.noise_shard_id)
-
-
-@njit(inline='always', fastmath=True, cache=True)
-def get_context_id_fast(ag: uint8, bg: uint8, cg: uint8, intensity: uint8,
-                        shard_map: npt.NDArray[np.uint8], nsid: int) -> uint8:
-    """
-    Triple LUT dispatch: SPATIAL_TRANS_LUT → INTENSITY_LUT → FINAL_DISPATCH_LUT.
-    shard_map/nsid are baked into FINAL_DISPATCH_LUT at sync time; kept in
-    signature for caller compatibility.
-    """
-    packed = SPATIAL_TRANS_LUT[int(ag) - int(cg) + 255, int(bg) - int(cg) + 255]
-    i_idx  = INTENSITY_LUT[intensity]
-    return FINAL_DISPATCH_LUT[(packed << 2) | i_idx]
-
-# --- End of Flexible Sharding Hub ---
+ENABLE_DIAGNOSTICS: bool = False  # Production Gate

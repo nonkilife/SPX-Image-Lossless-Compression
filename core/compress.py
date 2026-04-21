@@ -31,10 +31,11 @@ import threading
 from .common import (
     SpxResult, FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE,
     apply_median_to_stats,
-    calculate_channel_stats, PROFILE_RGB,
+    calculate_channel_stats,
     extract_srb_metadata,
     BITPLANE_H_THRESHOLD, BITPLANE_HIT_RATE_THRESHOLD, BITPLANE_P90_THRESHOLD
 )
+from .sharding import PROFILE_RGB, sync_luts_if_needed
 from .transform import (
     extract_channels, predict_2d_residuals,
     calculate_aad_estimate
@@ -223,7 +224,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
         aad_val: float = calculate_aad_estimate(gr_map)
         
         # [v6.6] Unified RGB Sharding
-        from .common import ShardProfile, sync_luts_if_needed
+        from .sharding import ShardProfile, sync_luts_if_needed
         profile: ShardProfile = PROFILE_RGB
         
         # [v6.6 Defensive] Ensure global Context LUTs match requested profile
