@@ -272,7 +272,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
         shard_widths = extract_srb_metadata(normalized_stats)
 
         # [v7.6] Per-Image Coder Selection: auto-detect bitplane vs standard rANS.
-        # Gate: H < 3.3 AND hit_rate > 0.20 AND p90 < 175
+        # Gate: H < 3.2 AND hit_rate > 0.30 AND p90 < 112 (Tightened for stability)
         # H = mean Shannon entropy across 3 channels; hit_rate = zero-residual fraction.
         # The caller can override by passing use_bitplane=True/False explicitly.
         if use_bitplane is None:

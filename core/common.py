@@ -176,14 +176,12 @@ def calculate_channel_stats(hist: npt.NDArray[np.uint32]) -> int:
 
 # --- Per-Shard Dispatch Tables ---
 
-# Bitplane-width threshold: 90th-percentile ZigZag residual width over active
-# shards.  p90 captures tail behaviour - bitplane needs the entire distribution
-# to be narrow, not just the average.  Natural images have wide high-energy
-# boundary shards that inflate the tail even when the median is low.
-# Empirically: Tecnick p90 max = 95, DIV2K p90 min = 70.5 (at 1 Mpx+ gate).
-# Threshold 85 gives 99% classification accuracy vs 96% for mean@53.
-BITPLANE_H_THRESHOLD: float = 3.3          # Shannon Entropy Gating (bits/symbol)
-BITPLANE_HIT_RATE_THRESHOLD: float = 0.20    # Minimum Zero-Residual Fraction
-BITPLANE_P90_THRESHOLD: int = 175             # Max 90th-percentile ZigZag symbol width
+# [v7.6] Bitplane rANS Sensitivity Thresholds (Calibrated for Zero-Regression)
+# Target: Synthetic images (TRGB) and UI screenshots.
+# Rationale: P90 < 112 is the primary defensive filter against natural image noise.
+# Empirically: TRGB p90 max = 111.5, Natural p90 min ~ 115 (with sensor noise).
+BITPLANE_H_THRESHOLD: float = 3.2          # Shannon Entropy Gating (bits/symbol)
+BITPLANE_HIT_RATE_THRESHOLD: float = 0.30    # Minimum Zero-Residual Fraction
+BITPLANE_P90_THRESHOLD: int = 112             # Max 90th-percentile ZigZag symbol width (Critical Filter)
 
 ENABLE_DIAGNOSTICS: bool = False  # Production Gate
