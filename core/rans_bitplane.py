@@ -84,7 +84,8 @@ def _build_pdf_sharded(resid_2d:  npt.NDArray[np.uint8],
                        shard_map: npt.NDArray[np.uint8],
                        nsid: int,
                        n_ctx: int,
-                       nt: int) -> Tuple[npt.NDArray[np.uint64],
+                       nt: int,
+                       is_chroma: bool) -> Tuple[npt.NDArray[np.uint64],
                                          npt.NDArray[np.uint64]]:
     """
     Single raster-order pass accumulating symbol counts into
@@ -105,8 +106,11 @@ def _build_pdf_sharded(resid_2d:  npt.NDArray[np.uint8],
             ag = gray_ch[pi, pj-1]
             bg = gray_ch[pi-1, pj]
             cg = gray_ch[pi-1, pj-1]
-            p_g = selected_predictor(ag, bg, cg)
-            sid = int(get_context_id_fast(ag, bg, cg, p_g, shard_map, nsid))
+            if is_chroma:
+                intensity = gray_ch[pi, pj]
+            else:
+                intensity = selected_predictor(ag, bg, cg)
+            sid = int(get_context_id_fast(ag, bg, cg, intensity, shard_map, nsid))
 
             # ----- bitplane spatial context from residual neighbors -----
             r_l = resid_2d[pi, pj-1]
@@ -181,7 +185,8 @@ def _rans_encode_sharded(resid_2d:  npt.NDArray[np.uint8],
                          all_sf:    npt.NDArray[np.uint64],
                          shard_map: npt.NDArray[np.uint8],
                          nsid: int,
-                         n_ctx: int) -> Tuple[npt.NDArray[np.uint64],
+                         n_ctx: int,
+                         is_chroma: bool) -> Tuple[npt.NDArray[np.uint64],
                                               npt.NDArray[np.uint8]]:
     """
     Reverse-scan 4-way interleaved rANS encoder.
@@ -213,8 +218,11 @@ def _rans_encode_sharded(resid_2d:  npt.NDArray[np.uint8],
             ag = gray_ch[pi, pj-1]
             bg = gray_ch[pi-1, pj]
             cg = gray_ch[pi-1, pj-1]
-            p_g = selected_predictor(ag, bg, cg)
-            sid = int(get_context_id_fast(ag, bg, cg, p_g, shard_map, nsid))
+            if is_chroma:
+                intensity = gray_ch[pi, pj]
+            else:
+                intensity = selected_predictor(ag, bg, cg)
+            sid = int(get_context_id_fast(ag, bg, cg, intensity, shard_map, nsid))
 
             # ----- bitplane spatial neighbors -----
             r_l = resid_2d[pi, pj-1]
@@ -421,8 +429,8 @@ def _rans_decode_sharded_with_ref(bitstream:  npt.NDArray[np.uint8],
             ag = ref_ch[pi, pj-1]
             bg = ref_ch[pi-1, pj]
             cg = ref_ch[pi-1, pj-1]
-            p_g = selected_predictor(ag, bg, cg)
-            sid = int(get_context_id_fast(ag, bg, cg, p_g, shard_map, nsid))
+            intensity = ref_ch[pi, pj]
+            sid = int(get_context_id_fast(ag, bg, cg, intensity, shard_map, nsid))
 
             # ----- bitplane spatial contexts from own decoded residual neighbors -----
             r_l = resid[pi, pj-1]
@@ -491,7 +499,8 @@ def _rans_decode_sharded_with_ref(bitstream:  npt.NDArray[np.uint8],
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-def compress_bitplane_gray_sharded(gray_ch:   npt.NDArray[np.uint8],
+def compress_bitplane_gray_sharded(h: int, w: int,
+                                   gray_ch:   npt.NDArray[np.uint8],
                                    resid_2d:  npt.NDArray[np.uint8],
                                    shard_map: npt.NDArray[np.uint8],
                                    nsid: int) -> bytes:
@@ -503,9 +512,9 @@ def compress_bitplane_gray_sharded(gray_ch:   npt.NDArray[np.uint8],
     n_ctx = n_shards * N_SPATIAL
     gray_ch_p  = np.pad(gray_ch,  1, constant_values=0)
     resid_2d_p = np.pad(resid_2d, 1, constant_values=0)
-    f, cf = _build_pdf_sharded(resid_2d_p, gray_ch_p, shard_map, nsid, n_ctx, get_num_threads())
+    f, cf = _build_pdf_sharded(resid_2d_p, gray_ch_p, shard_map, nsid, n_ctx, get_num_threads(), False)
 
-    states, bitstream = _rans_encode_sharded(resid_2d_p, gray_ch_p, cf, f, shard_map, nsid, n_ctx)
+    states, bitstream = _rans_encode_sharded(resid_2d_p, gray_ch_p, cf, f, shard_map, nsid, n_ctx, False)
 
     # Compress frequency tables with Zstd (many uniform/zero rows - high ratio)
     tables_raw = f.astype(np.uint16).tobytes()
@@ -524,7 +533,7 @@ def compress_bitplane_gray_sharded(gray_ch:   npt.NDArray[np.uint8],
 def decompress_bitplane_gray_sharded(payload:   bytes,
                                      h: int, w: int,
                                      shard_map: npt.NDArray[np.uint8],
-                                     nsid: int) -> npt.NDArray[np.uint8]:
+                                     nsid: int) -> Tuple[npt.NDArray[np.uint8], int]:
     """
     Restores the ZigZag residual array from a sharded bitplane payload.
     The caller passes the result to reconstruct_2d_channels for final MED
@@ -557,15 +566,17 @@ def decompress_bitplane_gray_sharded(payload:   bytes,
     bs_len = int(np.frombuffer(raw[ptr:ptr+4], dtype=np.uint32)[0])
     ptr += 4
     bitstream = raw[ptr:ptr+bs_len]
+    ptr += bs_len
 
     return _rans_decode_sharded(
         bitstream,
         states[0], states[1], states[2], states[3],
         h, w, cf, f, shard_map, nsid
-    )
+    ), ptr
 
 
-def compress_bitplane_rgb_sharded(gr_ch:    npt.NDArray[np.uint8],
+def compress_bitplane_rgb_sharded(h: int, w: int,
+                                   gr_ch:    npt.NDArray[np.uint8],
                                    rd_ch:    npt.NDArray[np.uint8],
                                    bd_ch:    npt.NDArray[np.uint8],
                                    gr_resid: npt.NDArray[np.uint8],
@@ -598,18 +609,18 @@ def compress_bitplane_rgb_sharded(gr_ch:    npt.NDArray[np.uint8],
     bd_p     = np.pad(bd_resid, 1, constant_values=0)
 
     # Phase 1: histogram — sequential, each call gets full prange parallelism.
-    f_gr, cf_gr = _build_pdf_sharded(gr_p, gr_ref_p, shard_map, nsid, n_ctx, nt)
-    f_rd, cf_rd = _build_pdf_sharded(rd_p, gr_ref_p, shard_map, nsid, n_ctx, nt)
-    f_bd, cf_bd = _build_pdf_sharded(bd_p, gr_ref_p, shard_map, nsid, n_ctx, nt)
+    f_gr, cf_gr = _build_pdf_sharded(gr_p, gr_ref_p, shard_map, nsid, n_ctx, nt, False)
+    f_rd, cf_rd = _build_pdf_sharded(rd_p, gr_ref_p, shard_map, nsid, n_ctx, nt, True)
+    f_bd, cf_bd = _build_pdf_sharded(bd_p, gr_ref_p, shard_map, nsid, n_ctx, nt, True)
 
     # Phase 2: encode — concurrent, each kernel is single-threaded + nogil.
-    def _encode(resid_p, f, cf):
-        return _rans_encode_sharded(resid_p, gr_ref_p, cf, f, shard_map, nsid, n_ctx)
+    def _encode(resid_p, f, cf, is_chroma):
+        return _rans_encode_sharded(resid_p, gr_ref_p, cf, f, shard_map, nsid, n_ctx, is_chroma)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
-        fut_gr = ex.submit(_encode, gr_p, f_gr, cf_gr)
-        fut_rd = ex.submit(_encode, rd_p, f_rd, cf_rd)
-        fut_bd = ex.submit(_encode, bd_p, f_bd, cf_bd)
+        fut_gr = ex.submit(_encode, gr_p, f_gr, cf_gr, False)
+        fut_rd = ex.submit(_encode, rd_p, f_rd, cf_rd, True)
+        fut_bd = ex.submit(_encode, bd_p, f_bd, cf_bd, True)
         states_gr, bs_gr = fut_gr.result()
         states_rd, bs_rd = fut_rd.result()
         states_bd, bs_bd = fut_bd.result()
@@ -635,7 +646,7 @@ def compress_bitplane_rgb_sharded(gr_ch:    npt.NDArray[np.uint8],
 def decompress_bitplane_rgb_sharded(payload:   bytes,
                                      h: int, w: int,
                                      shard_map: npt.NDArray[np.uint8],
-                                     nsid: int) -> Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint8]]:
+                                     nsid: int) -> Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint8], int]:
     """
     RGB sharded bitplane decoder.
     Decodes green first (self-referential), then Rd and Bd in parallel using
@@ -700,4 +711,4 @@ def decompress_bitplane_rgb_sharded(payload:   bytes,
         rd_rec = fut_rd.result()
         bd_rec = fut_bd.result()
 
-    return gr_rec, rd_rec, bd_rec
+    return gr_rec, rd_rec, bd_rec, ptr

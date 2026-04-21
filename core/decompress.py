@@ -227,18 +227,26 @@ def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = No
                 rgb = np.frombuffer(zstandard_decompress(compressed_data), dtype=np.uint8).reshape((h, w, 4 if is_rgba else 3))
             else:
                 if flag & FLAG_BITPLANE:
+                    from .rans_bitplane import decompress_bitplane_gray_sharded
                     if is_grayscale:
-                        res_gr_flat, *_ = unpack_bitstream(
-                            compressed_data, h, w, is_rgba, is_grayscale, shard_widths, shard_modes, flag
+                        res_gr_flat, ptr = decompress_bitplane_gray_sharded(
+                            compressed_data, h, w, profile.shard_map, nsid
                         )
-                        gr_rec = reconstruct_2d_channels(h, w, res_gr_flat.reshape((h, w)))
+                        gr_rec = reconstruct_2d_channels(h, w, res_gr_flat)
                         rd_rec = np.zeros((h, w), dtype=np.uint8)
                         bd_rec = np.zeros((h, w), dtype=np.uint8)
                     else:
-                        gr_rec, rd_rec, bd_rec = decompress_bitplane_rgb_sharded(
+                        gr_rec, rd_rec, bd_rec, ptr = decompress_bitplane_rgb_sharded(
                             compressed_data, h, w,
                             profile.shard_map, nsid
                         )
+                    
+                    if is_rgba:
+                        a_len = int(np.frombuffer(compressed_data[ptr:ptr+4], dtype=np.uint32)[0])
+                        ptr += 4
+                        res_a_flat = np.frombuffer(zstandard_decompress(compressed_data[ptr:ptr+a_len]), dtype=np.uint8)
+                    else:
+                        res_a_flat = None
                 else:
                     # Standard Shard Path (already unpacked via stream above)
                     gr_rec, rd_rec, bd_rec = reconstruct_channels(

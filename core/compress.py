@@ -386,26 +386,38 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
         elif use_bitplane and is_grayscale:
             # [v7.3] Shard-Conditioned Bitplane Grayscale Path
             resid_2d = predict_2d_residuals(gr_map)
-            bit_payload = compress_bitplane_gray_sharded(
+            bit_payload = bytearray(compress_bitplane_gray_sharded(
+                h, w,
                 gr_map, resid_2d,
                 profile.shard_map, profile.noise_shard_id
-            )
+            ))
+            if is_rgba:
+                res_a = predict_2d_residuals(a_map)
+                c_alpha = zstd.ZstdCompressor(level=1).compress(res_a.tobytes())
+                bit_payload.extend(np.array([len(c_alpha)], dtype='<u4').tobytes())
+                bit_payload.extend(c_alpha)
             flag |= FLAG_BITPLANE
             header_base = np.array([h, w, metadata_len, flag], dtype='<u4').tobytes()
-            final_payload = b"SPX_CORE" + header_base + bit_payload + metadata_bytes
+            final_payload = b"SPX_CORE" + header_base + bytes(bit_payload) + metadata_bytes
         elif use_bitplane and selected_mode == "RGB":
             # [v7.3] Shard-Conditioned Bitplane RGB Path
             gr_resid = predict_2d_residuals(gr_map)
             rd_resid = predict_2d_residuals(rd_map)
             bd_resid = predict_2d_residuals(bd_map)
-            bit_payload = compress_bitplane_rgb_sharded(
+            bit_payload = bytearray(compress_bitplane_rgb_sharded(
+                h, w,
                 gr_map, rd_map, bd_map,
                 gr_resid, rd_resid, bd_resid,
                 profile.shard_map, profile.noise_shard_id
-            )
+            ))
+            if is_rgba:
+                res_a = predict_2d_residuals(a_map)
+                c_alpha = zstd.ZstdCompressor(level=1).compress(res_a.tobytes())
+                bit_payload.extend(np.array([len(c_alpha)], dtype='<u4').tobytes())
+                bit_payload.extend(c_alpha)
             flag |= FLAG_BITPLANE
             header_base = np.array([h, w, metadata_len, flag], dtype='<u4').tobytes()
-            final_payload = b"SPX_CORE" + header_base + bit_payload + metadata_bytes
+            final_payload = b"SPX_CORE" + header_base + bytes(bit_payload) + metadata_bytes
         else:
             final_payload, modes_diag = pack_bitstream(
                 h, w, is_rgba, is_grayscale, use_gsub,
