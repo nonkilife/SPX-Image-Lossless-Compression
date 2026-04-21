@@ -49,7 +49,7 @@ from . import env
 env.verify_environment()
 
 # --- Logging: Core Framework ---
-logger: logging.Logger = logging.getLogger("zpng.decompress")
+logger: logging.Logger = logging.getLogger("spx.decompress")
 
 # [v5.1] Thread-Local Decompressor Cache to prevent redundant object creation
 thread_local_decomp = threading.local()
@@ -67,7 +67,7 @@ def set_parallel_threads(n: int):
     numba.set_num_threads(n)
     logger.info(f"Numba Parallel Engine (Decompress) set to {n} thread(s).")
 
-def clear_zpng_workspaces():
+def clear_spx_workspaces():
     """ [v5.2.3] Forces release of Thread-Local decompressors to prevent memory retention in server workers. """
     if hasattr(thread_local_decomp, 'decomp'):
         del thread_local_decomp.decomp
@@ -139,7 +139,7 @@ def inject_png_metadata(filepath: str, metadata_bytes: bytes) -> None:
         logger.error(f"Failed to inject PNG metadata: {e}")
 
 
-def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = None, optimize_png: bool = False) -> Tuple[npt.NDArray[np.uint8], float]:
+def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = None, optimize_png: bool = False) -> Tuple[npt.NDArray[np.uint8], float]:
     """
     Main SPX Decompression Entry Point (v7.5 Stable).
 
@@ -152,13 +152,13 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
     t0: float = time.time()
     try:
         f: Union[io.BytesIO, io.BufferedReader]
-        if isinstance(zpng_input, bytes): 
-            f = io.BytesIO(zpng_input)
-        else: 
-            f = open(zpng_input, 'rb')
+        if isinstance(spx_input, bytes): 
+            f = io.BytesIO(spx_input)
+        else:
+            f = open(spx_input, 'rb')
         try:
             magic: bytes = f.read(8)
-            if magic != b"ZPNGCSDE": raise ValueError("Unsupported file format")
+            if magic != b"SPX_CORE": raise ValueError("Unsupported file format")
             header_base: bytes = f.read(16)
             h, w, metadata_len, flag = np.frombuffer(header_base, dtype='<u4')
             if h == 0 or w == 0 or h > 65535 or w > 65535:

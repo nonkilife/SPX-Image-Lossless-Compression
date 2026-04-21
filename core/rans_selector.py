@@ -121,7 +121,7 @@ def build_pdf_from_counts(counts: npt.NDArray[np.uint64], width: int) -> npt.NDA
 
 # Non-njit helper to check env
 def is_templates_disabled() -> bool:
-    return os.environ.get("ZPNG_DISABLE_TEMPLATES") == "1"
+    return os.environ.get("SPX_DISABLE_TEMPLATES") == "1"
 
 @njit(fastmath=True, cache=True)
 def _decide_shard_mode_core(counts: npt.NDArray[np.uint64], width: int, 

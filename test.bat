@@ -3,7 +3,7 @@ set CMD=%1
 set DATASET=%2
 
 if "%CMD%"=="" (
-    echo Usage: test [zpng^|webp^|jxl^|bench] [dataset]
+    echo Usage: test [spx^|webp^|jxl^|bench] [dataset]
     echo Example: test bench gold
     exit /b 1
 )
@@ -13,12 +13,12 @@ if "%DATASET%"=="" (
 )
 
 :: Validate CMD
-if "%CMD%"=="zpng" goto run
+if "%CMD%"=="spx" goto run
 if "%CMD%"=="webp" goto run
 if "%CMD%"=="jxl" goto run
 if "%CMD%"=="bench" goto run
 
-echo Error: Unknown command "%CMD%". Valid: zpng, webp, jxl, bench.
+echo Error: Unknown command "%CMD%". Valid: spx, webp, jxl, bench.
 exit /b 1
 
 :run

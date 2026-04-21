@@ -1,4 +1,4 @@
 # SPX Core Package
-from .compress import compress_csde
-from .decompress import decompress_csde
-from .common import ZpngResult
+from .compress import compress_spx
+from .decompress import decompress_spx
+from .common import SpxResult

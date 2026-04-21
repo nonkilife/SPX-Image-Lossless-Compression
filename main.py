@@ -24,8 +24,8 @@ def main():
     parser_comp.add_argument("--raw-mode", choices=["RGB", "L"], default="RGB", help="Color mode for RAW files")
 
     # Decompress
-    parser_decomp = subparsers.add_parser("decompress", help="Decompress a ZPNG bitstream")
-    parser_decomp.add_argument("path", help="Path to .zpng file")
+    parser_decomp = subparsers.add_parser("decompress", help="Decompress an SPX bitstream")
+    parser_decomp.add_argument("path", help="Path to .spx file")
     parser_decomp.add_argument("--output", help="Optional output path")
 
     # Benchmark (Comparative)
@@ -33,7 +33,7 @@ def main():
     parser_bench.add_argument("path", nargs="?", default="./data/gold", help="Dataset path or alias")
     parser_bench.add_argument("--num_tests", "-n", type=int, help="Limit number of tests")
     parser_bench.add_argument("--workers", "-w", type=int, help="Number of parallel workers")
-    parser_bench.add_argument("--codec", choices=["zpng", "webp", "jxl", "bench"], default="zpng", help="Codec to test")
+    parser_bench.add_argument("--codec", choices=["spx", "webp", "jxl", "bench"], default="spx", help="Codec to test")
     parser_bench.add_argument("--offset", type=int, help="Skip first N images")
     parser_bench.add_argument("--reclassify", action="store_true", help="Copy files into easy/hard/hell categories")
     parser_bench.add_argument("--build", nargs=4, metavar=('TARGET', 'E', 'H', 'HELL'), help="Assemble dataset from categories")
@@ -44,11 +44,11 @@ def main():
         if not os.path.exists(args.path):
             print(f"Error: file not found: {args.path}", file=sys.stderr)
             sys.exit(1)
-        if args.path.lower().endswith(".zpng"):
-            print(f"Error: input file is already a .zpng archive: {args.path}", file=sys.stderr)
+        if args.path.lower().endswith(".spx"):
+            print(f"Error: input file is already a .spx archive: {args.path}", file=sys.stderr)
             sys.exit(1)
-        from core.compress import compress_csde
-        out_path = args.path.rsplit('.', 1)[0] + ".zpng"
+        from core.compress import compress_spx
+        out_path = args.path.rsplit('.', 1)[0] + ".spx"
         
         preloaded_arr = None
         if args.path.lower().endswith(".raw"):
@@ -80,7 +80,7 @@ def main():
         elif args.optimize:
             use_bitplane = None
 
-        result = compress_csde(args.path if preloaded_arr is None else None, out_path, 
+        result = compress_spx(args.path if preloaded_arr is None else None, out_path, 
                                preloaded_arr=preloaded_arr, use_bitplane=use_bitplane)
         print(f"Compressed: {args.path} -> {out_path}")
         print(f"Size: {result.comp_size/1024:.2f} KB | Mode: {result.mode}")
@@ -89,11 +89,11 @@ def main():
         if not os.path.exists(args.path):
             print(f"Error: file not found: {args.path}", file=sys.stderr)
             sys.exit(1)
-        from core.decompress import decompress_csde
+        from core.decompress import decompress_spx
         out_path = args.output
         if not out_path:
             out_path = args.path.rsplit('.', 1)[0] + "_restored.png"
-        rec_arr, _ = decompress_csde(args.path, out_path)
+        rec_arr, _ = decompress_spx(args.path, out_path)
         print(f"Decompressed: {args.path} -> {out_path}")
         print(f"Shape: {rec_arr.shape}")
 

@@ -157,7 +157,7 @@ SHARD_LABELS: List[str] = get_shard_labels()
 # --- 3. Data Structures ---
 
 @dataclass
-class ZpngResult:
+class SpxResult:
     """ Unified container for SPX compression/decompression metrics. """
     # Timing (seconds)
     enc_time: float = 0.0

@@ -158,7 +158,7 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
     if not is_grayscale:
         modes_diag[1] = rd_modes
         modes_diag[2] = bd_modes
-    return b"ZPNGCSDE" + header + bytes(sharded_payload) + metadata_bytes, modes_diag
+    return b"SPX_CORE" + header + bytes(sharded_payload) + metadata_bytes, modes_diag
 
 
 def unpack_bitstream(compressed_data: Union[bytes, BinaryIO], h: int, w: int, is_rgba: bool, is_grayscale: bool,

@@ -40,13 +40,13 @@ from typing import List, Dict, Tuple, Any, Optional
 # Ensure core engine components are accessible
 try:
     # [v7.5.0 Migration] test_suite moved inside core package
-    from .compress import compress_csde
-    from .decompress import decompress_csde
+    from .compress import compress_spx
+    from .decompress import decompress_spx
 except ImportError:
     # Fallback for direct execution if needed
     try:
-        from compress import compress_csde
-        from decompress import decompress_csde
+        from compress import compress_spx
+        from decompress import decompress_spx
     except ImportError as e:
         print(f"[!] Error: Core modules not found: {e}")
         sys.exit(1)
@@ -86,14 +86,14 @@ def calculate_mse(arr1: npt.NDArray, arr2: npt.NDArray) -> float:
 # --- Unified Codec Workers ---
 # =============================================================================
 
-def zpng_worker(path: str) -> Dict[str, Any]:
+def spx_worker(path: str) -> Dict[str, Any]:
     filename = os.path.basename(path)
     try:
         if path == "__WARMUP__":
             # Minimal warmup task
             d = np.zeros((64, 64, 3), dtype=np.uint8)
-            res = compress_csde(None, None, preloaded_arr=d)
-            _, _ = decompress_csde(res.payload, None)
+            res = compress_spx(None, None, preloaded_arr=d)
+            _, _ = decompress_spx(res.payload, None)
             return {"success": False} # Don't record warmup
 
         with Image.open(path) as img:
@@ -103,24 +103,24 @@ def zpng_worker(path: str) -> Dict[str, Any]:
             orig_size_bytes = os.path.getsize(path)
 
         t0 = time.perf_counter()
-        res_z = compress_csde(path, None, preloaded_arr=arr_orig)
+        res_spx = compress_spx(path, None, preloaded_arr=arr_orig)
         ze_s = (time.perf_counter() - t0)
         
         t1 = time.perf_counter()
-        rec_rgb, _ = decompress_csde(res_z.payload, None, optimize_png=False)
+        rec_rgb, _ = decompress_spx(res_spx.payload, None, optimize_png=False)
         zd_s = (time.perf_counter() - t1)
         
-        comp_size_bytes = len(res_z.payload)
+        comp_size_bytes = len(res_spx.payload)
         mse = calculate_mse(arr_orig, rec_rgb)
         pnm_bytes = get_pnm_stats(arr_orig)
 
         return {
-            "name": "ZPNG", "filename": filename, "pixels": pixels,
+            "name": "SPX", "filename": filename, "pixels": pixels,
             "orig_bytes": orig_size_bytes, "pnm_bytes": pnm_bytes, "comp_bytes": comp_size_bytes,
             "e_s": ze_s, "d_s": zd_s, "mse": mse, "success": True
         }
     except Exception as e:
-        return {"name": "ZPNG", "filename": filename, "success": False, "error": str(e)}
+        return {"name": "SPX", "filename": filename, "success": False, "error": str(e)}
 
 def webp_worker(path: str) -> Dict[str, Any]:
     filename = os.path.basename(path)
@@ -282,7 +282,7 @@ def print_comparison_table(stats_list: List[Dict], dataset_name: str):
     rows = [
         ("PNM Size", "pnm_mb", "{:>10.2f} MB"),
         (f"Dataset Size ({int(img_count)} imgs)", "orig_mb", "{:>10.2f} MB"),
-        ("ZPNG Size", "comp_mb", "{:>10.2f} MB"),
+        ("SPX Size", "comp_mb", "{:>10.2f} MB"),
         ("BPP (PNM)", "pnm_bpp", "{:>13.4f}"),
         ("BPP (PNG)", "src_bpp", "{:>13.4f}"),
         ("BPP (Compressed)", "bpp", "{:>13.4f}"),
@@ -361,7 +361,7 @@ def show_codec_summary(s: Dict):
     print(f"  {s['name']} Performance Audit ({int(s.get('count',0))} images):".ljust(100))
     print(f"  PNM Size      : {s['pnm_mb']:6.2f} MB | BPP {s['pnm_bpp']:6.4f}".ljust(100))
     print(f"  Dataset Size  : {s['orig_mb']:6.2f} MB | BPP {s['src_bpp']:6.4f}".ljust(100))
-    print(f"  ZPNG Size     : {s['comp_mb']:6.2f} MB | BPP {s['bpp']:6.4f}".ljust(100))
+    print(f"  SPX Size     : {s['comp_mb']:6.2f} MB | BPP {s['bpp']:6.4f}".ljust(100))
     print(f"  Savings %     : vs PNM {s['saved_pnm_pct']:5.2f}% | vs PNG {s['saved_pct']:5.2f}%".ljust(100))
     print(f"  Comp. Ratio   : Mean {s['mean_ratio']:5.2f}% | Median {s['median_ratio']:5.2f}% | Range {s['range'][0]:5.1f}-{s['range'][1]:5.1f}%".ljust(100))
     print(f"  Avg File Speed: Enc {s['avg_e_ms']:7.1f} ms | Dec {s['avg_d_ms']:7.1f} ms".ljust(100))
@@ -454,8 +454,8 @@ def export_to_csv(stats_list: List[Dict], dataset_name: str):
 
 def main() -> None:
     import argparse
-    parser = argparse.ArgumentParser(description="ZPNG Comparative Benchmark Suite")
-    parser.add_argument("codec", choices=["zpng", "webp", "jxl", "bench"], help="Sub-command: webp, zpng, jxl, or bench")
+    parser = argparse.ArgumentParser(description="SPX Comparative Benchmark Suite")
+    parser.add_argument("codec", choices=["spx", "webp", "jxl", "bench"], help="Sub-command: webp, spx, jxl, or bench")
     parser.add_argument("path", nargs='?', help="Dataset path or alias (clic, gold, kodak, etc.)")
     parser.add_argument("--workers", "-w", type=int, default=os.cpu_count())
     parser.add_argument("--num_tests", "-n", type=int, default=None)
@@ -541,17 +541,17 @@ def main() -> None:
         files = [target_path]
 
     print("=" * 80)
-    print(f"  ZPNG Unified Benchmark Hub (Target: {args.path.upper()} | Cores: {args.workers})")
+    print(f"  SPX Unified Benchmark Hub (Target: {args.path.upper()} | Cores: {args.workers})")
     print("=" * 80)
 
     all_stats = []
     task_results = [] # List of (stats, {filename: res})
     
     queue = []
-    if args.codec == "zpng": queue = [("ZPNG", zpng_worker)]
-    elif args.codec == "webp": queue = [("ZPNG-Base", zpng_worker), ("WebP(M6)", webp_worker)]
-    elif args.codec == "jxl": queue = [("ZPNG-Base", zpng_worker), ("JXL(E7)", jxl_worker)]
-    elif args.codec == "bench": queue = [("ZPNG", zpng_worker), ("WebP(M6)", webp_worker), ("JXL(E7)", jxl_worker)]
+    if args.codec == "spx": queue = [("SPX", spx_worker)]
+    elif args.codec == "webp": queue = [("SPX-Base", spx_worker), ("WebP(M6)", webp_worker)]
+    elif args.codec == "jxl": queue = [("SPX-Base", spx_worker), ("JXL(E7)", jxl_worker)]
+    elif args.codec == "bench": queue = [("SPX", spx_worker), ("WebP(M6)", webp_worker), ("JXL(E7)", jxl_worker)]
 
     try:
         for name, worker in queue:
@@ -603,18 +603,18 @@ def main() -> None:
     norm_target = os.path.abspath(target_path).replace("\\", "/")
     if args.reclassify:
         # Restriction check: only reclassify if we have a valid SPX result set
-        zpng_map = None
+        spx_map = None
         for i, (name, _) in enumerate(queue):
-            if "ZPNG" in name:
-                zpng_map = task_results[i]
+            if "SPX" in name:
+                spx_map = task_results[i]
                 break
         
-        if not zpng_map:
-            print("[!] Skipping Reclassification: No ZPNG results available.")
+        if not spx_map:
+            print("[!] Skipping Reclassification: No SPX results available.")
         elif "div2k_train" not in norm_target.lower():
              print("[!] Warning: Reclassification usually expects DIV2K_Train dataset. Proceeding anyway...")
              
-        if zpng_map:
+        if spx_map:
             data_root = os.path.dirname(target_path)
             print(f"[*] Pre-cleaning and Reclassifying images into DIV2K_Easy/Hard/Hell in {data_root}...")
             
@@ -635,7 +635,7 @@ def main() -> None:
                 os.makedirs(cat_path, exist_ok=True)
             
             copy_count = 0
-            for filename, res in zpng_map.items():
+            for filename, res in spx_map.items():
                 if not res["success"]: continue
                 ratio = (res["comp_bytes"] / res["orig_bytes"]) * 100
                 

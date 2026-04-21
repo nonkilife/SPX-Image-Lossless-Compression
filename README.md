@@ -92,15 +92,15 @@ python main.py benchmark ./path/to/images -n 20 -w 8
 
 ### 4.2 API Usage
 ```python
-from core import compress_csde, decompress_csde
+from core import compress_spx, decompress_spx
 
 # 1. Compress Image (RGB/RGBA)
-result = compress_csde("input.png", "output.spx", use_bitplane=False)
+result = compress_spx("input.png", "output.spx", use_bitplane=False)
 print(f"Ratio: {result.ratio:.2%} | Time: {result.enc_time:.2f}s")
 
 # 2. Decompress Image
 with open("output.spx", "rb") as f: payload = f.read()
-rgb_arr, dec_time = decompress_csde(payload, "reconstructed.png")
+rgb_arr, dec_time = decompress_spx(payload, "reconstructed.png")
 print(f"Dec Time: {dec_time:.2f}s")
 ```
 

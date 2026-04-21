@@ -29,7 +29,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 import zstandard as zstd
 import threading
 from .common import (
-    ZpngResult, FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE,
+    SpxResult, FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE,
     apply_median_to_stats,
     calculate_channel_stats, PROFILE_RGB,
     extract_srb_metadata,
@@ -53,14 +53,14 @@ from . import env
 env.verify_environment()
 
 # --- Logging: Core Framework ---
-logger: logging.Logger = logging.getLogger("zpng.compress")
+logger: logging.Logger = logging.getLogger("spx.compress")
 
 
 # [v2.25] Module-level Thread-Local for compressor object reuse
 thread_local_comp: threading.local = threading.local()
 
 
-def clear_zpng_workspaces():
+def clear_spx_workspaces():
     """ [v5.2.3] Forces release of large Thread-Local memory buffers to prevent OOM in long-lived workers (FastAPI/Celery). """
     if hasattr(thread_local_comp, 'row_shard_hists'):
         del thread_local_comp.row_shard_hists
@@ -160,7 +160,7 @@ def check_grayscale_robust(arr: npt.NDArray[np.uint8], img_mode: Optional[str] =
 
 def dump_shard_stats(shard_stats: npt.NDArray[np.uint32], img_name: str):
     """ [v4.6.0-SIM] Captures 87 histograms for offline entropy sharding research. """
-    if not os.environ.get("ZPNG_DUMP_SHARDS"):
+    if not os.environ.get("SPX_DUMP_SHARDS"):
         return
         
     out_dir = "_debug_shards"
@@ -170,10 +170,10 @@ def dump_shard_stats(shard_stats: npt.NDArray[np.uint32], img_name: str):
     base_name = os.path.basename(img_name)
     np.savez_compressed(os.path.join(out_dir, f"{base_name}.npz"), stats=shard_stats)
 
-def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
+def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
                   preloaded_arr: Optional[npt.NDArray[np.uint8]] = None,
                   force_mode: Optional[int] = None,
-                  use_bitplane: Optional[bool] = None) -> ZpngResult:
+                  use_bitplane: Optional[bool] = None) -> SpxResult:
     """ 
     Main SPX Compression Entry Point (V6.6 Stable).
     
@@ -336,7 +336,7 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
                 sums_total_p1[3] = np.uint64(a_sum)
 
         # [v6.5] Phase 1 Delivery: Reporting Median Normalization Statistics
-        if os.environ.get("ZPNG_REPORT_MEDIAN"):
+        if os.environ.get("SPX_REPORT_MEDIAN"):
             print("\n--- [Phase 1] Median effectiveness report ---")
             for c_idx in range(3):
                 chan = ["Grn", "RD", "BD"][c_idx]
@@ -397,9 +397,9 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
         final_payload: bytes = b""
         modes_diag: npt.NDArray[np.uint8] = np.zeros((3, n_shards), dtype=np.uint8)
         if selected_mode == "SIMPLE":
-            final_payload = b"ZPNGCSDE" + header_base + simple_payload + metadata_bytes
+            final_payload = b"SPX_CORE" + header_base + simple_payload + metadata_bytes
         elif selected_mode == "RAW":
-            final_payload = b"ZPNGCSDE" + header_base + raw_bytes + metadata_bytes
+            final_payload = b"SPX_CORE" + header_base + raw_bytes + metadata_bytes
         elif use_bitplane and is_grayscale:
             # [v7.3] Shard-Conditioned Bitplane Grayscale Path
             resid_2d = predict_2d_residuals(gr_map)
@@ -409,7 +409,7 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
             )
             flag |= FLAG_BITPLANE
             header_base = np.array([h, w, metadata_len, flag], dtype='<u4').tobytes()
-            final_payload = b"ZPNGCSDE" + header_base + bit_payload + metadata_bytes
+            final_payload = b"SPX_CORE" + header_base + bit_payload + metadata_bytes
         elif use_bitplane and selected_mode == "RGB":
             # [v7.3] Shard-Conditioned Bitplane RGB Path
             gr_resid = predict_2d_residuals(gr_map)
@@ -422,7 +422,7 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
             )
             flag |= FLAG_BITPLANE
             header_base = np.array([h, w, metadata_len, flag], dtype='<u4').tobytes()
-            final_payload = b"ZPNGCSDE" + header_base + bit_payload + metadata_bytes
+            final_payload = b"SPX_CORE" + header_base + bit_payload + metadata_bytes
         else:
             final_payload, modes_diag = pack_bitstream(
                 h, w, is_rgba, is_grayscale, use_gsub,
@@ -445,19 +445,19 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
                 with open(img_path, 'rb') as f_orig: original_bytes: bytes = f_orig.read()
                 flag = (flag & FLAG_RGBA) | FLAG_PASSTHROUGH
                 header_base = np.array([h, w, metadata_len, flag], dtype='<u4').tobytes()
-                final_payload = b"ZPNGCSDE" + header_base + original_bytes
+                final_payload = b"SPX_CORE" + header_base + original_bytes
                 selected_mode = "PASSTHROUGH"
             elif size_simple == min_size:
                 flag = (flag & FLAG_RGBA) | FLAG_SIMPLE
                 header_base = np.array([h, w, metadata_len, flag], dtype='<u4').tobytes()
-                final_payload = b"ZPNGCSDE" + header_base + simple_payload + metadata_bytes
+                final_payload = b"SPX_CORE" + header_base + simple_payload + metadata_bytes
                 selected_mode = "SIMPLE"
             else:
                 # Fallback to RAW (Uncompressed raw pixels)
                 flag = (flag & FLAG_RGBA) | FLAG_RAW
                 header_base = np.array([h, w, metadata_len, flag], dtype='<u4').tobytes()
                 if not raw_bytes: raw_bytes = arr.tobytes()
-                final_payload = b"ZPNGCSDE" + header_base + raw_bytes + metadata_bytes
+                final_payload = b"SPX_CORE" + header_base + raw_bytes + metadata_bytes
                 selected_mode = "RAW"
 
         if output_path:
@@ -465,7 +465,7 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
 
         res_modes: npt.NDArray[np.uint8] = modes_diag
 
-        return ZpngResult(enc_time=time.time()-t0, h=h, w=w, is_rgba=is_rgba, comp_size=len(final_payload),
+        return SpxResult(enc_time=time.time()-t0, h=h, w=w, is_rgba=is_rgba, comp_size=len(final_payload),
                           orig_size=orig_size, hits=hits_total_p1, res_sums=sums_total_p1,
                           shard_counts=shard_counts,
                           shard_ptrs=None,

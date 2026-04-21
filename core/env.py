@@ -11,7 +11,7 @@ import importlib.metadata
 from typing import List, Tuple
 
 # Global Unified Logger
-logger = logging.getLogger("zpng")
+logger = logging.getLogger("spx")
 if not logger.handlers:
     handler = logging.StreamHandler(sys.stdout)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
