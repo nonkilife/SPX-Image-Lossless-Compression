@@ -285,7 +285,7 @@ def print_comparison_table(stats_list: List[Dict], dataset_name: str):
         ("SPX Size", "comp_mb", "{:>10.2f} MB"),
         ("BPP (PNM)", "pnm_bpp", "{:>13.4f}"),
         ("BPP (PNG)", "src_bpp", "{:>13.4f}"),
-        ("BPP (Compressed)", "bpp", "{:>13.4f}"),
+        ("BPP (Compressed)", "bpp", "{:>13.6f}"),
         ("SEPARATOR", "", ""),
         ("Savings % (vs PNM)", "saved_pnm_pct", "{:>10.2f} %"),
         ("Savings % (vs PNG)", "saved_pct", "{:>10.2f} %"),
@@ -443,7 +443,7 @@ def export_to_csv(stats_list: List[Dict], dataset_name: str):
             writer.writerow([
                 now, dataset_name, s["name"], s.get("count", 0),
                 f"{s['orig_mb']:.2f}", f"{s['pnm_mb']:.2f}", f"{s['comp_mb']:.2f}",
-                f"{s['saved_pct']:.2f}", f"{s['saved_pnm_pct']:.2f}", f"{s['bpp']:.4f}",
+                f"{s['saved_pct']:.2f}", f"{s['saved_pnm_pct']:.2f}", f"{s['bpp']:.6f}",
                 f"{s['mean_ratio']:.2f}", f"{s['median_ratio']:.2f}",
                 f"{s.get('avg_e_ms', 0):.1f}", f"{s.get('avg_d_ms', 0):.1f}",
                 f"{s['sys_tp'][0]:.2f}", f"{s['sys_tp'][1]:.2f}",

@@ -44,7 +44,7 @@ from .common import to_zigzag, selected_predictor
 from .sharding import get_context_id_fast
 
 
-@njit(parallel=True, fastmath=True, error_model='numpy')
+@njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
 def predict_pass_1_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
                         shard_map: npt.NDArray[np.uint8], nsid: int,
                         s_lut: npt.NDArray[np.uint8], i_lut: npt.NDArray[np.uint8], d_lut: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint8], Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint64]]]:
@@ -143,7 +143,7 @@ def predict_pass_1_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
     return shard_counts_out, shard_stats_out, shard_offsets_out, row_global_offsets_out, (hits_out, sums_out)
 
 
-@njit(parallel=True, fastmath=True, error_model='numpy')
+@njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
 def predict_pass_2_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
                         a_ch: npt.NDArray[np.uint8], is_rgba: bool,
                         shard_map: npt.NDArray[np.uint8], nsid: int,

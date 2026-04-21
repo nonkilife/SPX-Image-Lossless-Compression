@@ -43,9 +43,9 @@ def from_zigzag(z: np.uint8) -> int:
 def selected_predictor(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     """ 
     Unified Predictor Dispatcher. 
-    Current Active: med_standard (v6.2 Stable)
+    Current Active: med_edge_tuned (v7.3.1 Robust)
     """
-    return med_standard(a, b, c)
+    return med_edge_tuned(a, b, c)
 
 @njit(error_model='numpy', inline='always', cache=True)
 def med_standard(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
@@ -59,18 +59,26 @@ def med_standard(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
 @njit(error_model='numpy', inline='always', cache=True)
 def med_edge_tuned(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     """
-    Edge-Tuned MED v7.3.0 — branchless correction for extreme neighbor jumps.
-    When max(a,b)-min(a,b) is 1-3 (smooth edge) but c deviates by >50 (step edge),
-    the standard MED output is nudged by ±diff to track the dominant neighbor.
+    Edge-Tuned MED v7.3.1 — Robustness fix for extreme neighbor jumps.
+    Replaced branchless logic with explicit blocks to ensure Numba sign-safety.
     """
     max_ab: int = int(max(a, b))
     min_ab: int = int(min(a, b))
     diff: int = max_ab - min_ab
     ci: int = int(c)
+    
+    # Standard MED baseline
     p: int = min(max_ab, max(min_ab, int(a) + int(b) - ci))
-    in_range: int = int(diff >= 1) * int(diff <= 3)
-    flip1: int = int(ci - max_ab > 50) * in_range
-    flip2: int = int(min_ab - ci > 50) * in_range
-    return np.uint8((p + diff * (flip1 - flip2)) & 0xFF)
+    
+    # Edge-Tuning: 
+    # In smooth regions (diff 1-3), if C is an extreme outlier (>50 away),
+    # we flip standard selection to track the neighbor closer to the step.
+    if 1 <= diff <= 3:
+        if ci > max_ab + 50:
+            return np.uint8(max_ab)
+        if ci < min_ab - 50:
+            return np.uint8(min_ab)
+            
+    return np.uint8(p)
 
 
