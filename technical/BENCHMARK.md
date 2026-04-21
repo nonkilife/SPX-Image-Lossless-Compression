@@ -171,7 +171,7 @@ To accurately measure the "true" compression and throughput capabilities of SPX,
 
 <br>
 
-|TECNICK GRAY (40 PNG) | SPX               | WebP(M6)           | JXL(E7)            |
+|TECNICK GRAY (40 PNG) | SPX                | WebP(M6)           | JXL(E7)            |
 |-------------------------------------------------------------------------------------|
 | Original Size        |      63.72 MB      |      63.72 MB      |      63.72 MB      |
 | PNM Size (Raw)       |     659.18 MB      |     659.18 MB      |     659.18 MB      |

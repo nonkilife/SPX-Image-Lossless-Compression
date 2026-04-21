@@ -35,6 +35,7 @@ def main():
     parser_bench.add_argument("--workers", "-w", type=int, help="Number of parallel workers")
     parser_bench.add_argument("--codec", choices=["spx", "webp", "jxl", "bench"], default="spx", help="Codec to test")
     parser_bench.add_argument("--offset", type=int, help="Skip first N images")
+    parser_bench.add_argument("--bitplane", action="store_true", help="Force Bitplane engine for benchmark")
     parser_bench.add_argument("--reclassify", action="store_true", help="Copy files into easy/hard/hell categories")
     parser_bench.add_argument("--build", nargs=4, metavar=('TARGET', 'E', 'H', 'HELL'), help="Assemble dataset from categories")
 
@@ -107,6 +108,7 @@ def main():
         if args.workers: sys.argv.extend(["-w", str(args.workers)])
         if args.offset: sys.argv.extend(["--offset", str(args.offset)])
         if args.reclassify: sys.argv.append("--reclassify")
+        if args.bitplane: sys.argv.append("--bitplane")
         if args.build: sys.argv.extend(["--build"] + list(args.build))
         try:
             test_suite.main()
