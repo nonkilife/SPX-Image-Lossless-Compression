@@ -1,10 +1,10 @@
-# ZPNG-CSDE: Context-Sensitive Data Engine
+# SPX: Context-Sensitive Data Engine
 
 ![Python Version](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-Apache-2.0-green) ![MSE](https://img.shields.io/badge/MSE-0.00000000-red)
 
 An implementation of lossless image compression using **Entropy Sharding** and **4-way Interleaved rANS**. This project serves as a technical demonstration of achieving competitive compression performance through contextual sharding and statistical modeling rather than high-complexity spatial prediction systems.
 
-![ZPNG G-sub Visualization](./zpng_layers.png)
+![SPX G-sub Visualization](./spx_layers.png)
 *Visualizing the G-sub Pipeline: Source -> Green Foundation (Grn) -> Modular G-sub Residuals (RD/BD)*
 
 ---
@@ -13,7 +13,7 @@ An implementation of lossless image compression using **Entropy Sharding** and *
 
 The following data characterizes the throughput and compression efficiency across standard datasets.
 
-| Dataset | Type | ZPNG BPP | **Savings (vs PNG)** | **ZPNG Enc Speed** | WebP (M6) Speed | JXL (E7) Speed |
+| Dataset | Type | SPX BPP | **Savings (vs PNG)** | **SPX Enc Speed** | WebP (M6) Speed | JXL (E7) Speed |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Kodak** | RGB | **9.83** | **-24.66 %** | **26.50 MB/s** | 0.35 MB/s | 6.51 MB/s |
 | **CLIC '25** | RGB | **8.03** | **-28.52 %** | **29.46 MB/s** | 1.10 MB/s | 5.35 MB/s |
@@ -27,7 +27,7 @@ The following data characterizes the throughput and compression efficiency acros
 > - **OS**: Windows 11 (64-bit, x64)
 
 #### **Technical Comparison**
-- **Encoding Speed**: ZPNG is consistently **25x–150x faster** than WebP (Method 6) and **5x–7x faster** than JPEG-XL (Effort 7).
+- **Encoding Speed**: SPX is consistently **25x–150x faster** than WebP (Method 6) and **5x–7x faster** than JPEG-XL (Effort 7).
 - **Quality Assurance**: Bit-perfect reconstruction across all 1,500+ test images (**MSE = 0.00000000**).
 - **Core Efficiency**: High instruction-level parallelism (ILP) via 4-way interleaved rANS.
 
@@ -84,7 +84,7 @@ pip install numpy>=1.22.0 numba>=0.57.0 zstandard>=0.19.0 Pillow>=9.0.0 pytest>=
 python main.py compress input.png --optimize
 
 # Decompress
-python main.py decompress input.zpng --output restored.png
+python main.py decompress input.spx --output restored.png
 
 # Benchmark (Parallel)
 python main.py benchmark ./path/to/images -n 20 -w 8
@@ -95,11 +95,11 @@ python main.py benchmark ./path/to/images -n 20 -w 8
 from core import compress_csde, decompress_csde
 
 # 1. Compress Image (RGB/RGBA)
-result = compress_csde("input.png", "output.zpng", use_bitplane=False)
+result = compress_csde("input.png", "output.spx", use_bitplane=False)
 print(f"Ratio: {result.ratio:.2%} | Time: {result.enc_time:.2f}s")
 
 # 2. Decompress Image
-with open("output.zpng", "rb") as f: payload = f.read()
+with open("output.spx", "rb") as f: payload = f.read()
 rgb_arr, dec_time = decompress_csde(payload, "reconstructed.png")
 print(f"Dec Time: {dec_time:.2f}s")
 ```
@@ -110,8 +110,8 @@ For Windows users, a convenient batch wrapper is provided for benchmarking:
 # Run benchmark on a custom folder
 .\test bench C:\images\my_dataset
 
-# Run solo ZPNG test on a relative path
-.\test zpng ./data/local_test
+# Run solo SPX test on a relative path
+.\test spx ./data/local_test
 
 # Pass additional arguments (e.g., limit to 10 images)
 .\test bench ./my_images -n 10
@@ -123,7 +123,7 @@ For Windows users, a convenient batch wrapper is provided for benchmarking:
 
 ## 5. Technical Architecture & Execution Flow
 
-ZPNG follows a strictly defined **Four-Step Pipeline** to transform raw pixels into a highly compressed bitstream:
+SPX follows a strictly defined **Four-Step Pipeline** to transform raw pixels into a highly compressed bitstream:
 
 ### 5.1 Scientific Execution Workflow
 1.  **Step 1: G-sub (Green-Subtract RCT)**: Extracts the Green (G) channel as the foundation and calculates residuals ($RD = R - G$, $BD = B - G$) to eliminate inter-channel redundancy.
@@ -142,7 +142,7 @@ graph TD
     
     E --> F[BICC Bias Cancellation]
     F --> G[Interleaved rANS Engine]
-    G --> H[ZPNG Bitstream Output]
+    G --> H[SPX Bitstream Output]
 ```
 
 ### 5.2 Deep-Dive Technical Series
@@ -155,13 +155,13 @@ For detailed algorithmic specifications, refer to the following documentation in
 *   [**04. DATASET_FINGERPRINT.md**](./technical/4.%20DATASET_FINGERPRINT.md): Statistical performance profiling across industrial datasets.
 
 ### 5.3 Dual-Path Strategy
-ZPNG implements a **Context-Aware Bypass** logic to handle different image types with optimal efficiency:
+SPX implements a **Context-Aware Bypass** logic to handle different image types with optimal efficiency:
 
 *   **RGB Route**: Utilizing the **G-sub RCT**, it extracts a Green foundation (Lead) followed by RD/BD residuals (Lag). It uses a staggered processing window to maintain context consistency across channels.
 *   **Grayscale Route**: If R=G=B is detected, the engine activates a specialized monochrome bypass, pruning ~65% of computational overhead. This path is highly optimized for **Bitplane rANS**, which decomposes the 8-bit signal into hierarchical layers to maximize redundancy extraction.
 
 ### 5.4 Universal-42 Sharding & Template Matrix
-The backbone of ZPNG is the **Universal-42 profile**, mapping pixels into 42 contexts based on V-Tier (gradient strength), Intensity, and Trend. This "Sharding" application allows the coder to isolate edges from smooth gradients, applying unique probability models to each.
+The backbone of SPX is the **Universal-42 profile**, mapping pixels into 42 contexts based on V-Tier (gradient strength), Intensity, and Trend. This "Sharding" application allows the coder to isolate edges from smooth gradients, applying unique probability models to each.
 
 For entropy coding, the engine utilizes a **30-Mode Template Matrix**:
 - **6 Base Centroids**: Data-driven probability shapes derived from 6,000+ real-world image shards.
@@ -169,7 +169,7 @@ For entropy coding, the engine utilizes a **30-Mode Template Matrix**:
 - **Zero-Overhead**: These 30 empirical modes are hardcoded in the decoder, allowing optimal PDF matching without the "Header Tax" of custom frequency tables.
 
 ### 5.5 Bitplane rANS & Entropy Core
-For high-density images, ZPNG employs **Shard-Conditioned Bitplane rANS**. Instead of treating the residual as a single 256-symbol alphabet, it decomposes the signal into 2-bit layers. Each layer uses a massive **2,688-way context model** ($42 \text{ Shards} \times 64 \text{ Spatial Patterns}$), allowing the rANS core to isolate structural predictable bits from stochastic noise bits.
+For high-density images, SPX employs **Shard-Conditioned Bitplane rANS**. Instead of treating the residual as a single 256-symbol alphabet, it decomposes the signal into 2-bit layers. Each layer uses a massive **2,688-way context model** ($42 \text{ Shards} \times 64 \text{ Spatial Patterns}$), allowing the rANS core to isolate structural predictable bits from stochastic noise bits.
 
 The **Interleaved rANS** engine further optimizes throughput by managing multiple state variables in a single loop, effectively treating the entropy coding as a vectorized operation.
 
@@ -177,7 +177,7 @@ The **Interleaved rANS** engine further optimizes throughput by managing multipl
 
 ## 6. Performance Benchmarking (v7.x Unified Hub)
  
- The current engine is benchmarked using the **ZPNG Unified Hub**, providing objective head-to-head comparisons against WebP (Method 6) and JPEG-XL (Effort 7).
+ The current engine is benchmarked using the **SPX Unified Hub**, providing objective head-to-head comparisons against WebP (Method 6) and JPEG-XL (Effort 7).
 
 ### 6.1 Comprehensive Metrics
  Detailed performance data, including compression savings, throughput (MB/s), and competitive win rates, are maintained in [technical/BENCHMARK.md](./technical/BENCHMARK.md).
@@ -199,7 +199,7 @@ Common arguments supported by the benchmarking suite:
 | **-n** | `--num_tests` | Limits the number of processed files. | `-n 50` |
 | **--offset** | `--offset` | Skips the first N images in the set. | `--offset 100` |
 | **-w** | `--workers` | Manually sets the number of CPU cores. | `-w 8` |
-| **--codec** | `--codec` | Selects codec: `zpng`, `webp`, `jxl`, `bench`. | `--codec bench` |
+| **--codec** | `--codec` | Selects codec: `spx`, `webp`, `jxl`, `bench`. | `--codec bench` |
 | **--reclassify**| `--reclassify`| Categorize images into Easy/Hard/Hell folders. | `--reclassify` |
 | **--build** | `--build` | Assemble dataset: `PATH E H HELL`. | `--build my_set 10 10 5` |
 
@@ -221,7 +221,7 @@ python main.py benchmark --build balanced_set 10 10 5
 
 ## 7. Official Benchmarks (CLIC / DIV2K / TECNICK / KODAK)
 
-Detailed performance metrics and official benchmarks comparing ZPNG-CSDE against WebP and JPEG-XL across industrial datasets are available in the independent benchmark document:
+Detailed performance metrics and official benchmarks comparing SPX against WebP and JPEG-XL across industrial datasets are available in the independent benchmark document:
 
 👉 **[View Official Benchmarks (BENCHMARK.md)](./technical/BENCHMARK.md)**
 
@@ -247,7 +247,7 @@ To verify the benchmarks or test the engine with standard datasets, you can down
 
 ## 10. Project Background
 
-The ZPNG project is a lossless image compression framework developed through an extensive research cycle. The project utilized the agentic AI **Antigravity** to architect technical components, including the **Four-Pillar Architecture**, Universal-42 Sharding, and a 4-way interleaved rANS entropy engine. This initiative serves as a technical proof-of-concept for AI-augmented engineering, demonstrating that autonomous agents can assist in algorithmic optimization, resulting in a bit-perfect codec that maintains competitive compression ratios against established standards like WebP and JPEG-XL.
+The SPX project is a lossless image compression framework developed through an extensive research cycle. The project utilized the agentic AI **Antigravity** to architect technical components, including the **Four-Pillar Architecture**, Universal-42 Sharding, and a 4-way interleaved rANS entropy engine. This initiative serves as a technical proof-of-concept for AI-augmented engineering, demonstrating that autonomous agents can assist in algorithmic optimization, resulting in a bit-perfect codec that maintains competitive compression ratios against established standards like WebP and JPEG-XL.
 
 ## 11. Acknowledgments
 This project utilizes the rANS algorithm developed by Dr. Jarosław (Jarek) Duda. His work on Asymmetric Numeral Systems (ANS) provided the mathematical foundation for the entropy core.

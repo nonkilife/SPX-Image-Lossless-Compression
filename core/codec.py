@@ -1,8 +1,8 @@
 """
-ZPNG-CSDE [Stable Parallel Architecture]
+SPX [Stable Parallel Architecture]
 Module: codec
 Role: Bitstream Orchestration.
-Description: Logic for packing and unpacking the ZPNG tiered bitstream container.
+Description: Logic for packing and unpacking the SPX tiered bitstream container.
 Architecture: Structured serialization layer bridging the Model and rANS pillars.
 Engineering Rationale:
 1. Deterministic Block Order: The header and SRB (Metadata) must appear first
@@ -50,7 +50,7 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
                      res_a: npt.NDArray[np.uint8],
                      metadata_bytes: bytes) -> Tuple[bytes, npt.NDArray[np.uint8]]:
     """
-    Serializes compressed data into the final ZPNG file block.
+    Serializes compressed data into the final SPX file block.
     
     Bitstream Architecture:
     [0-15]     Global Header (Height, Width, Metadata Length, Bit Flags)
@@ -165,7 +165,7 @@ def unpack_bitstream(compressed_data: Union[bytes, BinaryIO], h: int, w: int, is
                      shard_widths: npt.NDArray[np.uint16], shard_modes: npt.NDArray[np.uint8],
                      flag: int) -> Tuple[npt.NDArray[np.uint8], Optional[npt.NDArray[np.uint8]], Optional[npt.NDArray[np.uint8]], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], Optional[npt.NDArray[np.uint8]]]:
     """
-    Deserializes the ZPNG bitstream format back into parsed frequency tables and residuals.
+    Deserializes the SPX bitstream format back into parsed frequency tables and residuals.
 
     Processing Steps:
     1. Decompacts the Zstd-compressed PDF frequency tables and reconstructs CDF arrays for rANS decoding.

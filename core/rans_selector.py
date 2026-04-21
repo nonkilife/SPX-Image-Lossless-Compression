@@ -1,5 +1,5 @@
 """
-ZPNG-CSDE PDF Template Selector (rans_selector)
+SPX PDF Template Selector (rans_selector)
 Module: rans_selector
 Role: Pillar 0 - Meta-Decision Engine.
 Description: Heuristic selector for optimal entropy modeling per shard.

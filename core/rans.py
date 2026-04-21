@@ -1,12 +1,12 @@
 """
-ZPNG-CSDE [Stable Parallel Architecture]
+SPX [Stable Parallel Architecture]
 Module: rans
 Role: Pillar 4 - Entropy Engine (Unified).
 Description: Integrated 4-way interleaved rANS core with sharded parallel encoding and decoding.
 Architecture: Precision-indexed SIMD-optimized symbols for O(1) branchless decoding.
 
 Engineering Rationale:
-1. Instruction Level Parallelism (ILP): ZPNG uses 4-way interleaved rANS states to saturate 
+1. Instruction Level Parallelism (ILP): SPX uses 4-way interleaved rANS states to saturate 
    CPU superscalar pipelines. By decoding 4 symbols per loop iteration, we hide the 
    dependency latency between state updates and memory lookups.
 2. LIFO Property: rANS is a stack-based (LIFO) engine. Symbols are encoded in 
@@ -193,7 +193,7 @@ def build_pdf_tables_from_shards(shard_buffers: List[npt.NDArray[np.uint8]],
 
 def compact_pdf_tables(all_sym_freqs: npt.NDArray[np.uint64], shard_widths: npt.NDArray[np.uint16], shard_modes: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8]:
     """ 
-    Serializes custom frequency tables into a compact bytes-buffer for the .zpng Header.
+    Serializes custom frequency tables into a compact bytes-buffer for the .spx Header.
 
     Routing Logic:
     - Modes 4-9 (Static Empirical Templates) and Mode 3 (Uniform/Empty) are skipped entirely.

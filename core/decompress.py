@@ -1,6 +1,6 @@
 """
-ZPNG-CSDE v7.5 [Stable Parallel Architecture]
-Module: zpng_decompress
+SPX v7.5 [Stable Parallel Architecture]
+Module: spx_decompress
 Role: Decompressor Orchestrator.
 Description: Bit-perfect reconstruction engine utilizing the 4-pillar modular core.
 Architecture: Dispatcher layer connecting bitstream parsing to the BICC/RCT recovery via Flexible Sharding Hub.
@@ -8,7 +8,7 @@ Architecture: Dispatcher layer connecting bitstream parsing to the BICC/RCT reco
 Technical Flowchart:
 ```mermaid
 graph TD
-    In[ZPNG Bitstream] --> Flags{Mode Flags}
+    In[SPX Bitstream] --> Flags{Mode Flags}
     Flags -->|PASSTHROUGH| Pass[PIL Direct Open]
     Flags -->|RAW| Raw[memcpy reshape]
     Flags -->|SIMPLE| Simple[ZStd Decompress]
@@ -141,7 +141,7 @@ def inject_png_metadata(filepath: str, metadata_bytes: bytes) -> None:
 
 def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = None, optimize_png: bool = False) -> Tuple[npt.NDArray[np.uint8], float]:
     """
-    Main ZPNG-CSDE Decompression Entry Point (v7.5 Stable).
+    Main SPX Decompression Entry Point (v7.5 Stable).
 
     Bit-perfect reverse orchestrator:
     1. BICC Shard Recovery (Pillar 2): Staggered reconstruction of G-Lead then RD/BD-Lag.

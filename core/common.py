@@ -1,5 +1,5 @@
 """
-ZPNG-CSDE [Flexible Shard Architecture]
+SPX [Flexible Shard Architecture]
 Module: common
 Role: Pillar 1 - Foundation & Protocol.
 Description: Authoritative definitions for constants, sharding matrices, and header flags.
@@ -158,7 +158,7 @@ SHARD_LABELS: List[str] = get_shard_labels()
 
 @dataclass
 class ZpngResult:
-    """ Unified container for ZPNG compression/decompression metrics. """
+    """ Unified container for SPX compression/decompression metrics. """
     # Timing (seconds)
     enc_time: float = 0.0
     dec_time: float = 0.0

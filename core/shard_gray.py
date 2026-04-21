@@ -1,5 +1,5 @@
 """
-ZPNG-CSDE [Grayscale Sharding Module]
+SPX [Grayscale Sharding Module]
 Module: shard_gray
 Role: Pillar 3.5 (Grayscale) - Single-Channel Data Partitioning.
 Description: N-shard BICC orchestration for grayscale images.

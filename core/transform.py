@@ -1,5 +1,5 @@
 """
-ZPNG-CSDE [RCT Architecture]
+SPX [RCT Architecture]
 Module: transform
 Role: Pillar 3 - Spatial Transforms.
 Description: High-level image transformations and reconstruction kernels.

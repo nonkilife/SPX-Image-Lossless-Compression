@@ -1,5 +1,5 @@
 """
-ZPNG-CSDE [Stable Parallel Architecture]
+SPX [Stable Parallel Architecture]
 Module: rans_bitplane
 Role: Entropy coding combining N-shard gradient context with
       2-bit spatial bitplane context.

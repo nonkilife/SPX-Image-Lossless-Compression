@@ -1,6 +1,6 @@
 """
-ZPNG-CSDE v7.5 [Flexible-Shard Architecture]
-Module: zpng_compress
+SPX v7.5 [Flexible-Shard Architecture]
+Module: spx_compress
 Role: Compressor Orchestrator.
 Description: High-throughput lossless image encoder utilizing the 4-pillar modular core.
 Architecture: Dispatcher layer connecting RGB input to the BICC/rANS pipeline via Flexible Sharding Hub.
@@ -14,7 +14,7 @@ graph TD
     CodecSel -->|No| Standard[Standard rANS: 8 Modes: 0/3/4-9]
     CodecSel -->|Yes| Bitplane[Bitplane rANS: 2688 Contexts]
     Standard & Bitplane --> Pack[Codec: Pack Bitstream]
-    Pack --> Out[ZPNG Payload]
+    Pack --> Out[SPX Payload]
 ```
 """
 
@@ -175,7 +175,7 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
                   force_mode: Optional[int] = None,
                   use_bitplane: Optional[bool] = None) -> ZpngResult:
     """ 
-    Main ZPNG-CSDE Compression Entry Point (V6.6 Stable).
+    Main SPX Compression Entry Point (V6.6 Stable).
     
     Orchestrates the massive parallel encoding pipeline:
     1. G-Sub RCT Transform -> 2. Pass 1 Shard Histograms -> 3. Median-Normalization

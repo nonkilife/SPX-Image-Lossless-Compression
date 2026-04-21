@@ -1,5 +1,5 @@
 """
-ZPNG-CSDE Unified Benchmark Suite (test_suite)
+SPX Unified Benchmark Suite (test_suite)
 Module: test_suite
 Role: QA & Performance Validation.
 Description: Cross-codec comparative benchmarking and bit-perfect verification (MSE).
@@ -8,7 +8,7 @@ Architecture Flowchart:
 ```mermaid
 graph TD
     Input[Dataset Directory] --> Glob[File Discovery: PNG, BMP, PNM]
-    Glob --> Workers[Parallel Workers: ZPNG, WebP, JXL]
+    Glob --> Workers[Parallel Workers: SPX, WebP, JXL]
     
     subgraph Worker Loop
         W1[Preload Array] --> W2[Compress: Speed + BPP]
@@ -602,7 +602,7 @@ def main() -> None:
     # --- Reclassification Logic ---
     norm_target = os.path.abspath(target_path).replace("\\", "/")
     if args.reclassify:
-        # Restriction check: only reclassify if we have a valid ZPNG result set
+        # Restriction check: only reclassify if we have a valid SPX result set
         zpng_map = None
         for i, (name, _) in enumerate(queue):
             if "ZPNG" in name:

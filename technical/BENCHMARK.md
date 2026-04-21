@@ -1,17 +1,17 @@
-# ZPNG Performance Benchmarks (Official)
+# SPX Performance Benchmarks (Official)
 
-This document maintains the official performance metrics for the ZPNG-CSDE engine, comparing it against established standards like WebP (Method 6) and JPEG-XL (Effort 7) across industrial datasets (CLIC, DIV2K, Kodak, Tecnick).
+This document maintains the official performance metrics for the SPX engine, comparing it against established standards like WebP (Method 6) and JPEG-XL (Effort 7) across industrial datasets (CLIC, DIV2K, Kodak, Tecnick).
 
 
 ---
 
 ## 0. Raw Data Efficiency (PNM Baseline)
 
-To accurately measure the "true" compression and throughput capabilities of ZPNG, we use **PNM (Raw Pixels)** as the baseline instead of compressed PNG files.
+To accurately measure the "true" compression and throughput capabilities of SPX, we use **PNM (Raw Pixels)** as the baseline instead of compressed PNG files.
 
-### ZPNG vs. PNM Raw Size Savings Comparison
+### SPX vs. PNM Raw Size Savings Comparison
 
-| Dataset | PNM Size (Raw MB) | ZPNG Size (MB) | **Savings (vs PNM) %** |
+| Dataset | PNM Size (Raw MB) | SPX Size (MB) | **Savings (vs PNM) %** |
 | :--- | :---: | :---: | :---: |
 | CLIC | 450.81 | 139.01 | **69.16 %** |
 | DIV2K VAL | 811.11 | 311.67 | **61.57 %** |
@@ -20,7 +20,7 @@ To accurately measure the "true" compression and throughput capabilities of ZPNG
 | TECNICK GRAY | 219.73 | 46.13 | **79.01 %** |
 | KODAK | 27.00 | 11.11 | **58.85 %** |
 
-### ZPNG Performance Re-evaluation (PNM Raw Throughput)
+### SPX Performance Re-evaluation (PNM Raw Throughput)
 
 | Dataset | PNM Size (MB) | Wall-clock (s) | **TP: Compress (MB/s)** | **TP: Decompress (MB/s)** |
 | :--- | :---: | :---: | :---: | :---: |
@@ -36,7 +36,7 @@ To accurately measure the "true" compression and throughput capabilities of ZPNG
 
 ## 1. Comparative Results (Cumulative v7.2.x)
 
-| CLIC_2025_TEST (30 imgs)        | ZPNG               | WebP(M6)           | JXL(E7)            |
+| CLIC_2025_TEST (30 imgs)        | SPX               | WebP(M6)           | JXL(E7)            |
 |---------------------------------|--------------------|--------------------|--------------------|
 | Original Size                   |     115.55 MB      |     115.55 MB      |     115.55 MB      |
 | PNM Size (Raw)                  |     246.75 MB      |     246.75 MB      |     246.75 MB      |
@@ -63,7 +63,7 @@ To accurately measure the "true" compression and throughput capabilities of ZPNG
 
 <br>
 
-| CLIC_2021 (585 imgs)        | ZPNG               | WebP(M6)           | JXL(E7)            |
+| CLIC_2021 (585 imgs)        | SPX               | WebP(M6)           | JXL(E7)            |
 |-----------------------------|--------------------|--------------------|--------------------|
 | Original Size               |    1911.69 MB      |    1911.69 MB      |    1911.69 MB      |
 | PNM Size (Raw)              |    3902.28 MB      |    3902.28 MB      |    3902.28 MB      |
@@ -90,7 +90,7 @@ To accurately measure the "true" compression and throughput capabilities of ZPNG
 
 <br>
 
-| DIV2K VAL (100 PNG)  | ZPNG               | WebP(M6)           | JXL(E7)            |   
+| DIV2K VAL (100 PNG)  | SPX               | WebP(M6)           | JXL(E7)            |   
 |----------------------|--------------------|--------------------|--------------------|   
 | Original Size        |     428.68 MB      |     428.68 MB      |     428.68 MB      |
 | PNM Size (Raw)       |     811.11 MB      |     811.11 MB      |     811.11 MB      |
@@ -117,7 +117,7 @@ To accurately measure the "true" compression and throughput capabilities of ZPNG
 
 <br>
 
-|DIV2K TRAIN (800 PNG) | ZPNG               | WebP(M6)           | JXL(E7)            |
+|DIV2K TRAIN (800 PNG) | SPX               | WebP(M6)           | JXL(E7)            |
 |----------------------|--------------------|--------------------|--------------------|
 | Original Size        |    3370.06 MB      |    3370.06 MB      |    3370.06 MB      |
 | PNM Size (Raw)       |    6381.30 MB      |    6381.30 MB      |    6381.30 MB      |
@@ -144,7 +144,7 @@ To accurately measure the "true" compression and throughput capabilities of ZPNG
 
 <br>
 
-| TECNICK RGB (40 PNG) | ZPNG               | WebP(M6)           | JXL(E7)            |   
+| TECNICK RGB (40 PNG) | SPX               | WebP(M6)           | JXL(E7)            |   
 |----------------------|--------------------|--------------------|--------------------|   
 | Original Size        |     191.98 MB      |     191.98 MB      |     191.98 MB      |
 | PNM Size (Raw)       |     659.18 MB      |     659.18 MB      |     659.18 MB      |
@@ -171,7 +171,7 @@ To accurately measure the "true" compression and throughput capabilities of ZPNG
 
 <br>
 
-|TECNICK GRAY (40 PNG) | ZPNG               | WebP(M6)           | JXL(E7)            |
+|TECNICK GRAY (40 PNG) | SPX               | WebP(M6)           | JXL(E7)            |
 |-------------------------------------------------------------------------------------|
 | Original Size        |      63.72 MB      |      63.72 MB      |      63.72 MB      |
 | PNM Size (Raw)       |     659.18 MB      |     659.18 MB      |     659.18 MB      |
@@ -198,7 +198,7 @@ To accurately measure the "true" compression and throughput capabilities of ZPNG
 
 <br>
 
-| KODAK (24 PNG)       | ZPNG               | WebP(M6)           | JXL(E7)            |
+| KODAK (24 PNG)       | SPX               | WebP(M6)           | JXL(E7)            |
 |----------------------|--------------------|--------------------|--------------------|
 | Original Size        |      14.68 MB      |      14.68 MB      |      14.68 MB      |
 | PNM Size (Raw)       |      27.00 MB      |      27.00 MB      |      27.00 MB      |
@@ -227,6 +227,6 @@ To accurately measure the "true" compression and throughput capabilities of ZPNG
 
 ## 2. Technical Observations
 
-- **Encoding Dominance**: ZPNG v7.2 exhibits a **153x parallel encoding lead** over WebP (m=6) and is **7.8x faster** than JXL (Effort 7).
-- **Industrial Stability**: Tested on the 60-image CLIC dataset, ZPNG maintains a stable **31.86% saving** with bit-perfect reconstruction (MSE = 0.000000).
+- **Encoding Dominance**: SPX v7.2 exhibits a **153x parallel encoding lead** over WebP (m=6) and is **7.8x faster** than JXL (Effort 7).
+- **Industrial Stability**: Tested on the 60-image CLIC dataset, SPX maintains a stable **31.86% saving** with bit-perfect reconstruction (MSE = 0.000000).
 - **Core Efficiency**: The architecture provides high per-core density, achieving **18.4 MB/s decompression** in pure-Python/JIT execution environments, making it a viable real-time contender for low-level image tasks.

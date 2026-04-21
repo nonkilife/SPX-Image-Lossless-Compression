@@ -1,5 +1,5 @@
 """
-ZPNG-CSDE [High-Performance Parallel Architecture]
+SPX [High-Performance Parallel Architecture]
 Module: shard_rgb
 Role: Pillar 3.5 - Data Partitioning (BICC).
 Description: Unified sharding orchestration compatible with 3D Mapping LUTs.
@@ -17,7 +17,7 @@ graph TD
 
 Shard Design & Composition (Universal-42 Profile):
 -------------------------------------------------
-ZPNG segments the predictive residual space into 42 statistical containers based on three 
+SPX segments the predictive residual space into 42 statistical containers based on three 
 local features derived via 3D Mapping LUTs:
 
 1. Shard IDs 0-2: Intensity-Primary (V-Tier 0)
@@ -59,7 +59,7 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
     This interleaved order enables pipeline parallelism while keeping context consistent
     between encoder (prev_valg) and decoder (gr_rec[i, j]) for the same target pixel.
 
-    Engineering Note: The 'Staggered Step' (j vs j-1) is the core of ZPNG's cross-channel
+    Engineering Note: The 'Staggered Step' (j vs j-1) is the core of SPX's cross-channel
     decorrelation. By lagging the RD/BD channels, we can use the ACTUAL reconstructed
     Green pixel at position j as a context for the RD/BD pixels at position j.
     This ensures zero-drift between compression and decompression.

@@ -1,6 +1,6 @@
 """
-ZPNG-CSDE v6.2 [Flexible-Shard Architecture]
-Module: zpng_predictor
+SPX v6.2 [Flexible-Shard Architecture]
+Module: spx_predictor
 Role: Pillar 2 - Prediction Kernels.
 Description: Core spatial prediction algorithms (MED) and residual mapping (ZigZag).
 Architecture: Pure Numba-JIT accelerated kernels for low-level spatial restoration.

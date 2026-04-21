@@ -1,5 +1,5 @@
 """
-ZPNG-CSDE v7.5.0 [Central Entry Point]
+SPX v7.5.0 [Central Entry Point]
 Unified CLI for compression, decompression, and benchmarking.
 Usage:
     python main.py compress [path] [--optimize]
@@ -12,7 +12,7 @@ import argparse
 import os
 
 def main():
-    parser = argparse.ArgumentParser(description="ZPNG-CSDE Unified CLI")
+    parser = argparse.ArgumentParser(description="ZSPX Unified CLI")
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
     # Compress

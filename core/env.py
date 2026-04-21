@@ -1,8 +1,8 @@
 """
-ZPNG-CSDE v6.2 [System Suite]
-Module: zpng_env
+SPX v6.2 [System Suite]
+Module: spx_env
 Role: Environment Validator.
-Description: Dependency and JIT-status verification for the ZPNG 4-pillar engine.
+Description: Dependency and JIT-status verification for the SPX 4-pillar engine.
 """
 
 import sys
