@@ -58,10 +58,7 @@ def mul_hi(a, b):
     mid_hi = (p01 >> 32) + (p10 >> 32) + (mid_lo >> 32)
     return p11 + mid_hi
 
-
-# =============================================================================
-# --- 4-Way Multi-Symbol rANS Engine (Standard Shards) ---
-# =============================================================================
+# --- 2. 4-Way Interleaved rANS Core ---
 
 
 @njit(boundscheck=False, cache=True)
@@ -142,20 +139,20 @@ def collect_freqs_jit(data: npt.NDArray[np.uint8], freqs_out: npt.NDArray[np.uin
         freqs_out[data[i]] += uint64(1)
 
 @njit(fastmath=True, cache=True)
-def build_pdf_tables_from_shards_core(shard_counts: npt.NDArray[np.uint64],
+def build_pdf_tables_from_shards_core(shard_hists: npt.NDArray[np.uint64],
                                     shard_widths: npt.NDArray[np.uint16]) -> Tuple[npt.NDArray[np.uint64], npt.NDArray[np.uint64], npt.NDArray[np.uint8]]:
-    """ Builds cumulative frequency tables for all shards in a single JIT pass, avoiding Python list overhead. """
-    num_shards: int = shard_counts.shape[0]
+    """ Builds cumulative frequency tables for all shards in a single JIT pass. """
+    num_shards: int = shard_hists.shape[0]
     all_sym_freqs: npt.NDArray[np.uint64] = np.zeros((num_shards, 256), dtype=np.uint64)
     all_cum_freqs: npt.NDArray[np.uint64] = np.zeros((num_shards, 257), dtype=np.uint64)
     shard_modes: npt.NDArray[np.uint8] = np.zeros(num_shards, dtype=np.uint8)
     
     for sid in range(num_shards):
         width = int(shard_widths[sid])
-        counts = shard_counts[sid]
+        h_vals = shard_hists[sid]
         
-        if np.sum(counts) > 0:
-            best_mode, f_arr = _decide_shard_mode_core(counts, width, 120.0, EMPIRICAL_TEMPLATES, False)
+        if np.sum(h_vals) > 0:
+            best_mode, f_arr = _decide_shard_mode_core(h_vals, width, 120.0, EMPIRICAL_TEMPLATES, False)
             shard_modes[sid] = best_mode
             all_sym_freqs[sid] = f_arr
             
@@ -174,12 +171,12 @@ def build_pdf_tables_from_shards_core(shard_counts: npt.NDArray[np.uint64],
 def build_pdf_tables_from_shards(shard_buffers: List[npt.NDArray[np.uint8]], 
                                  shard_widths: npt.NDArray[np.uint16]) -> Tuple[npt.NDArray[np.uint64], npt.NDArray[np.uint64], npt.NDArray[np.uint8]]:
     num_shards: int = len(shard_buffers)
-    shard_counts = np.zeros((num_shards, 256), dtype=np.uint64)
+    shard_hists = np.zeros((num_shards, 256), dtype=np.uint64)
     for sid in range(num_shards):
         if len(shard_buffers[sid]) > 0:
-            collect_freqs_jit(shard_buffers[sid], shard_counts[sid])
+            collect_freqs_jit(shard_buffers[sid], shard_hists[sid])
             
-    return build_pdf_tables_from_shards_core(shard_counts, shard_widths)
+    return build_pdf_tables_from_shards_core(shard_hists, shard_widths)
 
 def compact_pdf_tables(all_sym_freqs: npt.NDArray[np.uint64], shard_widths: npt.NDArray[np.uint16], shard_modes: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8]:
     """ 

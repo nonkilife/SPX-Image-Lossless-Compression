@@ -1,5 +1,5 @@
 """
-ZPNG-CSDE v6.2 [Flexible-Shard Architecture]
+ZPNG-CSDE v7.5 [Flexible-Shard Architecture]
 Module: zpng_compress
 Role: Compressor Orchestrator.
 Description: High-throughput lossless image encoder utilizing the 4-pillar modular core.
@@ -262,8 +262,6 @@ def compress_csde(img_path: Optional[str], output_path: Optional[str] = None,
             (hits_total_p1, sums_total_p1) = \
                 predict_pass_1(h, w, gr_map_p, rd_map_p, bd_map_p, False,
                                profile.shard_map, profile.noise_shard_id)
-        
-
         
         # [v6.5] Median Normalization Alignment: Transform centered Pass 1 stats to normalized ZigZag stats
         biased_stats: npt.NDArray[np.uint32] = apply_median_to_stats(shard_stats, shard_medians)

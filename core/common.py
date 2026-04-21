@@ -26,8 +26,7 @@ from typing import Tuple, Optional, List
 from dataclasses import dataclass, field
 from .predictor import to_zigzag, from_zigzag, predict_med_standard, med_edge_tuned
 
-# Empirical distribution template library for codec and rans modules.
-# Extracted from 6185 real image shards via K-Means clustering, including symmetric and asymmetric distributions.
+# --- 0. Empirical Model Pillars ---
 
 def _build_empirical_templates() -> Tuple[npt.NDArray[np.uint64], ...]:
     """
@@ -73,7 +72,7 @@ FLAG_RAW: int         = 0x04  # Uncompressed Raw Pixels (No zstd)
 FLAG_PASSTHROUGH: int = 0x08  # Original File Storage (PNG/JPG)
 FLAG_GRAYSCALE: int   = 0x10  # Hardware-accelerated true monochrome bypassing CR
 FLAG_COLOR_GSUB: int   = 0x20  # Adaptive Green-Subtract Transform (Smooth Image Optimization)
-FLAG_BITPLANE: int    = 0x40  # 2D Bit-Context engine
+FLAG_BITPLANE: int    = 0x40  # 2D Bit-Context engine (BICC Stage 2)
 
 # --- 2. Sharding Profile System ---
 
@@ -140,9 +139,9 @@ PROFILE_RGB = ShardProfile(
 # boundary shards that inflate the tail even when the median is low.
 # Empirically: Tecnick p90 max = 95, DIV2K p90 min = 70.5 (at 1 Mpx+ gate).
 # Threshold 85 gives 99% classification accuracy vs 96% for mean@53.
-BITPLANE_H_THRESHOLD: float = 3.3        # max Shannon entropy (bits/symbol) across channels
-BITPLANE_HIT_RATE_THRESHOLD: float = 0.20  # min zero-residual fraction across channels
-BITPLANE_P90_THRESHOLD: int = 175           # max 90th-percentile shard ZigZag width
+BITPLANE_H_THRESHOLD: float = 3.3          # Shannon Entropy Gating (bits/symbol)
+BITPLANE_HIT_RATE_THRESHOLD: float = 0.20    # Minimum Zero-Residual Fraction
+BITPLANE_P90_THRESHOLD: int = 175             # Max 90th-percentile ZigZag symbol width
 
 ENABLE_DIAGNOSTICS: bool = False  # Production Gate
 
@@ -174,8 +173,6 @@ class ZpngResult:
     # Statistical Diagnostics
     hits: npt.NDArray[np.uint32] = field(default_factory=lambda: np.zeros(4, dtype=np.uint32))
     res_sums: npt.NDArray[np.uint64] = field(default_factory=lambda: np.zeros(4, dtype=np.uint64))
-    
-    
     # Sharding (sized to active profile at instantiation time)
     shard_counts: npt.NDArray[np.uint32] = field(default_factory=lambda: np.zeros((3, PROFILE_RGB.total_shards), dtype=np.uint32))
     shard_ptrs: Optional[Tuple] = None

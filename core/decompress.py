@@ -167,16 +167,10 @@ def decompress_csde(zpng_input: Union[bytes, str], output_path: Optional[str] = 
             is_simple, is_raw, is_pass = bool(flag & FLAG_SIMPLE), bool(flag & FLAG_RAW), bool(flag & FLAG_PASSTHROUGH)
             is_grayscale: bool = bool(flag & FLAG_GRAYSCALE)
             
-            # [v6.6] Unified Profile Selection
             profile = PROFILE_RGB
-            
-            # [v6.6 Defensive] Ensure global Context LUTs match requested profile
             sync_luts_if_needed(profile.v_boundaries_gr, profile.intensity_segments, profile.shard_map, profile.noise_shard_id)
-            
             n_shards = profile.total_shards
-            
             nsid = profile.noise_shard_id
-            
             shard_widths: npt.NDArray[np.uint16] = np.zeros((3, n_shards), dtype=np.uint16)
             shard_medians: npt.NDArray[np.uint8] = np.zeros((3, n_shards), dtype=np.uint8)
             shard_modes: npt.NDArray[np.uint8] = np.zeros((3, n_shards), dtype=np.uint8)

@@ -21,7 +21,7 @@ import numpy.typing as npt
 from numba import njit, prange, uint8, uint16, uint32, uint64
 from typing import Tuple, List, Optional
 from .common import (
-    to_zigzag, from_zigzag, predict_med_standard, predict_med_standard, get_context_id_fast
+    to_zigzag, from_zigzag, predict_med_standard, get_context_id_fast
 )
 
 @njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
@@ -286,9 +286,11 @@ def predict_pass_2(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
     return res_a, (uint64(row_a_hits.sum()), row_a_sums.sum())
 
 @njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
-def reconstruct_channels(h, w, res_gr, res_rd, res_bd, off_gr, off_rd, off_bd,
-                         shard_counts, shard_medians, is_grayscale,
-                         shard_map, nsid):
+def reconstruct_channels(h: int, w: int, res_gr: npt.NDArray[np.uint8], res_rd: npt.NDArray[np.uint8],
+                         res_bd: npt.NDArray[np.uint8], off_gr: npt.NDArray[np.uint32],
+                         off_rd: npt.NDArray[np.uint32], off_bd: npt.NDArray[np.uint32],
+                         shard_counts: npt.NDArray[np.uint32], shard_medians: npt.NDArray[np.uint8],
+                         is_grayscale: bool, shard_map: npt.NDArray[np.uint8], nsid: int):
     """
     Stage 3 (Decompression): Parallel Channel Reconstruction Engine. (Phase 2b)
     """

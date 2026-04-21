@@ -16,11 +16,17 @@ from typing import List, Dict, Tuple, Any, Optional
 
 # Ensure core engine components are accessible
 try:
-    from core.compress import compress_csde
-    from core.decompress import decompress_csde
-except ImportError as e:
-    print(f"[!] Error: Core modules not found: {e}")
-    sys.exit(1)
+    # [v7.5.0 Migration] test_suite moved inside core package
+    from .compress import compress_csde
+    from .decompress import decompress_csde
+except ImportError:
+    # Fallback for direct execution if needed
+    try:
+        from compress import compress_csde
+        from decompress import decompress_csde
+    except ImportError as e:
+        print(f"[!] Error: Core modules not found: {e}")
+        sys.exit(1)
 
 # =============================================================================
 # --- Global Benchmark Settings ---
