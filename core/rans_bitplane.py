@@ -49,7 +49,7 @@ from typing import Tuple
 import zstandard as zstd
 import concurrent.futures
 
-from .common import predict_med_standard, get_context_id_fast
+from .common import selected_predictor, get_context_id_fast
 from .predictor import from_zigzag
 from .transform import reconstruct_2d_channels
 
@@ -104,7 +104,7 @@ def _build_pdf_sharded(resid_2d:  npt.NDArray[np.uint8],
             ag = gray_ch[pi, pj-1]
             bg = gray_ch[pi-1, pj]
             cg = gray_ch[pi-1, pj-1]
-            p_g = predict_med_standard(ag, bg, cg)
+            p_g = selected_predictor(ag, bg, cg)
             sid = int(get_context_id_fast(ag, bg, cg, p_g, shard_map, nsid))
 
             # ----- bitplane spatial context from residual neighbors -----
@@ -212,7 +212,7 @@ def _rans_encode_sharded(resid_2d:  npt.NDArray[np.uint8],
             ag = gray_ch[pi, pj-1]
             bg = gray_ch[pi-1, pj]
             cg = gray_ch[pi-1, pj-1]
-            p_g = predict_med_standard(ag, bg, cg)
+            p_g = selected_predictor(ag, bg, cg)
             sid = int(get_context_id_fast(ag, bg, cg, p_g, shard_map, nsid))
 
             # ----- bitplane spatial neighbors -----
@@ -318,7 +318,7 @@ def _rans_decode_sharded(bitstream:  npt.NDArray[np.uint8],
             ag = orig[pi, pj-1]
             bg = orig[pi-1, pj]
             cg = orig[pi-1, pj-1]
-            p_g = predict_med_standard(ag, bg, cg)
+            p_g = selected_predictor(ag, bg, cg)
             sid = int(get_context_id_fast(ag, bg, cg, p_g, shard_map, nsid))
 
             # ----- bitplane spatial contexts from decoded residual neighbors -----
@@ -420,7 +420,7 @@ def _rans_decode_sharded_with_ref(bitstream:  npt.NDArray[np.uint8],
             ag = ref_ch[pi, pj-1]
             bg = ref_ch[pi-1, pj]
             cg = ref_ch[pi-1, pj-1]
-            p_g = predict_med_standard(ag, bg, cg)
+            p_g = selected_predictor(ag, bg, cg)
             sid = int(get_context_id_fast(ag, bg, cg, p_g, shard_map, nsid))
 
             # ----- bitplane spatial contexts from own decoded residual neighbors -----

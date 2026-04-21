@@ -23,7 +23,7 @@ import numpy.typing as npt
 from numba import njit, prange, uint8, uint64
 from typing import Tuple
 from .common import (
-    to_zigzag, predict_med_standard,
+    to_zigzag, selected_predictor,
     get_context_id_fast
 )
 
@@ -62,7 +62,7 @@ def predict_pass_1_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
                 a = gray_ch[pi, pj-1]
                 b = gray_ch[pi-1, pj]
                 c = gray_ch[pi-1, pj-1]
-                p = predict_med_standard(a, b, c)
+                p = selected_predictor(a, b, c)
                 val = gray_ch[pi, pj]
                 ctx = int(get_context_id_fast(a, b, c, p, shard_map, nsid))
                 diff = (int(val) - int(p)) & 0xFF
@@ -157,7 +157,7 @@ def predict_pass_2_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
             a = gray_ch[pi, pj-1]
             b = gray_ch[pi-1, pj]
             c = gray_ch[pi-1, pj-1]
-            p = predict_med_standard(a, b, c)
+            p = selected_predictor(a, b, c)
             val = gray_ch[pi, pj]
             ctx = int(get_context_id_fast(a, b, c, p, shard_map, nsid))
             # Median-normalize residual
@@ -173,7 +173,7 @@ def predict_pass_2_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
             for j in range(w):
                 bg_a = row_tsrc[j] if i > 0 else uint8(0)
                 val_a = row_src[j]
-                pg_a = predict_med_standard(ag_a, bg_a, cg_a)
+                pg_a = selected_predictor(ag_a, bg_a, cg_a)
                 r_a = to_zigzag(int(val_a) - int(pg_a))
                 res_a[i, j] = r_a
                 s_acc += abs(float(val_a) - float(pg_a))

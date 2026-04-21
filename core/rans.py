@@ -12,6 +12,19 @@ Engineering Rationale:
 2. LIFO Property: rANS is a stack-based (LIFO) engine. Symbols are encoded in 
    forward order and decoded in reverse order (bottom-up), allowing states to be 
    revolved back to their initial base through fractional probability divisions.
+
+Technical Flowchart:
+```mermaid
+graph TD
+    Symbols[Raw Symbols] --> Hist[Histogram Analysis]
+    Hist --> PDF[PDF Builder: Precision Normalization]
+    PDF --> Encode[4-Way Interleaved Encoder]
+    Encode --> Flush[State Flushing -> Bitstream]
+    
+    Bitstream[Compressed Bitstream] --> Header[Header: Expand PDF Tables]
+    Header --> Decode[4-Way Interleaved Decoder]
+    Decode --> Reconst[Symbol Reconstruction]
+```
 """
 
 import numpy as np

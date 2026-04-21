@@ -4,6 +4,23 @@ Module: zpng_predictor
 Role: Pillar 2 - Prediction Kernels.
 Description: Core spatial prediction algorithms (MED) and residual mapping (ZigZag).
 Architecture: Pure Numba-JIT accelerated kernels for low-level spatial restoration.
+
+Technical Flowchart:
+```mermaid
+graph TD
+    Neighbors[Neighbors: A, B, C] --> MED{MED Logic}
+    MED -->|Standard| SP[Standard Prediction]
+    MED -->|Edge-Tuned| ET[Edge-Tuned Prediction]
+    
+    Val[Actual Pixel Value] --> Diff[Residual = Value - Prediction]
+    Diff --> ZZ[ZigZag Mapping]
+    ZZ --> Symbol[8-bit Entropy Symbol]
+    
+    Symbol --> IZZ[Inverse ZigZag]
+    IZZ --> IDiff[Restore Residual]
+    IDiff --> Rec[Prediction + Residual]
+    Rec --> Final[Reconstructed Pixel]
+```
 """
 
 import numpy as np
@@ -23,16 +40,21 @@ def from_zigzag(z: np.uint8) -> int:
     return int(np.int8(z >> 1) ^ -(np.int8(z & 1)))
 
 @njit(error_model='numpy', inline='always', cache=True)
-def predict_med_standard(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
-    """
-    Standard Median Edge Detector (MED).
-    A: Left, B: Up, C: Top-Left (Up-Left).
-    """
+def med_standard(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
+    """ Standard Median Edge Detector (MED). """
     mx: np.uint8 = max(a, b)
     mn: np.uint8 = min(a, b)
     gap: int = int(a) + int(b) - int(c)
     p: int = min(int(mx), max(int(mn), gap))
     return np.uint8(p)
+
+@njit(error_model='numpy', inline='always', cache=True)
+def selected_predictor(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
+    """ 
+    Unified Predictor Dispatcher. 
+    Current Active: med_standard (v6.2 Stable)
+    """
+    return med_standard(a, b, c)
 
 @njit(error_model='numpy', inline='always', cache=True)
 def med_edge_tuned(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:

@@ -12,6 +12,7 @@
 !README.md
 !main.py
 !LICENSE.txt
+!test.bat
 !.gitignore
 
 # Re-exclude Python junk
@@ -20,5 +21,6 @@ __pycache__/
 *$py.class
 .ipynb_checkpoints/
 .pytest_cache/
+.claude/
 .venv/
 .env

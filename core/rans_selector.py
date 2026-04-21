@@ -1,13 +1,40 @@
 """
 ZPNG-CSDE PDF Template Selector (rans_selector)
+Module: rans_selector
+Role: Pillar 0 - Meta-Decision Engine.
+Description: Heuristic selector for optimal entropy modeling per shard.
 
-Available PDF Modes:
-- Mode 0 (Custom Dynamic): Custom pixel-perfect PDF table generated from the exact shard distribution.
-  Requires saving the arrays in the bitstream header (High Overhead / "Header Tax").
-- Mode 3 (Uniform/Empty): Zero-entropy mode for completely flat shards (all pixels predicted perfectly).
-  Requires 0 bytes of header overhead.
-- Mode 4-9 (Empirical Templates): 6 pre-baked static probability distributions (Laplacian decay curves).
-  These distributions are hardcoded in the decoder and require 0 bytes of header overhead.
+Technical Flowchart:
+```mermaid
+graph TD
+    Input[Shard Byte-Stream] --> Build[Build Custom PDF]
+    Build --> Cross[Calculate Cross-Entropy for Templates 4-33]
+    Cross --> Penalty{Custom PDF + Penalty < Best Template?}
+    Penalty -->|Yes| Mode0[Mode 0: Custom Dynamic PDF]
+    Penalty -->|No| ModeT[Mode 4-33: Hardcoded Template]
+    
+    Mode0 --> SubMode{Sub-Mode Decision}
+    SubMode -->|Dense| SM0[Sub-Mode 0: Full Array]
+    SubMode -->|Sparse| SM1[Sub-Mode 1: Index-Value Pairs]
+    ModeT --> Header[Header: 1-byte Mode Marker]
+```
+
+Mode Design & Composition:
+-------------------------
+- Mode 0: Custom Dynamic Header (Variable overhead)
+    - Composition: User-defined 12-bit PDF array. Utilizes an internal sub-selector:
+        - Sub-Mode 0: Dense (Full ZigZag width array).
+        - Sub-Mode 1: Sparse (Index-Value pairs for high-energy outliers).
+    - Physical Shape: [0x00][Sub-Mode:1][Payload:10-530 bytes].
+    - Design Goal: Mathematical optimality for heavy-tail or irregular data distributions.
+- Mode 3: Zero-Entropy (Empty/Flat)
+    - Composition: Virtual delta distribution [4096, 0, 0...].
+    - Physical Shape: [0x03] (Single byte).
+    - Design Goal: Perfect efficiency for zero-residual shards in flat regions.
+- Mode 4-33: Hybrid Empirical Templates (Zero overhead)
+    - Composition: 30 pre-computed curves (10 Hybrid Centroids x 3 Scales [0.5, 1.0, 1.5]).
+    - Physical Shape: [ModeID:1] (Single byte).
+    - Design Goal: Zero-tax modeling for standard natural image gradients.
 
 Decision Logic (Cross-Entropy vs Penalty):
 The selector evaluates the theoretical bit-cost (cross-entropy) of encoding the data using the perfectly
@@ -108,7 +135,7 @@ def _decide_shard_mode_core(counts: npt.NDArray[np.uint64], width: int,
     if disable_templates:
         return uint8(0), dense_pdf.astype(np.uint64)
 
-    # 2. Empirical Templates (Mode 4-9) Evaluation
+    # 2. Empirical Templates (Mode 4-33) Evaluation
     best_emp_mode = uint8(0)
     min_emp_bits = 1e18
     

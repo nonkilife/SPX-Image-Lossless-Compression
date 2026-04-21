@@ -24,7 +24,7 @@ import numpy.typing as npt
 from numba import njit, prange, uint8
 from typing import Tuple, Optional, List
 from dataclasses import dataclass, field
-from .predictor import to_zigzag, from_zigzag, predict_med_standard, med_edge_tuned
+from .predictor import to_zigzag, from_zigzag, selected_predictor, med_edge_tuned
 
 # --- 0. Empirical Model Pillars ---
 

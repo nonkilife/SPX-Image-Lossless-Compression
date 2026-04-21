@@ -10,13 +10,24 @@ Engineering Rationale:
    in natural sRGB images.
 2. Zero-Loss Restoration: All spatial operations use uint8 modular arithmetic (wraparound) 
    to avoid the memory and CPU overhead of signed 16-bit intermediate buffers.
+
+Technical Flowchart:
+```mermaid
+graph TD
+    RGB[Input RGB/RGBA] --> GSUB[G-sub RCT: R-G, B-G]
+    GSUB --> HIST[Row-wise Intensity Histograms]
+    HIST --> CH[Channels: G, RD, BD, A]
+    
+    REC_CH[Reconstructed: G, RD, BD, A] --> IGSUB[Inverse G-sub: R=RD+G, B=BD+G]
+    IGSUB --> OUT[Bit-Perfect RGB/RGBA]
+```
 """
 
 import numpy as np
 import numpy.typing as npt
 from numba import njit, prange, uint8
 from typing import Tuple
-from .common import (to_zigzag, from_zigzag, predict_med_standard)
+from .common import (to_zigzag, from_zigzag, selected_predictor)
 
 @njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
 def extract_channels(rgb: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint32]]:
@@ -95,7 +106,7 @@ def decode_alpha_channel(h: int, w: int, res_ch: npt.NDArray[np.uint8], rec_ch: 
         c_val = np.uint8(0)  # reset each row; holds upper-left diagonal for next pixel
         for j in range(w):
             b_val = row_trec[j] if i > 0 else np.uint8(0)
-            p = predict_med_standard(a_val, b_val, c_val)
+            p = selected_predictor(a_val, b_val, c_val)
             val = np.uint8((from_zigzag(res_row[j]) + int(p)) & 0xFF)
             row_rec[j] = val
             a_val = val
@@ -114,14 +125,14 @@ def predict_2d_residuals(data_ch: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8
     for i in prange(h):
         # Boundary pixel (j=0): no left or upper-left neighbor
         b = data_ch[i-1, 0] if i > 0 else uint8(0)
-        pred = predict_med_standard(uint8(0), b, uint8(0))
+        pred = selected_predictor(uint8(0), b, uint8(0))
         res[i, 0] = to_zigzag(int(data_ch[i, 0]) - int(pred))
 
         for j in range(1, w):
             a = data_ch[i, j-1]
             b = data_ch[i-1, j] if i > 0 else uint8(0)
             c = data_ch[i-1, j-1] if i > 0 else uint8(0)
-            pred = predict_med_standard(a, b, c)
+            pred = selected_predictor(a, b, c)
             res[i, j] = to_zigzag(int(data_ch[i, j]) - int(pred))
     return res
 
@@ -134,14 +145,14 @@ def reconstruct_2d_channels(h: int, w: int, res_ch: npt.NDArray[np.uint8]) -> np
     for i in range(h):
         # Boundary pixel (j=0): no left or upper-left neighbor
         b = rec[i-1, 0] if i > 0 else uint8(0)
-        pred = predict_med_standard(uint8(0), b, uint8(0))
+        pred = selected_predictor(uint8(0), b, uint8(0))
         rec[i, 0] = uint8((from_zigzag(res_ch[i, 0]) + int(pred)) & 0xFF)
 
         for j in range(1, w):
             a = rec[i, j-1]
             b = rec[i-1, j] if i > 0 else uint8(0)
             c = rec[i-1, j-1] if i > 0 else uint8(0)
-            pred = predict_med_standard(a, b, c)
+            pred = selected_predictor(a, b, c)
             rec[i, j] = uint8((from_zigzag(res_ch[i, j]) + int(pred)) & 0xFF)
     return rec
 
@@ -158,7 +169,7 @@ def calculate_aad_estimate(data_ch: npt.NDArray[np.uint8]) -> float:
             a = data_ch[i, j-1] if j > 0 else uint8(0)
             b = data_ch[i-1, j] if i > 0 else uint8(0)
             c = data_ch[i-1, j-1] if (i > 0 and j > 0) else uint8(0)
-            pred = predict_med_standard(a, b, c)
+            pred = selected_predictor(a, b, c)
             row_sum += abs(float(np.int32(data_ch[i, j]) - np.int32(pred)))
         total_abs_err += row_sum
     return total_abs_err / (h * w)

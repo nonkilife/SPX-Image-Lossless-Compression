@@ -1,3 +1,26 @@
+"""
+ZPNG-CSDE Unified Benchmark Suite (test_suite)
+Module: test_suite
+Role: QA & Performance Validation.
+Description: Cross-codec comparative benchmarking and bit-perfect verification (MSE).
+
+Architecture Flowchart:
+```mermaid
+graph TD
+    Input[Dataset Directory] --> Glob[File Discovery: PNG, BMP, PNM]
+    Glob --> Workers[Parallel Workers: ZPNG, WebP, JXL]
+    
+    subgraph Worker Loop
+        W1[Preload Array] --> W2[Compress: Speed + BPP]
+        W2 --> W3[Decompress: Speed]
+        W3 --> W4[Verify: MSE = 0]
+    end
+    
+    Workers --> Stats[Aggregate Stats: MB/s, BPP, Savings]
+    Stats --> Table[ASCII Comparison Table]
+    Stats --> CSV[test_results.csv]
+```
+"""
 import os
 import time
 import numpy as np
