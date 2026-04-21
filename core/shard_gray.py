@@ -134,15 +134,12 @@ def predict_pass_1_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
     for i in range(h):
         row_global_offsets_out[i, 0] = row_global_offsets_1ch[i]
 
-    # Medians fixed at 128 (neutral): median normalization in Pass 2 is a no-op.
-    shard_medians = np.full((3, n_shards), np.uint8(128), dtype=np.uint8)
-
     hits_out = np.zeros(3, dtype=np.uint32)
     hits_out[0] = row_hits.sum()
     sums_out = np.zeros(3, dtype=np.uint64)
     sums_out[0] = row_abs_sums.sum()
 
-    return shard_counts_out, shard_stats_out, shard_offsets_out, row_global_offsets_out, shard_medians, (hits_out, sums_out)
+    return shard_counts_out, shard_stats_out, shard_offsets_out, row_global_offsets_out, (hits_out, sums_out)
 
 
 @njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
@@ -150,15 +147,13 @@ def predict_pass_2_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
                         a_ch: npt.NDArray[np.uint8], is_rgba: bool,
                         shard_map: npt.NDArray[np.uint8], nsid: int,
                         row_global_offsets: npt.NDArray[np.uint32],
-                        shard_medians: npt.NDArray[np.uint8],
                         shard_out: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8], Tuple[np.uint64, np.float64]]:
     """
     Stage 2: O(N) Encoding Payload Construction for grayscale.
 
-    Retraces the same raster scan as Pass 1, applies median normalization per
-    shard (shard_medians[0, ctx]), and writes ZigZag-encoded residuals into the
-    pre-allocated shard_out buffer using the row_global_offsets write-pointer
-    table (channel 0 slice).
+    Retraces the same raster scan as Pass 1, and writes ZigZag-encoded 
+    residuals into the pre-allocated shard_out buffer using the 
+    row_global_offsets write-pointer table (channel 0 slice).
 
     Alpha channel handling mirrors shard_rgb.predict_pass_2 for RGBA images.
     """
@@ -177,8 +172,8 @@ def predict_pass_2_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
             p = selected_predictor(a, b, c)
             val = gray_ch[pi, pj]
             ctx = int(get_context_id_fast(a, b, c, p, shard_map, nsid))
-            # Median-normalize residual
-            diff = int(val) - int(p) - (int(shard_medians[0, ctx]) - 128)
+            # Residual calculation
+            diff = int(val) - int(p)
             shard_out[local_ptr[ctx]] = to_zigzag(diff)
             local_ptr[ctx] += 1
 

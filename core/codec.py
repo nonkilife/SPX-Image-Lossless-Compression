@@ -45,7 +45,6 @@ from .rans import (
 def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: bool,
                      shard_counts: npt.NDArray[np.uint32], shard_offsets_p1: npt.NDArray[np.uint32],
                      shard_widths: npt.NDArray[np.uint16],
-                     shard_medians: npt.NDArray[np.uint8],
                      res_flat: npt.NDArray[np.uint8],
                      res_a: npt.NDArray[np.uint8],
                      metadata_bytes: bytes) -> Tuple[bytes, npt.NDArray[np.uint8]]:
@@ -71,12 +70,11 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
 
     # Widths are stored as uint8 using mod-256 encoding: value 0 represents 256.
     # The decoder (decompress.py) restores this via: np.where(r == 0, 256, r).
+    # SRB Block: Widths and Modes
     if is_grayscale:
         header_widths: bytes = (shard_widths[0, :n_shards] % 256).astype(np.uint8).tobytes()
-        header_medians: bytes = shard_medians[0, :n_shards].tobytes()
     else:
         header_widths: bytes = (shard_widths[:, :n_shards] % 256).astype(np.uint8).tobytes()
-        header_medians: bytes = shard_medians[:, :n_shards].tobytes()
     
     sharded_payload: bytearray = bytearray()
 
@@ -106,7 +104,7 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
         all_modes_internal = np.concatenate((gr_modes, rd_modes, bd_modes))
     header_modes: bytes = all_modes_internal.tobytes()
     
-    header: bytes = header_base + header_widths + header_medians + header_modes
+    header: bytes = header_base + header_widths + header_modes
     
     pdf_compact_block = compact_pdf_tables(all_sym_freqs_flat, all_widths_flat, all_modes_internal)
     

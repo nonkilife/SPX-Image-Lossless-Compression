@@ -172,7 +172,6 @@ def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = No
             n_shards = profile.total_shards
             nsid = profile.noise_shard_id
             shard_widths: npt.NDArray[np.uint16] = np.zeros((3, n_shards), dtype=np.uint16)
-            shard_medians: npt.NDArray[np.uint8] = np.zeros((3, n_shards), dtype=np.uint8)
             shard_modes: npt.NDArray[np.uint8] = np.zeros((3, n_shards), dtype=np.uint8)
 
             metadata_bytes: bytes = b""
@@ -191,21 +190,21 @@ def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = No
                         metadata_bytes = b""
                 else:
                     meta_stride = n_shards if is_grayscale else 3 * n_shards
-                    h_len = meta_stride * 3
+                    h_len = meta_stride * 2 # Widths and Modes only
                     h_raw: bytes = f.read(h_len)
                     if len(h_raw) < h_len:
                         raise ValueError("Truncated header: Shard metadata missing.")
 
+                    shard_medians_dummy = np.full((3, n_shards), 128, dtype=np.uint8) # Temporary for decompress_bitplane fallback if needed
+                    
                     if is_grayscale:
                         r_widths = np.frombuffer(h_raw[:n_shards], dtype=np.uint8)
                         shard_widths[0] = np.where(r_widths == 0, np.uint16(256), r_widths.astype(np.uint16))
-                        shard_medians[0] = np.frombuffer(h_raw[n_shards:2*n_shards], dtype=np.uint8)
-                        shard_modes[0] = np.frombuffer(h_raw[2*n_shards:3*n_shards], dtype=np.uint8)
+                        shard_modes[0] = np.frombuffer(h_raw[n_shards:2*n_shards], dtype=np.uint8)
                     else:
                         r_widths = np.frombuffer(h_raw[:3*n_shards], dtype=np.uint8).reshape((3, n_shards))
                         shard_widths = np.where(r_widths == 0, np.uint16(256), r_widths.astype(np.uint16))
-                        shard_medians = np.frombuffer(h_raw[3*n_shards:6*n_shards], dtype=np.uint8).reshape((3, n_shards))
-                        shard_modes = np.frombuffer(h_raw[6*n_shards:9*n_shards], dtype=np.uint8).reshape((3, n_shards))
+                        shard_modes = np.frombuffer(h_raw[3*n_shards:6*n_shards], dtype=np.uint8).reshape((3, n_shards))
 
                     # Pass the stream directly to unpacker
                     res_gr_flat, res_rd_flat, res_bd_flat, gr_offs, rd_offs, bd_offs, shard_counts, res_a_flat = unpack_bitstream(
@@ -246,8 +245,7 @@ def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = No
                     # Standard Shard Path (already unpacked via stream above)
                     gr_rec, rd_rec, bd_rec = reconstruct_channels(
                         h, w, res_gr_flat, res_rd_flat, res_bd_flat,
-                        gr_offs, rd_offs, bd_offs,
-                        shard_counts, shard_medians, is_grayscale,
+                        gr_offs, rd_offs, bd_offs, shard_counts, is_grayscale,
                         profile.shard_map, nsid
                     )
 

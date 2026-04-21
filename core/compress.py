@@ -30,7 +30,7 @@ import zstandard as zstd
 import threading
 from .common import (
     SpxResult, FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE,
-    apply_median_to_stats,
+    normalize_shard_stats,
     calculate_channel_stats,
     extract_srb_metadata,
     BITPLANE_H_THRESHOLD, BITPLANE_HIT_RATE_THRESHOLD, BITPLANE_P90_THRESHOLD
@@ -254,22 +254,22 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
             bd_map_p = np.pad(bd_map, 1, constant_values=0)
 
         if is_grayscale:
-            shard_counts, shard_stats, shard_offsets_p1, row_global_offsets, shard_medians, \
+            shard_counts, shard_stats, shard_offsets_p1, row_global_offsets, \
             (hits_total_p1, sums_total_p1) = \
                 predict_pass_1_gray(h, w, gr_map_p,
                                     profile.shard_map, profile.noise_shard_id)
         else:
-            shard_counts, shard_stats, shard_offsets_p1, row_global_offsets, shard_medians, \
+            shard_counts, shard_stats, shard_offsets_p1, row_global_offsets, \
             (hits_total_p1, sums_total_p1) = \
                 predict_pass_1(h, w, gr_map_p, rd_map_p, bd_map_p, False,
                                profile.shard_map, profile.noise_shard_id)
         
-        # [v6.5] Median Normalization Alignment: Transform centered Pass 1 stats to normalized ZigZag stats
-        biased_stats: npt.NDArray[np.uint32] = apply_median_to_stats(shard_stats, shard_medians)
+        # [v8.0] Static Residual Normalization: Transform centered Pass 1 stats to normalized ZigZag stats
+        normalized_stats: npt.NDArray[np.uint32] = normalize_shard_stats(shard_stats)
         
         # [v4.7.2-STABLE] Metadata Extraction (NOW USING NORMALIZED RANGES)
         shard_widths: npt.NDArray[np.uint16]
-        shard_widths = extract_srb_metadata(biased_stats)
+        shard_widths = extract_srb_metadata(normalized_stats)
 
         # [v7.6] Per-Image Coder Selection: auto-detect bitplane vs standard rANS.
         # Gate: H < 3.3 AND hit_rate > 0.20 AND p90 < 175
@@ -282,7 +282,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
                 active_mask = shard_counts > 0
                 p90_width = float(np.percentile(shard_widths[active_mask], 90)) if active_mask.any() else 256.0
 
-                global_hist = biased_stats.sum(axis=1)  # (3, 256) - collapse shards
+                global_hist = normalized_stats.sum(axis=1)  # (3, 256) - collapse shards
                 h_vals = []
                 for c_idx in range(3):
                     total = float(global_hist[c_idx].sum())
@@ -324,12 +324,12 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
                 res_a, (a_hits, a_sum) = \
                     predict_pass_2_gray(h, w, gr_map_p, a_map, is_rgba,
                                         profile.shard_map, profile.noise_shard_id,
-                                        row_global_offsets, shard_medians, shard_gr)
+                                        row_global_offsets, shard_gr)
             else:
                 res_a, (a_hits, a_sum) = \
                     predict_pass_2(h, w, gr_map_p, rd_map_p, bd_map_p, a_map, is_rgba, False,
                                    profile.shard_map, profile.noise_shard_id,
-                                   row_global_offsets, shard_medians,
+                                   row_global_offsets,
                                    shard_gr, shard_rd, shard_bd)
 
             if is_rgba:
@@ -345,14 +345,8 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
                 if total_samples > 0:
                     # [v6.5] Raw Zero is now at index 128 due to centered storage
                     raw_zero = shard_stats[c_idx, :, 128].sum()
-                    median_sum = 0
-                    for s_i in range(n_shards):
-                        m_val = shard_medians[c_idx, s_i]
-                        median_sum += shard_stats[c_idx, s_i, m_val]
-
                     raw_occ = (raw_zero / total_samples) * 100
-                    med_occ = (median_sum / total_samples) * 100
-                    print(f"Channel {chan}: Raw Zero: {raw_occ:.2f}% -> Median-Shifted Zero: {med_occ:.2f}% (Gain: {med_occ-raw_occ:+.2f}%)")
+                    print(f"Channel {chan}: Raw Zero: {raw_occ:.2f}%")
             print("-------------------------------------------\n")
         
         metadata_bytes: bytes = extract_png_metadata(img_path)
@@ -427,7 +421,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
         else:
             final_payload, modes_diag = pack_bitstream(
                 h, w, is_rgba, is_grayscale, use_gsub,
-                shard_counts, shard_offsets_p1, shard_widths, shard_medians,
+                shard_counts, shard_offsets_p1, shard_widths,
                 all_shards_flat, res_a, metadata_bytes
             )
             
@@ -472,7 +466,6 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
                           shard_ptrs=None,
                           shard_stats=shard_stats,
                           shard_widths=shard_widths,
-                          shard_medians=shard_medians,
                           shard_modes=res_modes,
                           channel_hists=channel_hists,
                           channel_modes=modes,

@@ -108,8 +108,6 @@ class SpxResult:
 
     # Extracted data (for verification)
     channels: Optional[Tuple] = None
-    # Median normalization metrics (3 × n_shards)
-    shard_medians: npt.NDArray[np.uint8] = field(default_factory=lambda: np.zeros((3, PROFILE_RGB.total_shards), dtype=np.uint8))
     # Template selection modes (3 × n_shards)
     shard_modes: npt.NDArray[np.uint8] = field(default_factory=lambda: np.zeros((3, PROFILE_RGB.total_shards), dtype=np.uint8))
 
@@ -139,19 +137,17 @@ def extract_srb_metadata(shard_stats: npt.NDArray[np.uint32]) -> npt.NDArray[np.
     return widths
 
 @njit(parallel=True, fastmath=True, cache=True)
-def apply_median_to_stats(shard_stats: npt.NDArray[np.uint32], medians: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint32]:
+def normalize_shard_stats(shard_stats: npt.NDArray[np.uint32]) -> npt.NDArray[np.uint32]:
     """
-    Median Normalization Transformation (BICC).
-    Shifts centered histograms to align the distribution peak (median) to 0 in ZigZag space.
-    This ensures that different shards with similar variances but different bias offsets
-    can be modeled by the same static Laplacian template.
+    Residual Normalization Transformation (BICC).
+    Shifts centered histograms (base 128) to align the distribution peak to 0 in ZigZag space.
     """
     n_colors, n_shards, _ = shard_stats.shape
     aligned_stats = np.zeros((n_colors, n_shards, 256), dtype=np.uint32)
+    m = 128 # Static BICC Bias
     
     for c in range(n_colors):
         for s in prange(n_shards):
-            m = int(medians[c, s])
             hist = shard_stats[c, s]
             if np.sum(hist) == 0: continue
             for centered_val in range(256):

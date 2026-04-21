@@ -210,16 +210,13 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
                 row_global_offsets[i, c, s] = uint32(curr)
                 curr += int(row_ptrs[i, c, s])
 
-    # Medians fixed at 128 (neutral): median normalization in Pass 2 is a no-op.
-    shard_medians = np.full((3, n_shards), 128, dtype=np.uint8)
-    return shard_counts_total, shard_stats_total, shard_offsets, row_global_offsets, shard_medians, (row_hits.sum(axis=0), row_abs_sums.sum(axis=0))
+    return shard_counts_total, shard_stats_total, shard_offsets, row_global_offsets, (row_hits.sum(axis=0), row_abs_sums.sum(axis=0))
 
 @njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
 def predict_pass_2(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDArray[np.uint8],
                    bd_ch: npt.NDArray[np.uint8], a_ch: npt.NDArray[np.uint8], is_rgba: bool, is_grayscale: bool,
                    shard_map: npt.NDArray[np.uint8], nsid: int,
                    row_global_offsets: npt.NDArray[np.uint32],
-                   shard_medians: npt.NDArray[np.uint8],
                    shard_gr: npt.NDArray[np.uint8], shard_rd: npt.NDArray[np.uint8], shard_bd: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8], Tuple[np.uint64, np.float64]]:
     """
     Stage 2: O(N) Encoding Payload Construction.
@@ -254,7 +251,7 @@ def predict_pass_2(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
             pg = selected_predictor(ag, bg, cg)
             curr_valg = gr_ch[pi, 1]
             ctxg = int(get_context_id_fast(ag, bg, cg, pg, shard_map, nsid))
-            diffg = int(curr_valg) - int(pg) - (int(shard_medians[0, ctxg]) - 128)
+            diffg = int(curr_valg) - int(pg)
             shard_gr[local_ptr_gr[ctxg]] = to_zigzag(diffg)
             local_ptr_gr[ctxg] += 1
             prev_valg = curr_valg
@@ -268,7 +265,7 @@ def predict_pass_2(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
             pg = selected_predictor(ag, bg, cg)
             curr_valg = gr_ch[pi, pj]
             ctxg = int(get_context_id_fast(ag, bg, cg, pg, shard_map, nsid))
-            diffg = int(curr_valg) - int(pg) - (int(shard_medians[0, ctxg]) - 128)
+            diffg = int(curr_valg) - int(pg)
             shard_gr[local_ptr_gr[ctxg]] = to_zigzag(diffg)
             local_ptr_gr[ctxg] += 1
 
@@ -282,8 +279,8 @@ def predict_pass_2(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
                 ctx2 = int(get_context_id_fast(a2, b2, c2, prev_valg, shard_map, nsid))
                 p1 = selected_predictor(a1, b1, c1)
                 p2 = selected_predictor(a2, b2, c2)
-                diff1 = int(val1) - int(p1) - (int(shard_medians[1, ctx1]) - 128)
-                diff2 = int(val2) - int(p2) - (int(shard_medians[2, ctx2]) - 128)
+                diff1 = int(val1) - int(p1)
+                diff2 = int(val2) - int(p2)
                 shard_rd[local_ptr_rd[ctx1]] = to_zigzag(diff1)
                 shard_bd[local_ptr_bd[ctx2]] = to_zigzag(diff2)
                 local_ptr_rd[ctx1] += 1; local_ptr_bd[ctx2] += 1
@@ -300,8 +297,8 @@ def predict_pass_2(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
             ctx2 = int(get_context_id_fast(a2, b2, c2, prev_valg, shard_map, nsid))
             p1 = selected_predictor(a1, b1, c1)
             p2 = selected_predictor(a2, b2, c2)
-            diff1 = int(val1) - int(p1) - (int(shard_medians[1, ctx1]) - 128)
-            diff2 = int(val2) - int(p2) - (int(shard_medians[2, ctx2]) - 128)
+            diff1 = int(val1) - int(p1) - (128 - 128)
+            diff2 = int(val2) - int(p2) - (128 - 128)
             shard_rd[local_ptr_rd[ctx1]] = to_zigzag(diff1)
             shard_bd[local_ptr_bd[ctx2]] = to_zigzag(diff2)
             local_ptr_rd[ctx1] += 1; local_ptr_bd[ctx2] += 1
@@ -329,7 +326,7 @@ def predict_pass_2(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
 def reconstruct_channels(h: int, w: int, res_gr: npt.NDArray[np.uint8], res_rd: npt.NDArray[np.uint8],
                          res_bd: npt.NDArray[np.uint8], off_gr: npt.NDArray[np.uint32],
                          off_rd: npt.NDArray[np.uint32], off_bd: npt.NDArray[np.uint32],
-                         shard_counts: npt.NDArray[np.uint32], shard_medians: npt.NDArray[np.uint8],
+                         shard_counts: npt.NDArray[np.uint32],
                          is_grayscale: bool, shard_map: npt.NDArray[np.uint8], nsid: int):
     """
     Stage 3 (Decompression): Parallel Channel Reconstruction Engine. (Phase 2b)
@@ -349,7 +346,7 @@ def reconstruct_channels(h: int, w: int, res_gr: npt.NDArray[np.uint8], res_rd: 
             pg = selected_predictor(ag, bg, cg)
             ctxg = int(get_context_id_fast(ag, bg, cg, pg, shard_map, nsid))
             resg = from_zigzag(res_gr[ptr_gr[ctxg]]); ptr_gr[ctxg] += 1
-            gr_rec[pi, pj] = np.uint8((int(resg) + int(pg) + (int(shard_medians[0, ctxg]) - 128)) & 0xFF)
+            gr_rec[pi, pj] = np.uint8((int(resg) + int(pg)) & 0xFF)
 
     # Pass 2: Chroma Dispatch (Parallel Lag)
     if not is_grayscale:
@@ -365,7 +362,7 @@ def reconstruct_channels(h: int, w: int, res_gr: npt.NDArray[np.uint8], res_rd: 
                         p = selected_predictor(a, b, c)
                         ctx = int(get_context_id_fast(a, b, c, cur_g, shard_map, nsid))
                         res = from_zigzag(res_rd[ptr_rd[ctx]]); ptr_rd[ctx] += 1
-                        rd_rec[pi, pj] = np.uint8((int(res) + int(p) + (int(shard_medians[1, ctx]) - 128)) & 0xFF)
+                        rd_rec[pi, pj] = np.uint8((int(res) + int(p)) & 0xFF)
             else:
                 # Reconstruct BD Channel
                 for pi in range(1, h + 1):
@@ -377,7 +374,7 @@ def reconstruct_channels(h: int, w: int, res_gr: npt.NDArray[np.uint8], res_rd: 
                         p = selected_predictor(a, b, c)
                         ctx = int(get_context_id_fast(a, b, c, cur_g, shard_map, nsid))
                         res = from_zigzag(res_bd[ptr_bd[ctx]]); ptr_bd[ctx] += 1
-                        bd_rec[pi, pj] = np.uint8((int(res) + int(p) + (int(shard_medians[2, ctx]) - 128)) & 0xFF)
+                        bd_rec[pi, pj] = np.uint8((int(res) + int(p)) & 0xFF)
 
     if not is_grayscale:
         return gr_rec[1:h+1, 1:w+1], rd_rec[1:h+1, 1:w+1], bd_rec[1:h+1, 1:w+1]
