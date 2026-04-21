@@ -86,13 +86,13 @@ def calculate_mse(arr1: npt.NDArray, arr2: npt.NDArray) -> float:
 # --- Unified Codec Workers ---
 # =============================================================================
 
-def spx_worker(path: str) -> Dict[str, Any]:
+def spx_worker(path: str, **kwargs) -> Dict[str, Any]:
     filename = os.path.basename(path)
     try:
         if path == "__WARMUP__":
             # Minimal warmup task
             d = np.zeros((64, 64, 3), dtype=np.uint8)
-            res = compress_spx(None, None, preloaded_arr=d)
+            res = compress_spx(None, None, preloaded_arr=d, use_bitplane=kwargs.get('use_bitplane', False))
             _, _ = decompress_spx(res.payload, None)
             return {"success": False} # Don't record warmup
 
@@ -103,7 +103,9 @@ def spx_worker(path: str) -> Dict[str, Any]:
             orig_size_bytes = os.path.getsize(path)
 
         t0 = time.perf_counter()
-        res_spx = compress_spx(path, None, preloaded_arr=arr_orig)
+        # [v7.5.0] Propagation of bitplane flag if provided via kwargs
+        use_bitplane = kwargs.get('use_bitplane', False)
+        res_spx = compress_spx(path, None, preloaded_arr=arr_orig, use_bitplane=use_bitplane)
         ze_s = (time.perf_counter() - t0)
         
         t1 = time.perf_counter()
@@ -122,7 +124,7 @@ def spx_worker(path: str) -> Dict[str, Any]:
     except Exception as e:
         return {"name": "SPX", "filename": filename, "success": False, "error": str(e)}
 
-def webp_worker(path: str) -> Dict[str, Any]:
+def webp_worker(path: str, **kwargs) -> Dict[str, Any]:
     filename = os.path.basename(path)
     try:
         if path == "__WARMUP__": return {"success": False}
@@ -157,7 +159,7 @@ def webp_worker(path: str) -> Dict[str, Any]:
     except Exception as e:
         return {"name": "WebP", "filename": filename, "success": False, "error": str(e)}
 
-def jxl_worker(path: str) -> Dict[str, Any]:
+def jxl_worker(path: str, **kwargs) -> Dict[str, Any]:
     filename = os.path.basename(path)
     try:
         import imagecodecs
@@ -356,25 +358,26 @@ def print_comparison_table(stats_list: List[Dict], dataset_name: str):
 
 def show_codec_summary(s: Dict):
     if not s or 'name' not in s: return
-    div = "---------------------------------------------------------------------------------------------------"
-    print(f"\n{div}".ljust(100))
-    print(f"  {s['name']} Performance Audit ({int(s.get('count',0))} images):".ljust(100))
-    print(f"  PNM Size      : {s['pnm_mb']:6.2f} MB | BPP {s['pnm_bpp']:6.4f}".ljust(100))
-    print(f"  Dataset Size  : {s['orig_mb']:6.2f} MB | BPP {s['src_bpp']:6.4f}".ljust(100))
-    print(f"  SPX Size     : {s['comp_mb']:6.2f} MB | BPP {s['bpp']:6.4f}".ljust(100))
-    print(f"  Savings %     : vs PNM {s['saved_pnm_pct']:5.2f}% | vs PNG {s['saved_pct']:5.2f}%".ljust(100))
-    print(f"  Comp. Ratio   : Mean {s['mean_ratio']:5.2f}% | Median {s['median_ratio']:5.2f}% | Range {s['range'][0]:5.1f}-{s['range'][1]:5.1f}%".ljust(100))
-    print(f"  Avg File Speed: Enc {s['avg_e_ms']:7.1f} ms | Dec {s['avg_d_ms']:7.1f} ms".ljust(100))
-    print(f"  Throughput    : Enc {s['sys_tp'][0]:6.2f} MB/s | Dec {s['sys_tp'][1]:6.2f} MB/s".ljust(100))
-    print(f"  Single Core   : Enc {s['core_tp'][0]:6.2f} MB/s | Dec {s['core_tp'][1]:6.2f} MB/s".ljust(100))
-    print(f"  Wall-clock    : {s['wall_s']:6.2f} s       | MSE (Quality): {s['mse']:13.8f}".ljust(100))
-    print(f"{div}\n".ljust(100))
+    div = "-" * 70
+    print(f"\n{div}")
+    print(f"  {s['name']} Performance Audit ({int(s.get('count',0))} images):")
+    print(f"  PNM Size      : {s['pnm_mb']:6.2f} MB | BPP {s['pnm_bpp']:6.4f}")
+    print(f"  Dataset Size  : {s['orig_mb']:6.2f} MB | BPP {s['src_bpp']:6.4f}")
+    print(f"  SPX Size      : {s['comp_mb']:6.2f} MB | BPP {s['bpp']:6.4f}")
+    print(f"  Savings %     : vs PNM {s['saved_pnm_pct']:5.2f}% | vs PNG {s['saved_pct']:5.2f}%")
+    print(f"  Comp. Ratio   : Mean {s['mean_ratio']:5.2f}% | Median {s['median_ratio']:5.2f}% | Range {s['range'][0]:5.1f}-{s['range'][1]:5.1f}%")
+    print(f"  Avg File Speed: Enc {s['avg_e_ms']:7.1f} ms | Dec {s['avg_d_ms']:7.1f} ms")
+    print(f"  Throughput    : Enc {s['sys_tp'][0]:6.2f} MB/s | Dec {s['sys_tp'][1]:6.2f} MB/s")
+    print(f"  Single Core   : Enc {s['core_tp'][0]:6.2f} MB/s | Dec {s['core_tp'][1]:6.2f} MB/s")
+    print(f"  Wall-clock    : {s['wall_s']:6.2f} s")
+    print(f"  MSE (Quality) : {s['mse']:13.8f}")
+    print(div)
 
 # =============================================================================
 # --- Main Orchestrator ---
 # =============================================================================
 
-def run_codec_benchmark(codec_name: str, worker_fn: Any, files: List[str], workers: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+def run_codec_benchmark(codec_name: str, worker_fn: Any, files: List[str], workers: int, **kwargs) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     print(f"[*] Benchmarking {codec_name}...")
     reporter = CodecReporter(codec_name)
     results = {}
@@ -384,7 +387,7 @@ def run_codec_benchmark(codec_name: str, worker_fn: Any, files: List[str], worke
         msg_warmup = f"  [Warmup] Compiling (Single Thread)..."
         print(msg_warmup, end='\r', flush=True)
         w_start = time.perf_counter()
-        worker_fn("__WARMUP__")
+        worker_fn("__WARMUP__", **kwargs)
         t_warmup = time.perf_counter() - w_start
         # Build completion message that fully overwrites the warmup string
         done_msg = f"  [Warmup] Completed in {t_warmup:.2f}s"
@@ -393,7 +396,7 @@ def run_codec_benchmark(codec_name: str, worker_fn: Any, files: List[str], worke
         # --- [Critical Fix 2]: Parallelized Stress Testing ---
         t_proc_start = time.perf_counter()
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(worker_fn, p): p for p in files}
+            futures = {executor.submit(worker_fn, p, **kwargs): p for p in files}
             idx = 0
             for f in concurrent.futures.as_completed(futures):
                 idx += 1
@@ -403,7 +406,7 @@ def run_codec_benchmark(codec_name: str, worker_fn: Any, files: List[str], worke
                     results[res["filename"]] = res
                 if idx % 10 == 0 or idx == len(files):
                     prog_msg = f"  Progress: {idx}/{len(files)} processed"
-                    print(prog_msg.ljust(50), end='\r', flush=True)
+                    print(f"\r{prog_msg}", end='', flush=True)
             print()
     except KeyboardInterrupt:
         print("\n[!] Aborted.")
@@ -460,6 +463,7 @@ def main() -> None:
     parser.add_argument("--workers", "-w", type=int, default=os.cpu_count())
     parser.add_argument("--num_tests", "-n", type=int, default=None)
     parser.add_argument("--offset", type=int, default=0)
+    parser.add_argument("--bitplane", action="store_true", help="Force Bitplane engine")
     parser.add_argument("--reclassify", action="store_true", help="Copy files into easy/hard/hell categories")
     parser.add_argument("--build", nargs=4, metavar=('TARGET', 'E', 'H', 'HELL'), help="Construct dataset from categories")
     args = parser.parse_args()
@@ -555,7 +559,7 @@ def main() -> None:
 
     try:
         for name, worker in queue:
-            stats, res_map = run_codec_benchmark(name, worker, files, args.workers)
+            stats, res_map = run_codec_benchmark(name, worker, files, args.workers, use_bitplane=args.bitplane)
             # Ensure stats is at least a dict with the codec name if failure occurred
             if not stats:
                 stats = {"name": name, "count": 0, "success": False}

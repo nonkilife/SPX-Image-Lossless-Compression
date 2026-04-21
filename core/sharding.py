@@ -1,88 +1,63 @@
 """
-SPX [Unified Sharding Hub]
+SPX [Unified Sharding Coordination Hub]
 Module: sharding
-Role: Pillar 3 - Strategic Partitioning.
-Description: Authoritative definitions for shard profiles, mapping matrices, and context derivation.
-Architecture: Flexible Sharding Hub utilizing 3D Mapping LUTs for zero-latency context ID derivation.
+Role: Pillar 3 - Statistical Partitioning & Dispatch.
+Description: The authoritative execution engine for pixel sharding. 
+
+Design Philosophy: Logic-Data Separation
+----------------------------------------
+This module acts as the "Coordinator" that bridges static configurations with 
+high-performance execution. It manages the lifecycle of the Global Context LUTs 
+(Look-Up Tables) and provides the JIT-compiled kernels used by the parallel 
+image processing pipelines.
+
+Architecture:
+1. Data Hub: Imports and re-exports ShardProfiles (from shard_profile.py).
+2. Synchronization: Monitors profile changes and updates global LUTs (V/I/T).
+3. Context Engine: Triple-LUT dispatch for O(1) context ID derivation.
+
+Logic Path:
+```mermaid
+graph TD
+    A[ShardProfile] -->|sync_luts_if_needed| B{State Cache}
+    B -->|Change Detected| C[initialize_luts_python]
+    B -->|No Change| D[Use Existing LUTs]
+    C --> E[Update Global LUTs: SPATIAL/INTENSITY/FINAL]
+    
+    subgraph Execution Kernel
+    F[Neighbors & Intensity] --> G[get_context_id_fast]
+    G --> H[LUT 1: Spatial Packaging]
+    H --> I[LUT 2: Intensity Logic]
+    I --> J[LUT 3: Final Dispatch]
+    J --> K[Context ID]
+    end
+    
+    E -.-> G
+    D -.-> G
+```
 """
 
 import numpy as np
 import numpy.typing as npt
 from numba import njit, uint8
 from typing import Tuple, Optional, List
-from dataclasses import dataclass
 
-# --- 1. Sharding Profile System ---
-
-@dataclass(frozen=True)
-class ShardProfile:
-    """ 
-    Authoritative physical architecture defining how context boundaries segment statistical space.
-    
-    The Shard Map establishes a rigid mathematical space utilizing intensity limits, 
-    gradient variance tiers, and local curve slopes to reliably bucket pixels with exactly 
-    matching neighborhood configurations into the same dynamic compression container.
-    """
-    name: str
-    v_boundaries_gr: npt.NDArray[np.uint8]
-    intensity_segments: npt.NDArray[np.uint8]
-    noise_shard_id: int  # -1 if no noise shard
-    total_shards: int
-    shard_map: npt.NDArray[np.uint8] # [v_level][intensity_idx][trend_idx]
-
-# --- 2. Default Profile: Universal-42 ---
-V_BOUND_RGB = np.array([0, 1, 2, 4, 8, 16, 32, 255], dtype=np.uint8)
-INTENSITY_SEG_RGB = np.array([0, 60, 190, 255], dtype=np.uint8)
-
-def build_shard_map_universal_42() -> npt.NDArray[np.uint8]:
-    """ Unified 42-shard balanced architecture: 3I×1T flat | 3I×3T full | 1I×3T trend-only. """
-    s_map = np.zeros((8, 3, 3), dtype=np.uint8)
-    # Tier 0 (V=0): Intensity Split (IDs 0-2)
-    for i in range(3): s_map[0, i, :] = i
-    
-    # Tier 1, 2, 3 (V=1, 2, 3): Intensity * Trend (IDs 3-29)
-    # 3 tiers * 9 = 27 shards
-    for v in range(1, 4):
-        for i in range(3):
-            base = 3 + (v-1) * 9 + i * 3
-            s_map[v, i, 0] = base + 0
-            s_map[v, i, 1] = base + 1
-            s_map[v, i, 2] = base + 2
-            
-    # Tiers 4, 5, 6, 7 (V >= 4): Trend-only (IDs 30-41)
-    # 4 tiers * 3 trends = 12 shards
-    for v in range(4, 8):
-        for i in range(3):
-            base = 30 + (v-4) * 3
-            s_map[v, i, 0] = base + 0
-            s_map[v, i, 1] = base + 1
-            s_map[v, i, 2] = base + 2
-            
-    return s_map
-    
-PROFILE_RGB = ShardProfile(
-    name="Universal-42",
-    v_boundaries_gr=V_BOUND_RGB,
-    intensity_segments=INTENSITY_SEG_RGB,
-    noise_shard_id=-1,
-    total_shards=42,
-    shard_map=build_shard_map_universal_42()
+# --- 1. Authorized Re-exports ---
+# These are pulled from shard_profile.py to ensure this module remains the 
+# single point of contact for all sharding operations.
+from .shard_profile import (
+    ShardProfile, PROFILE_RGB, get_shard_labels
 )
 
-def get_shard_labels(n_shards: Optional[int] = None) -> List[str]:
-    """ Generates generic index labels for all shards in the given (or current) profile. """
-    if n_shards is None:
-        n_shards = PROFILE_RGB.total_shards
-    return [f"Shard_{i}" for i in range(n_shards)]
-
-# --- 3. High-Performance Context Dispatcher LUTs ---
+# --- 1. High-Performance Context Dispatcher LUTs ---
+# These global tables are shared across all JIT kernels for zero-copy feature extraction.
 SPATIAL_TRANS_LUT = np.zeros((511, 511), dtype=np.uint8)
 INTENSITY_LUT = np.zeros(256, dtype=np.uint8)
 FINAL_DISPATCH_LUT = np.zeros(1024, dtype=np.uint8)  # index = (packed<<2)|i_idx
 
 def initialize_luts_python(v_bounds, i_segs, shard_map, nsid: int):
     """
-    Fills global LUTs with precomputed context features.
+    Fills global LUTs with precomputed context features based on profile boundaries.
     """
     # 1. Intensity LUT
     i_arr = np.arange(256, dtype=np.uint8)
@@ -133,6 +108,7 @@ _LAST_NSID: int = -2
 def sync_luts_if_needed(v_bounds, i_segs, shard_map, nsid: int):
     """
     Ensures global LUTs match the requested profile.
+    Only recalculates if boundaries have changed since the last invocation.
     """
     global _LAST_V_BOUNDS, _LAST_I_SEGS, _LAST_NSID
     if (not np.array_equal(_LAST_V_BOUNDS, v_bounds) or
@@ -143,15 +119,16 @@ def sync_luts_if_needed(v_bounds, i_segs, shard_map, nsid: int):
         _LAST_I_SEGS = i_segs.copy()
         _LAST_NSID = nsid
 
-# Initial load
-sync_luts_if_needed(V_BOUND_RGB, INTENSITY_SEG_RGB, PROFILE_RGB.shard_map, PROFILE_RGB.noise_shard_id)
+# Initial load with the default Universal-42 profile
+sync_luts_if_needed(PROFILE_RGB.v_boundaries_gr, PROFILE_RGB.intensity_segments, PROFILE_RGB.shard_map, PROFILE_RGB.noise_shard_id)
 
-SHARD_LABELS: List[str] = get_shard_labels()
+SHARD_LABELS: List[str] = get_shard_labels(PROFILE_RGB)
 
 @njit(inline='always', fastmath=True, cache=True)
 def get_context_id_fast(ag: uint8, bg: uint8, cg: uint8, intensity: uint8,
                         shard_map: npt.NDArray[np.uint8], nsid: int) -> uint8:
     """
+    High-speed context derivation kernel.
     Triple LUT dispatch: SPATIAL_TRANS_LUT -> INTENSITY_LUT -> FINAL_DISPATCH_LUT.
     """
     packed = SPATIAL_TRANS_LUT[int(ag) - int(cg) + 255, int(bg) - int(cg) + 255]
