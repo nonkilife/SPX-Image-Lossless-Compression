@@ -40,6 +40,14 @@ def from_zigzag(z: np.uint8) -> int:
     return int(np.int8(z >> 1) ^ -(np.int8(z & 1)))
 
 @njit(error_model='numpy', inline='always', cache=True)
+def selected_predictor(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
+    """ 
+    Unified Predictor Dispatcher. 
+    Current Active: med_standard (v6.2 Stable)
+    """
+    return med_standard(a, b, c)
+
+@njit(error_model='numpy', inline='always', cache=True)
 def med_standard(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     """ Standard Median Edge Detector (MED). """
     mx: np.uint8 = max(a, b)
@@ -47,14 +55,6 @@ def med_standard(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     gap: int = int(a) + int(b) - int(c)
     p: int = min(int(mx), max(int(mn), gap))
     return np.uint8(p)
-
-@njit(error_model='numpy', inline='always', cache=True)
-def selected_predictor(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
-    """ 
-    Unified Predictor Dispatcher. 
-    Current Active: med_standard (v6.2 Stable)
-    """
-    return med_standard(a, b, c)
 
 @njit(error_model='numpy', inline='always', cache=True)
 def med_edge_tuned(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:

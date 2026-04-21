@@ -34,7 +34,9 @@ def main():
     parser_bench.add_argument("--num_tests", "-n", type=int, help="Limit number of tests")
     parser_bench.add_argument("--workers", "-w", type=int, help="Number of parallel workers")
     parser_bench.add_argument("--codec", choices=["zpng", "webp", "jxl", "bench"], default="zpng", help="Codec to test")
+    parser_bench.add_argument("--offset", type=int, help="Skip first N images")
     parser_bench.add_argument("--reclassify", action="store_true", help="Copy files into easy/hard/hell categories")
+    parser_bench.add_argument("--build", nargs=4, metavar=('TARGET', 'E', 'H', 'HELL'), help="Assemble dataset from categories")
 
     args = parser.parse_args()
 
@@ -68,8 +70,18 @@ def main():
                 print(f"Error loading RAW file: {e}", file=sys.stderr)
                 sys.exit(1)
 
+        # [v7.5.0] Logic: 
+        # 1. Force Bitplane if --bitplane is set.
+        # 2. Enable Auto-Selection if --optimize is set.
+        # 3. Default to Standard (False) otherwise for deterministic CLI behavior.
+        use_bitplane = False
+        if args.bitplane:
+            use_bitplane = True
+        elif args.optimize:
+            use_bitplane = None
+
         result = compress_csde(args.path if preloaded_arr is None else None, out_path, 
-                               preloaded_arr=preloaded_arr, use_bitplane=args.bitplane)
+                               preloaded_arr=preloaded_arr, use_bitplane=use_bitplane)
         print(f"Compressed: {args.path} -> {out_path}")
         print(f"Size: {result.comp_size/1024:.2f} KB | Mode: {result.mode}")
 
@@ -93,7 +105,9 @@ def main():
         sys.argv = [sys.argv[0], args.codec, args.path]
         if args.num_tests: sys.argv.extend(["-n", str(args.num_tests)])
         if args.workers: sys.argv.extend(["-w", str(args.workers)])
+        if args.offset: sys.argv.extend(["--offset", str(args.offset)])
         if args.reclassify: sys.argv.append("--reclassify")
+        if args.build: sys.argv.extend(["--build"] + list(args.build))
         try:
             test_suite.main()
         finally:
