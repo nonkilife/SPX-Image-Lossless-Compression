@@ -33,7 +33,8 @@ from .common import (
     normalize_shard_stats,
     calculate_channel_stats,
     extract_srb_metadata,
-    BITPLANE_H_THRESHOLD, BITPLANE_HIT_RATE_THRESHOLD, BITPLANE_P90_THRESHOLD
+    BITPLANE_H_THRESHOLD, BITPLANE_HIT_RATE_THRESHOLD, BITPLANE_P90_THRESHOLD,
+    ENABLE_DIAGNOSTICS
 )
 from .sharding import PROFILE_RGB
 from .transform import (
@@ -459,6 +460,10 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
             with open(output_path, 'wb') as f_out: f_out.write(final_payload)
 
         res_modes: npt.NDArray[np.uint8] = modes_diag
+
+        # Release resources
+        from .decompress import clear_spx_workspaces
+        clear_spx_workspaces()
 
         return SpxResult(enc_time=time.time()-t0, h=h, w=w, is_rgba=is_rgba, comp_size=len(final_payload),
                           orig_size=orig_size, hits=hits_total_p1, res_sums=sums_total_p1,

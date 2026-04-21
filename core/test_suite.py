@@ -92,7 +92,7 @@ def spx_worker(path: str, **kwargs) -> Dict[str, Any]:
         if path == "__WARMUP__":
             # Minimal warmup task
             d = np.zeros((64, 64, 3), dtype=np.uint8)
-            res = compress_spx(None, None, preloaded_arr=d, use_bitplane=kwargs.get('use_bitplane', False))
+            res = compress_spx(None, None, preloaded_arr=d, use_bitplane=kwargs.get('use_bitplane', None))
             _, _ = decompress_spx(res.payload, None)
             return {"success": False} # Don't record warmup
 
@@ -103,8 +103,9 @@ def spx_worker(path: str, **kwargs) -> Dict[str, Any]:
             orig_size_bytes = os.path.getsize(path)
 
         t0 = time.perf_counter()
-        # [v7.5.0] Propagation of bitplane flag if provided via kwargs
-        use_bitplane = kwargs.get('use_bitplane', False)
+        # [v7.5.0] Propagation of bitplane flag if provided via kwargs. 
+        # Default to None to enable Auto-Selection.
+        use_bitplane = kwargs.get('use_bitplane', None)
         res_spx = compress_spx(path, None, preloaded_arr=arr_orig, use_bitplane=use_bitplane)
         ze_s = (time.perf_counter() - t0)
         
@@ -559,7 +560,9 @@ def main() -> None:
 
     try:
         for name, worker in queue:
-            stats, res_map = run_codec_benchmark(name, worker, files, args.workers, use_bitplane=args.bitplane)
+            # [v7.5.1] Pass None for use_bitplane if not explicitly forced, to enable auto-selection
+            bp_flag = True if args.bitplane else None
+            stats, res_map = run_codec_benchmark(name, worker, files, args.workers, use_bitplane=bp_flag)
             # Ensure stats is at least a dict with the codec name if failure occurred
             if not stats:
                 stats = {"name": name, "count": 0, "success": False}

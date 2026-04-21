@@ -28,4 +28,4 @@ def get_context_id_fast(ag: uint8, bg: uint8, cg: uint8, intensity: uint8,
     # Cast to int for indexing safety in Numba
     packed = s_lut[int(ag) - int(cg) + 255, int(bg) - int(cg) + 255]
     i_idx  = i_lut[int(intensity)]
-    return d_lut[(int(packed) << 2) | int(i_idx)]
+    return d_lut[int(packed), int(i_idx)]

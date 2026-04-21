@@ -33,7 +33,7 @@ class ShardProfile:
     # Precomputed Dispatch LUTs
     spatial_lut: npt.NDArray[np.uint8]   # [511, 511]
     intensity_lut: npt.NDArray[np.uint8] # [256]
-    dispatch_lut: npt.NDArray[np.uint8]  # [1024]
+    dispatch_lut: npt.NDArray[np.uint8]  # [256, 4] 2D for fast JIT dispatch
 
 def precompute_luts(v_bounds: npt.NDArray[np.uint8], 
                     i_segs: npt.NDArray[np.uint8], 
@@ -70,20 +70,25 @@ def precompute_luts(v_bounds: npt.NDArray[np.uint8],
     # Packing: [V:3][T:2][N:1]
     s_lut[:] = ((v_tier << 3) | (t_idx << 1) | ns_hit).astype(np.uint8)
 
-    # 3. Final Dispatch LUT
-    d_lut = np.zeros(1024, dtype=np.uint8)
+    # 3. Final Dispatch LUT (2D for branchless JIT access)
+    d_lut = np.zeros((256, 4), dtype=np.uint8)
     n_v = shard_map.shape[0]
     n_t = shard_map.shape[2]
+    
     for pk in range(256):
         vt = pk >> 3
         ti = (pk >> 1) & 0x03
         ns = pk & 0x01
+        
         for ii in range(3):
-            idx = (pk << 2) | ii
             if ns != 0 and nsid >= 0:
-                d_lut[idx] = np.uint8(nsid)
+                d_lut[pk, ii] = np.uint8(nsid)
             elif vt < n_v and ti < n_t:
-                d_lut[idx] = shard_map[vt, ii, ti]
+                # shard_map is [v, i, t]
+                d_lut[pk, ii] = shard_map[vt, ii, ti]
+            else:
+                # Fallback to noise shard or last valid shard
+                d_lut[pk, ii] = np.uint8(nsid if nsid >= 0 else 0)
     
     return s_lut, i_lut, d_lut
 
