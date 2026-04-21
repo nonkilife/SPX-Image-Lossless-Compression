@@ -5,11 +5,13 @@
 # Whitelist directories
 !core/
 !core/**
+!technical/
+!technical/**
 
 # Whitelist files
 !README.md
-!test_suite.py
-!license.txt
+!main.py
+!LICENSE.txt
 !.gitignore
 
 # Re-exclude Python junk
