@@ -221,11 +221,10 @@ def predict_pass_2(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
     """
     Stage 2: O(N) Encoding Payload Construction.
     
-    Architecture (Median-Normalized Sharding):
-    Retraces the exact staggered SIMD path as Pass 1, but utilizes the `shard_medians` array
-    derived mathematically from the histograms. It subtracts the median distance from the raw 
-    residual before applying ZigZag encoding, effectively shifting the peak of the Laplacian
-    curve for every shard to exactly 0. 
+    Architecture (Static 128-Bias Normalization):
+    Retraces the exact staggered SIMD path as Pass 1. It subtracts the static 128 bias 
+    from the raw residual before applying ZigZag encoding, effectively shifting the peak 
+    of the Laplacian curve for every shard to exactly 0 (mapped to uint8 center).
     
     Fills the contiguous Numba-optimized memory blocks which will be heavily compressed by rANS.
     """

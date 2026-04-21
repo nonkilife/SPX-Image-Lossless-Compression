@@ -15,7 +15,7 @@ Engineering Rationale:
 Bitstream Structure:
 ```mermaid
 graph TD
-    Meta[Header: H, W, Flags] --> SRB[SRB Block: Widths, Medians, Modes]
+    Meta[Header: H, W, Flags] --> SRB[SRB Block: Widths, Modes]
     SRB --> PDF[PDF Block: Zstd Compacted Tables]
     PDF --> SC[Shard Counts Block]
     SC --> Data[Shard Block: rANS Payloads]
@@ -53,7 +53,7 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
     
     Bitstream Architecture:
     [0-15]     Global Header (Height, Width, Metadata Length, Bit Flags)
-    [16-N]     SRB Chunk: Widths (n_shards per channel), Medians, Modes
+    [16-N]     SRB Chunk: Widths (n_shards per channel), Modes
     [N-M]      PDF Chunk (Zstd): Compacted frequency tables for Dynamic Modes (0, 3)
     [M-O]      Shard Block: Sizes for each active shard, followed by rANS byte payloads
     [O-END]    Optional Metadata

@@ -195,8 +195,6 @@ def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = No
                     if len(h_raw) < h_len:
                         raise ValueError("Truncated header: Shard metadata missing.")
 
-                    shard_medians_dummy = np.full((3, n_shards), 128, dtype=np.uint8) # Temporary for decompress_bitplane fallback if needed
-                    
                     if is_grayscale:
                         r_widths = np.frombuffer(h_raw[:n_shards], dtype=np.uint8)
                         shard_widths[0] = np.where(r_widths == 0, np.uint16(256), r_widths.astype(np.uint16))

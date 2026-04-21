@@ -244,7 +244,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
         # Calculate Global Modes for Noise Shard Prediction
         modes: npt.NDArray[np.uint8] = np.zeros(3, dtype=np.uint8)
         for c_idx in range(3):
-            _, _, mode_val = calculate_channel_stats(channel_hists[c_idx])
+            mode_val = calculate_channel_stats(channel_hists[c_idx])
             modes[c_idx] = np.uint8(mode_val)
         
         # Pad channel maps with 1-pixel zero border for guard-free Numba kernels
@@ -336,18 +336,6 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
                 hits_total_p1[3] = np.uint32(a_hits)
                 sums_total_p1[3] = np.uint64(a_sum)
 
-        # [v6.5] Phase 1 Delivery: Reporting Median Normalization Statistics
-        if os.environ.get("SPX_REPORT_MEDIAN"):
-            print("\n--- [Phase 1] Median effectiveness report ---")
-            for c_idx in range(3):
-                chan = ["Grn", "RD", "BD"][c_idx]
-                total_samples = shard_counts[c_idx].sum()
-                if total_samples > 0:
-                    # [v6.5] Raw Zero is now at index 128 due to centered storage
-                    raw_zero = shard_stats[c_idx, :, 128].sum()
-                    raw_occ = (raw_zero / total_samples) * 100
-                    print(f"Channel {chan}: Raw Zero: {raw_occ:.2f}%")
-            print("-------------------------------------------\n")
         
         metadata_bytes: bytes = extract_png_metadata(img_path)
         metadata_len: int = len(metadata_bytes)

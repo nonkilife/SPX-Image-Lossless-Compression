@@ -160,39 +160,18 @@ def normalize_shard_stats(shard_stats: npt.NDArray[np.uint32]) -> npt.NDArray[np
     return aligned_stats
 
 @njit(fastmath=True, error_model='numpy', cache=True)
-def calculate_channel_stats(hist: npt.NDArray[np.uint32]) -> Tuple[float, int, int]:
+def calculate_channel_stats(hist: npt.NDArray[np.uint32]) -> int:
     """
     Derives O(256) metrics from a global channel histogram.
-    Returns (Mean, Median, Mode).
+    Returns Mode.
     """
     total = np.sum(hist)
-    if total == 0: return 0.0, 0, 0
+    if total == 0: return 0
     
-    # 1. Mean
-    s = 0.0
-    for i in range(256):
-        s += float(i) * hist[i]
-    mean_val = s / float(total)
-    
-    # 2. Mode (Highest Frequency)
-    mode_val = 0
-    max_count = 0
-    for i in range(256):
-        if hist[i] > max_count:
-            max_count = hist[i]
-            mode_val = i
+    # Mode (Highest Frequency)
+    mode_val = int(np.argmax(hist))
             
-    # 3. Median (50th Percentile)
-    acc = 0
-    median_val = 0
-    midpoint = (total + 1) // 2
-    for i in range(256):
-        acc += hist[i]
-        if acc >= midpoint:
-            median_val = i
-            break
-            
-    return mean_val, median_val, mode_val
+    return mode_val
 
 
 # --- Per-Shard Dispatch Tables ---
