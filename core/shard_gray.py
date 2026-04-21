@@ -3,19 +3,37 @@ SPX [Grayscale Sharding Module]
 Module: shard_gray
 Role: Pillar 3.5 (Grayscale) - Single-Channel Data Partitioning.
 Description: N-shard BICC orchestration for grayscale images.
-             Symmetric counterpart to shard_rgb, operating on a single luminance
-             channel in standard raster order (no BICC stagger required without
-             RD/BD chroma channels). Feeds the standard rANS engine.
+
+Design Philosophy: High-Throughput Sequential Raster
+----------------------------------------------------
+Unlike the RGB path, the Grayscale path ignores cross-channel coordination and 
+utilizes a raw, sequential raster scan. This eliminates the 'Staggered Step' 
+logic and the associated branch overhead, allowing the Numba-JIT compiler to 
+maximize loop-level parallelism and SIMD throughput.
+
+Process Flow:
+1. Unified Raster Scan: Pixels are processed in standard [i, j] order.
+2. Context Selection: Each pixel derives its shard ID using spatial neighbors (a, b, c) 
+   and the local predictor (p) for intensity classification.
+3. Decoupled Architecture: While currently using the Universal-42 profile for 
+   system stability, this module is profile-agnostic and ready to support 
+   specialized monochrome profiles (e.g., Gray-Fast-30).
 
 Logic Path Visualization:
 ```mermaid
 graph TD
-    A[Raw Gray Channel] --> B[predict_pass_1: N-Shard BICC Profiling]
+    A[Raw Gray Channel] --> B[predict_pass_1: Sequential Profiling]
     B --> C{Decision Hub}
-    C -->|Standard| D[predict_pass_2: Shard-Sequential Residuals]
-    C -->|Bitplane| E[Skip Pass 2 - Bitplane Engine]
+    C -->|Standard| D[predict_pass_2: Shard-Flat Residuals]
+    C -->|Bitplane| E[Standard Bitplane Path]
     D --> F[Flat Shard Buffers - rANS]
 ```
+
+Engineering Note: Output Compatibility
+--------------------------------------
+To maintain compatibility with the orchestrator (compress.py), the grayscale path 
+returns 3-channel data structures where channel 0 is populated and channels 
+1-2 are left null.
 """
 
 import numpy as np
@@ -64,6 +82,7 @@ def predict_pass_1_gray(h: int, w: int, gray_ch: npt.NDArray[np.uint8],
                 c = gray_ch[pi-1, pj-1]
                 p = selected_predictor(a, b, c)
                 val = gray_ch[pi, pj]
+                # Luma Context: Uses PREDICTOR as intensity baseline (self-referential)
                 ctx = int(get_context_id_fast(a, b, c, p, shard_map, nsid))
                 diff = (int(val) - int(p)) & 0xFF
                 # Centered storage: 0 residual maps to 128

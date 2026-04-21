@@ -4,13 +4,28 @@ Module: shard_rgb
 Role: Pillar 3.5 - Data Partitioning (BICC).
 Description: Unified sharding orchestration compatible with 3D Mapping LUTs.
 
+Design Philosophy: Staggered BICC Coordination
+----------------------------------------------
+The RGB path utilizes a 1-pixel 'Staggered Step' to achieve zero-overhead cross-channel 
+decorrelation. By processing the Green (Lead) channel ahead of the RD/BD (Lag) 
+channels, the Green value for pixel j becomes a causal reference for the chrominance 
+residuals at the same position.
+
+Process Flow:
+1. Green-Lead (Pixel j): Green pixel is predicted using spatial neighbors.
+   - Context: Predictor (pg) is used for intensity-based sharding.
+2. RD/BD-Lag (Pixel j-1): Chrominance pixels are predicted using spatial neighbors.
+   - Context: Actual Reconstructed Green value (prev_valg) at the same position 
+     is used for intensity-based sharding, linking chrominance entropy to the 
+     underlying luminance structure.
+
 Logic Path Visualization:
 ```mermaid
 graph TD
     A[Raw Channels: G, RD, BD] --> B[predict_pass_1: BICC Profile]
     B --> Stagger{Staggered Window}
-    Stagger -->|G-Lead| D[G Context -> ShardProfile.shard_map]
-    Stagger -->|RD/BD-Lag| E[RD/BD Context + G-Ref]
+    Stagger -->|G-Lead| D[G Context: Predictor -> ShardProfile]
+    Stagger -->|RD/BD-Lag| E[RD/BD Context: G-Ref -> ShardProfile]
     D & E --> F[Median Normalization]
     F --> G[predict_pass_2: Vectorized Residuals]
 ```
@@ -97,6 +112,7 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
 
                 pg = selected_predictor(ag, bg, cg)
                 curr_valg = gr_ch[pi, 1]
+                # Luma Context: Uses PREDICTOR as intensity baseline (self-referential)
                 ctxg = int(get_context_id_fast(ag, bg, cg, pg, shard_map, nsid))
                 diffg = (int(curr_valg) - int(pg)) & 0xFF
                 resg_c = (diffg + 128) & 0xFF
@@ -113,6 +129,7 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
                 cg = gr_ch[pi-1, pj-1]
                 pg = selected_predictor(ag, bg, cg)
                 curr_valg = gr_ch[pi, pj]
+                # Luma Context: Uses PREDICTOR as intensity baseline
                 ctxg = int(get_context_id_fast(ag, bg, cg, pg, shard_map, nsid))
                 diffg = (int(curr_valg) - int(pg)) & 0xFF
                 resg_c = (diffg + 128) & 0xFF
@@ -126,6 +143,7 @@ def predict_pass_1(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDAr
                     val1, val2 = rd_ch[pi, ptj], bd_ch[pi, ptj]
                     a1 = rd_ch[pi, ptj-1]; b1 = rd_ch[pi-1, ptj]; c1 = rd_ch[pi-1, ptj-1]
                     a2 = bd_ch[pi, ptj-1]; b2 = bd_ch[pi-1, ptj]; c2 = bd_ch[pi-1, ptj-1]
+                    # Chroma Context: Uses ACTUAL GREEN as intensity baseline (cross-channel BICC)
                     ctx1 = int(get_context_id_fast(a1, b1, c1, prev_valg, shard_map, nsid))
                     ctx2 = int(get_context_id_fast(a2, b2, c2, prev_valg, shard_map, nsid))
                     p1 = selected_predictor(a1, b1, c1)
