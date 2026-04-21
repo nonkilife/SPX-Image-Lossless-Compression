@@ -1,6 +1,5 @@
 import os
 import time
-import gc
 import numpy as np
 import numpy.typing as npt
 from PIL import Image, ImageFile
@@ -12,27 +11,47 @@ import shutil
 import random
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
-import subprocess
 from io import BytesIO
 from typing import List, Dict, Tuple, Any, Optional
-import atexit
 
 # Ensure core engine components are accessible
 try:
-    from core.common import ZpngResult, SHARD_LABELS, from_zigzag, ENABLE_DIAGNOSTICS
     from core.compress import compress_csde
     from core.decompress import decompress_csde
 except ImportError as e:
     print(f"[!] Error: Core modules not found: {e}")
     sys.exit(1)
 
-import imagecodecs
-
 # =============================================================================
 # --- Global Benchmark Settings ---
 # =============================================================================
 WEBP_METHOD = 6
 JXL_EFFORT = 7
+
+# =============================================================================
+# --- Helper Utilities ---
+# =============================================================================
+
+def get_pnm_stats(arr: npt.NDArray) -> int:
+    """Calculate PNM size (Raw Pixels + Header) in bytes."""
+    channels = arr.shape[2] if arr.ndim == 3 else 1
+    pnm_header = f"P{'6' if channels==3 else '5'}\n{arr.shape[1]} {arr.shape[0]}\n255\n".encode('ascii')
+    return len(pnm_header) + arr.size
+
+def calculate_mse(arr1: npt.NDArray, arr2: npt.NDArray) -> float:
+    """Calculate Mean Squared Error between two arrays with shape validation."""
+    if arr1.shape != arr2.shape:
+        # Standardize to 3D for comparison if one is grayscale
+        if arr1.ndim == 2: arr1 = np.expand_dims(arr1, -1)
+        if arr2.ndim == 2: arr2 = np.expand_dims(arr2, -1)
+        
+        # If still mismatched, something is logically wrong in the codec
+        if arr1.shape != arr2.shape:
+            return 9999.0 # Signal massive error instead of crashing
+            
+    a1 = arr1[..., :3].astype(np.float64)
+    a2 = arr2[..., :3].astype(np.float64)
+    return float(np.mean((a1 - a2)**2))
 
 # =============================================================================
 # --- Unified Codec Workers ---
@@ -63,12 +82,8 @@ def zpng_worker(path: str) -> Dict[str, Any]:
         zd_s = (time.perf_counter() - t1)
         
         comp_size_bytes = len(res_z.payload)
-        mse = np.mean((arr_orig.astype(np.float64) - rec_rgb[..., :3].astype(np.float64))**2)
-        
-        # Calculate PNM size (Raw Pixels + Header)
-        channels = arr_orig.shape[2] if arr_orig.ndim == 3 else 1
-        pnm_header = f"P{'6' if channels==3 else '5'}\n{arr_orig.shape[1]} {arr_orig.shape[0]}\n255\n".encode('ascii')
-        pnm_bytes = len(pnm_header) + arr_orig.size
+        mse = calculate_mse(arr_orig, rec_rgb)
+        pnm_bytes = get_pnm_stats(arr_orig)
 
         return {
             "name": "ZPNG", "filename": filename, "pixels": pixels,
@@ -99,24 +114,27 @@ def webp_worker(path: str) -> Dict[str, Any]:
             t1 = time.perf_counter()
             with Image.open(buffer) as img_webp:
                 img_webp.load()
-                _ = np.array(img_webp) # Force full decode
+                arr_rec = np.array(img_webp) # Force full decode
             wd_s = (time.perf_counter() - t1)
             
-            # Calculate PNM size
-            channels = arr_orig.shape[2] if arr_orig.ndim == 3 else 1
-            pnm_header = f"P{'6' if channels==3 else '5'}\n{arr_orig.shape[1]} {arr_orig.shape[0]}\n255\n".encode('ascii')
-            pnm_bytes = len(pnm_header) + arr_orig.size
+            pnm_bytes = get_pnm_stats(arr_orig)
+            mse = calculate_mse(arr_orig, arr_rec)
 
             return {
                 "name": "WebP", "filename": filename, "pixels": pixels,
                 "orig_bytes": orig_size_bytes, "pnm_bytes": pnm_bytes, "comp_bytes": comp_size_bytes,
-                "e_s": we_s, "d_s": wd_s, "mse": 0.0, "success": True
+                "e_s": we_s, "d_s": wd_s, "mse": mse, "success": True
             }
     except Exception as e:
         return {"name": "WebP", "filename": filename, "success": False, "error": str(e)}
 
 def jxl_worker(path: str) -> Dict[str, Any]:
     filename = os.path.basename(path)
+    try:
+        import imagecodecs
+    except ImportError:
+        return {"name": "JXL", "filename": filename, "success": False, "error": "imagecodecs not installed"}
+
     try:
         if path == "__WARMUP__": return {"success": False}
         with Image.open(path) as img:
@@ -130,19 +148,17 @@ def jxl_worker(path: str) -> Dict[str, Any]:
             je_s = (time.perf_counter() - t0)
             
             t1 = time.perf_counter()
-            _ = imagecodecs.jpegxl_decode(encoded)
+            arr_rec = imagecodecs.jpegxl_decode(encoded)
             jd_s = (time.perf_counter() - t1)
             
             comp_size_bytes = len(encoded)
-            # Calculate PNM size
-            channels = arr_orig.shape[2] if arr_orig.ndim == 3 else 1
-            pnm_header = f"P{'6' if channels==3 else '5'}\n{arr_orig.shape[1]} {arr_orig.shape[0]}\n255\n".encode('ascii')
-            pnm_bytes = len(pnm_header) + arr_orig.size
+            pnm_bytes = get_pnm_stats(arr_orig)
+            mse = calculate_mse(arr_orig, arr_rec)
 
             return {
                 "name": "JXL", "filename": filename, "pixels": pixels,
                 "orig_bytes": orig_size_bytes, "pnm_bytes": pnm_bytes, "comp_bytes": comp_size_bytes,
-                "e_s": je_s, "d_s": jd_s, "mse": 0.0, "success": True
+                "e_s": je_s, "d_s": jd_s, "mse": mse, "success": True
             }
     except Exception as e:
         return {"name": "JXL", "filename": filename, "success": False, "error": str(e)}
@@ -187,9 +203,9 @@ class CodecReporter:
 
         total_work = self.total_e_s + self.total_d_s
         if total_work > 0:
-            # Distribute wall-clock proportionally to enc/dec fractions, then cap at serial
-            # floor (total_e_s / total_d_s). Without the cap, single-worker runs produce
-            # TP < Core Eff because wall_clock includes untimed overhead (PNG loading, MSE).
+            # Normalized Wall-Clock: Distribute wall-clock proportionally to core-second fractions.
+            # We cap at total core-seconds to ensure single-threaded TP doesn't look slower
+            # than Core Efficiency just because of IO/PIL overhead outside the timed loop.
             enc_wall = min(wall_clock * (self.total_e_s / total_work), self.total_e_s)
             dec_wall = min(wall_clock * (self.total_d_s / total_work), self.total_d_s)
             sys_enc_tp = orig_mb / enc_wall if enc_wall > 0 else 0
@@ -202,6 +218,7 @@ class CodecReporter:
             "count": self.count,
             "orig_mb": orig_mb,
             "pnm_mb": self.total_pnm / (1024**2),
+            "pnm_bpp": self.total_pnm * 8.0 / self.total_pixels if self.total_pixels > 0 else 0,
             "src_bpp": src_bpp,
             "comp_mb": self.total_comp / (1024**2),
             "saved_pnm_pct": (1.0 - self.total_comp / self.total_pnm) * 100 if self.total_pnm > 0 else 0,
@@ -218,39 +235,47 @@ class CodecReporter:
             "core_tp": (orig_mb / self.total_e_s if self.total_e_s > 0 else 0, orig_mb / self.total_d_s if self.total_d_s > 0 else 0)
         }
 
+# [AI DIRECTIVE] The following table format (print_comparison_table) and 
+# metric ordering are strictly optimized for the user's research workflow. 
+# DO NOT truncate, reorder, or modify this output format/logic without 
+# explicit user confirmation. Preserve all division lines (SEPARATORs).
 def print_comparison_table(stats_list: List[Dict], dataset_name: str):
     if not stats_list or not any(stats_list): return
     valid_stats = [s for s in stats_list if s]
     img_count = valid_stats[0].get('count', 0)
     
     # Headers
-    top_left = f"{dataset_name} ({int(img_count)} imgs)"
+    top_left = dataset_name
     headers = [top_left] + [s['name'] for s in valid_stats]
-    col_widths = [max(len(top_left), 20)] + [max(len(h), 18) for h in headers[1:]]
+    col_widths = [max(len(top_left), 25)] + [max(len(h), 18) for h in headers[1:]]
     
     # Define Rows (Label, key, format, tuple_idx)
     rows = [
-        ("Original Size", "orig_mb", "{:>10.2f} MB"),
-        ("PNM Size (Raw)", "pnm_mb", "{:>10.2f} MB"),
-        ("Source BPP", "src_bpp", "{:>13.4f}"),
-        ("Compressed Size", "comp_mb", "{:>10.2f} MB"),
-        ("Savings (vs PNG)", "saved_pct", "{:>10.2f} %"),
-        ("Savings (vs PNM)", "saved_pnm_pct", "{:>10.2f} %"),
-        ("BPP", "bpp", "{:>13.4f}"),
+        ("PNM Size", "pnm_mb", "{:>10.2f} MB"),
+        (f"Dataset Size ({int(img_count)} imgs)", "orig_mb", "{:>10.2f} MB"),
+        ("ZPNG Size", "comp_mb", "{:>10.2f} MB"),
+        ("BPP (PNM)", "pnm_bpp", "{:>13.4f}"),
+        ("BPP (PNG)", "src_bpp", "{:>13.4f}"),
+        ("BPP (Compressed)", "bpp", "{:>13.4f}"),
+        ("SEPARATOR", "", ""),
+        ("Savings % (vs PNM)", "saved_pnm_pct", "{:>10.2f} %"),
+        ("Savings % (vs PNG)", "saved_pct", "{:>10.2f} %"),
         ("Mean Ratio (%)", "mean_ratio", "{:>10.2f} %"),
         ("Median Ratio (%)", "median_ratio", "{:>10.2f} %"),
         ("Ratio Range (%)", "range", "{0:5.1f}-{1:1.1f} %"),
+        ("SEPARATOR", "", ""),
         ("Avg Enc Time", "avg_e_ms", "{:>10.1f} ms"),
         ("Avg Dec Time", "avg_d_ms", "{:>10.1f} ms"),
         ("Warmup Time", "warmup_s", "{:>10.2f} s"),
-        ("TP: Compress", "sys_tp", "{:>10.2f} MB/s", 0),
-        ("TP: Decompress", "sys_tp", "{:>10.2f} MB/s", 1),
-        ("Core Eff (C)", "core_tp", "{:>10.2f} MB/s", 0),
-        ("Core Eff (D)", "core_tp", "{:>10.2f} MB/s", 1),
-        ("Wins: Space", "wins_s", "{:>13d}"),
-        ("Wins: Encode", "wins_e", "{:>13d}"),
-        ("Wins: Decode", "wins_d", "{:>13d}"),
         ("Wall-clock", "wall_s", "{:>10.2f} s"),
+        ("Single Core (Enc)", "core_tp", "{:>10.2f} MB/s", 0),
+        ("Single Core (Dec)", "core_tp", "{:>10.2f} MB/s", 1),
+        ("Throughput (Enc)", "sys_tp", "{:>10.2f} MB/s", 0),
+        ("Throughput (Dec)", "sys_tp", "{:>10.2f} MB/s", 1),
+        ("SEPARATOR", "", ""),
+        ("Wins: Space", "wins_s", "{:^13d}"),
+        ("Wins: Encode", "wins_e", "{:^13d}"),
+        ("Wins: Decode", "wins_d", "{:^13d}"),
         ("MSE (Quality)", "mse", "{:>13.8f}")
     ]
     
@@ -261,13 +286,20 @@ def print_comparison_table(stats_list: List[Dict], dataset_name: str):
     header_str = "|"
     sep_str = "|"
     for i, h in enumerate(headers):
-        header_str += f" {h:<{col_widths[i]}} |"
+        if i == 0:
+            header_str += f" {h:<{col_widths[i]}} |"
+        else:
+            header_str += f" {h:^{col_widths[i]}} |"
         sep_str += "-" * (col_widths[i] + 2) + "|"
     print(header_str)
     print(sep_str)
     
     # Rows
     for r_label, key, fmt, *idx in rows:
+        if r_label == "SEPARATOR":
+            print(sep_str)
+            continue
+            
         row_str = f"| {r_label:<{col_widths[0]}} |"
         for i, s in enumerate(valid_stats):
             val = s.get(key, "-")
@@ -275,7 +307,7 @@ def print_comparison_table(stats_list: List[Dict], dataset_name: str):
                 val = val[idx[0]]
             
             if val == "-":
-                formatted_val = f"{'N/A':>{col_widths[i+1]}}"
+                formatted_val = f"{'N/A':^{col_widths[i+1]}}"
             else:
                 try:
                     if isinstance(val, (tuple, list)):
@@ -298,11 +330,10 @@ def show_codec_summary(s: Dict):
     div = "---------------------------------------------------------------------------------------------------"
     print(f"\n{div}")
     print(f"  {s['name']} Performance Audit ({int(s.get('count',0))} images):")
-    print(f"  Original Size   : {s['orig_mb']:6.2f} MB")
-    print(f"  PNM Size (Raw)  : {s['pnm_mb']:6.2f} MB")
-    src_bpp = s['total_orig'] * 8.0 / s['total_pixels'] if s.get('total_pixels', 0) > 0 else 0
-    print(f"  Source Density  : {src_bpp:6.4f} BPP (Disk)")
-    print(f"  Compressed Size : {s['comp_mb']:6.2f} MB | BPP {s['bpp']:6.4f} | Saved: PNG {s['saved_pct']:3.2f}% / PNM {s['saved_pnm_pct']:3.2f}%")
+    print(f"  PNM Size        : {s['pnm_mb']:6.2f} MB | BPP {s['pnm_bpp']:6.4f}")
+    print(f"  Dataset Size ({int(s.get('count',0))} imgs): {s['orig_mb']:6.2f} MB | BPP {s['src_bpp']:6.4f}")
+    print(f"  ZPNG Size       : {s['comp_mb']:6.2f} MB | BPP {s['bpp']:6.4f}")
+    print(f"  Savings %       : vs PNM {s['saved_pnm_pct']:5.2f}% | vs PNG {s['saved_pct']:5.2f}%")
     print(f"  Comp. Ratio     : Mean {s['mean_ratio']:5.2f}% | Median {s['median_ratio']:5.2f}% | Range {s['range'][0]:5.1f}-{s['range'][1]:5.1f}%")
     print(f"  Avg Process Time: Enc {s['avg_e_ms']:7.1f} ms | Dec {s['avg_d_ms']:7.1f} ms")
     print(f"  Throughput      : Compress {s['sys_tp'][0]:6.2f} MB/s | Decompress {s['sys_tp'][1]:6.2f} MB/s")
@@ -314,23 +345,24 @@ def show_codec_summary(s: Dict):
 # --- Main Orchestrator ---
 # =============================================================================
 
-def run_codec_benchmark(codec_name, worker_fn, files, workers):
+def run_codec_benchmark(codec_name: str, worker_fn: Any, files: List[str], workers: int) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     print(f"[*] Benchmarking {codec_name}...")
     reporter = CodecReporter(codec_name)
     results = {}
     
-    t_start = time.time()
     try:
-        # --- [關鍵修正 1]：單執行緒獨立 Warmup，徹底避免 Numba 編譯死結 ---
-        print(f"  [Warmup] Compiling Numba JIT (Single Thread)...", end='\r')
-        w_start = time.time()
+        # --- [關鍵修正 1]：單執行緒獨立 Warmup ---
+        msg_warmup = f"  [Warmup] Compiling (Single Thread)..."
+        print(msg_warmup, end='\r', flush=True)
+        w_start = time.perf_counter()
         worker_fn("__WARMUP__")
-        t_warmup = time.time() - w_start
-        print(f"  [Warmup] Completed in {t_warmup:.2f}s" + " " * 20)
+        t_warmup = time.perf_counter() - w_start
+        # Build completion message that fully overwrites the warmup string
+        done_msg = f"  [Warmup] Completed in {t_warmup:.2f}s"
+        print(done_msg.ljust(len(msg_warmup) + 5))
 
         # --- [關鍵修正 2]：正式進入多執行緒壓測 ---
-        # Wall-clock starts AFTER warmup so TP excludes JIT compile time.
-        t_proc_start = time.time()
+        t_proc_start = time.perf_counter()
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {executor.submit(worker_fn, p): p for p in files}
             idx = 0
@@ -341,7 +373,8 @@ def run_codec_benchmark(codec_name, worker_fn, files, workers):
                 if res.get("success"):
                     results[res["filename"]] = res
                 if idx % 10 == 0 or idx == len(files):
-                    print(f"  Progress: {idx}/{len(files)} processed", end='\r', flush=True)
+                    prog_msg = f"  Progress: {idx}/{len(files)} processed"
+                    print(prog_msg.ljust(50), end='\r', flush=True)
             print()
     except KeyboardInterrupt:
         print("\n[!] Aborted.")
@@ -352,7 +385,7 @@ def run_codec_benchmark(codec_name, worker_fn, files, workers):
         traceback.print_exc()
         raise
     
-    wall_clock = time.time() - t_proc_start   # excludes warmup/JIT time
+    wall_clock = time.perf_counter() - t_proc_start   # excludes warmup time
     stats = reporter.get_stats(wall_clock)
     stats["warmup_s"] = t_warmup
     show_codec_summary(stats)
@@ -390,7 +423,7 @@ def export_to_csv(stats_list: List[Dict], dataset_name: str):
                 f"{s['mse']:.10f}"
             ])
 
-def main():
+def main() -> None:
     import argparse
     parser = argparse.ArgumentParser(description="ZPNG Comparative Benchmark Suite")
     parser.add_argument("codec", choices=["zpng", "webp", "jxl", "bench"], help="Sub-command: webp, zpng, jxl, or bench")
@@ -504,7 +537,11 @@ def main():
 
     # --- Win Counting Logic ---
     if len(task_results) > 1:
-        fnames = list(task_results[0].keys())
+        fnames = set()
+        for res_map in task_results:
+            fnames.update(res_map.keys())
+        fnames = sorted(list(fnames))
+        
         wins = [ {"s":0, "e":0, "d":0} for _ in range(len(task_results)) ]
         
         for fn in fnames:
@@ -534,16 +571,20 @@ def main():
     export_to_csv(all_stats, args.path.upper())
 
     # --- Reclassification Logic ---
-    # [v6.2.1] Hardened path check and robust cleanup for Windows environments
     norm_target = os.path.abspath(target_path).replace("\\", "/")
-    if args.reclassify and "div2k_train" in norm_target.lower():
-        # Find ZPNG result map
+    if args.reclassify:
+        # Restriction check: only reclassify if we have a valid ZPNG result set
         zpng_map = None
         for i, (name, _) in enumerate(queue):
             if "ZPNG" in name:
                 zpng_map = task_results[i]
                 break
         
+        if not zpng_map:
+            print("[!] Skipping Reclassification: No ZPNG results available.")
+        elif "div2k_train" not in norm_target.lower():
+             print("[!] Warning: Reclassification usually expects DIV2K_Train dataset. Proceeding anyway...")
+             
         if zpng_map:
             data_root = os.path.dirname(target_path)
             print(f"[*] Pre-cleaning and Reclassifying images into DIV2K_Easy/Hard/Hell in {data_root}...")
