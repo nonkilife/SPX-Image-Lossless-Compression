@@ -45,11 +45,11 @@ graph TD
 import numpy as np
 import numpy.typing as npt
 from numba import njit, prange, uint8, uint64, get_num_threads, get_thread_id
-from typing import Tuple
+from typing import Tuple, Optional
 import zstandard as zstd
 import concurrent.futures
 
-from .predictor import selected_predictor, from_zigzag
+from .predictor import selected_predictor, from_zigzag, IZIGZAG_LUT
 from .sharding import get_context_id_fast, ShardProfile
 from .transform import reconstruct_2d_channels
 
@@ -515,7 +515,6 @@ def compress_bitplane_gray_sharded(h: int, w: int,
     gray_ch_p  = np.pad(gray_ch,  1, constant_values=0)
     resid_2d_p = np.pad(resid_2d, 1, constant_values=0)
     f, cf = _build_pdf_sharded(resid_2d_p, gray_ch_p, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut, n_ctx, get_num_threads(), False)
-
     states, bitstream = _rans_encode_sharded(resid_2d_p, gray_ch_p, cf, f, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut, n_ctx, False)
 
     # Compress frequency tables with Zstd (many uniform/zero rows - high ratio)

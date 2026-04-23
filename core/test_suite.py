@@ -292,8 +292,9 @@ class CodecReporter:
             "mean_ratio": mean_ratio, "median_ratio": np.median(self.ratios),
             "range": (min(self.ratios), max(self.ratios)),
             "mse": self.total_mse / self.total_pixels,
-            "avg_e_ms": (self.total_e_s * 1000) / self.count if self.count > 0 else 0,
-            "avg_d_ms": (self.total_d_s * 1000) / self.count if self.count > 0 else 0,
+            # [v8.3.2 Fix] Reporting Throughput-weighted time per image instead of aggregate core-seconds.
+            "avg_e_ms": (enc_wall * 1000) / self.count if self.count > 0 else 0,
+            "avg_d_ms": (dec_wall * 1000) / self.count if self.count > 0 else 0,
             "wall_s": wall_clock,
             "sys_tp": (sys_enc_tp, sys_dec_tp),
             "total_orig": self.total_orig,

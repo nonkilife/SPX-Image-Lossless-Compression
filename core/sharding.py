@@ -293,7 +293,6 @@ def shard_pass_1_rgb(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.ND
     a_res = np.empty((h, w), dtype=np.uint8) if is_rgba else np.empty((0, 0), dtype=np.uint8)
     row_a_hits = np.zeros(h, dtype=np.uint64)
     row_a_sums = np.zeros(h, dtype=np.float64)
-    ctx_map = np.zeros((3, h, w), dtype=np.uint8)
 
     for c_idx in prange(num_chunks):
         start_i, end_i = c_idx * chunk_size, min((c_idx + 1) * chunk_size, h)
@@ -313,7 +312,6 @@ def shard_pass_1_rgb(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.ND
                 ctxg = int(get_context_id_fast(ag, bg, cg, i_lut[pg], s_lut, d_lut))
                 resg_zz = ZIGZAG_LUT[np.uint8((int(vg) - int(pg)) & 0xFF)]
                 
-                ctx_map[0, i, j] = uint8(ctxg)
                 gr_res[i, j] = resg_zz
                 local_hists[0, ctxg, resg_zz] += 1
                 row_ptrs[i, 0, ctxg] += 1
@@ -327,7 +325,6 @@ def shard_pass_1_rgb(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.ND
                 p1 = selected_predictor(a1, b1, c1)
                 res1_zz = ZIGZAG_LUT[np.uint8((int(v1) - int(p1)) & 0xFF)]
                 
-                ctx_map[1, i, j] = uint8(ctx1)
                 rd_res[i, j] = res1_zz
                 local_hists[1, ctx1, res1_zz] += 1
                 row_ptrs[i, 1, ctx1] += 1
@@ -340,7 +337,6 @@ def shard_pass_1_rgb(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.ND
                 p2 = selected_predictor(a2, b2, c2)
                 res2_zz = ZIGZAG_LUT[np.uint8((int(v2) - int(p2)) & 0xFF)]
                 
-                ctx_map[2, i, j] = uint8(ctx2)
                 bd_res[i, j] = res2_zz
                 local_hists[2, ctx2, res2_zz] += 1
                 row_ptrs[i, 2, ctx2] += 1
@@ -376,7 +372,7 @@ def shard_pass_1_rgb(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.ND
             for i in range(h):
                 row_global_offsets[i, c, s] = uint32(curr)
                 curr += int(row_ptrs[i, c, s])
-    return shard_counts, shard_stats, shard_offsets, row_global_offsets, (row_hits.sum(axis=0), row_abs_sums.sum(axis=0)), (gr_res, rd_res, bd_res, a_res, (uint64(row_a_hits.sum()), row_a_sums.sum())), ctx_map
+    return shard_counts, shard_stats, shard_offsets, row_global_offsets, (row_hits.sum(axis=0), row_abs_sums.sum(axis=0)), (gr_res, rd_res, bd_res, a_res, (uint64(row_a_hits.sum()), row_a_sums.sum())), np.empty((0, 0, 0), dtype=np.uint8)
 
 
 @njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
@@ -404,7 +400,7 @@ def shard_pass_2_rgb(h: int, w: int, ctx_map: npt.NDArray[np.uint8],
             shard_bd[l_bd[ctx2]] = res_bd[i, pj]
             l_rd[ctx1] += 1; l_bd[ctx2] += 1
 
-@njit(fastmath=True, error_model='numpy', cache=True)
+@njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
 def shard_pass_1_gray(h: int, w: int, gr_ch: npt.NDArray[np.uint8], a_ch: npt.NDArray[np.uint8], is_rgba: bool,
                        n_shards: int, s_lut: npt.NDArray[np.uint8], i_lut: npt.NDArray[np.uint8], d_lut: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], npt.NDArray[np.uint32], Tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint64]], Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint8], Tuple[np.uint64, np.float64]], npt.NDArray[np.uint8]]:
     """ 
@@ -423,9 +419,8 @@ def shard_pass_1_gray(h: int, w: int, gr_ch: npt.NDArray[np.uint8], a_ch: npt.ND
     a_res = np.empty((h, w), dtype=np.uint8) if is_rgba else np.empty((0, 0), dtype=np.uint8)
     row_a_hits = np.zeros(h, dtype=np.uint64)
     row_a_sums = np.zeros(h, dtype=np.float64)
-    ctx_map = np.full((3, h, w), 255, dtype=np.uint8)
 
-    for c_idx in range(num_chunks):
+    for c_idx in prange(num_chunks):
         start_i, end_i = c_idx * chunk_size, min((c_idx + 1) * chunk_size, h)
         local_hists = np.zeros((n_shards, 256), dtype=np.uint32)
         for i in range(start_i, end_i):
@@ -436,7 +431,6 @@ def shard_pass_1_gray(h: int, w: int, gr_ch: npt.NDArray[np.uint8], a_ch: npt.ND
                 pg = selected_predictor(ag, bg, cg)
                 curr_valg = gr_ch[pi, pj]
                 ctxg = int(get_context_id_fast(ag, bg, cg, i_lut[pg], s_lut, d_lut))
-                ctx_map[0, i, pj-1] = uint8(ctxg)
                 resg_zz = ZIGZAG_LUT[np.uint8((int(curr_valg) - int(pg)) & 0xFF)]
                 local_hists[ctxg, resg_zz] += 1; row_ptrs[i, ctxg] += 1
                 gr_res[i, pj-1] = resg_zz
@@ -483,7 +477,7 @@ def shard_pass_1_gray(h: int, w: int, gr_ch: npt.NDArray[np.uint8], a_ch: npt.ND
     sums = np.zeros(3, dtype=np.uint64); sums[0] = row_abs_sums.sum()
     
     empty = np.empty((0, 0), dtype=np.uint8)
-    return shard_counts, shard_stats, shard_offsets, row_global_offsets, (hits, sums), (gr_res, empty, empty, a_res, (uint64(row_a_hits.sum()), row_a_sums.sum())), ctx_map
+    return shard_counts, shard_stats, shard_offsets, row_global_offsets, (hits, sums), (gr_res, empty, empty, a_res, (uint64(row_a_hits.sum()), row_a_sums.sum())), np.empty((0, 0, 0), dtype=np.uint8)
 
 @njit(fastmath=True, error_model='numpy', cache=True)
 def shard_pass_2_gray(h: int, w: int, ctx_map: npt.NDArray[np.uint8],
@@ -505,7 +499,7 @@ def shard_pass_2_gray(h: int, w: int, ctx_map: npt.NDArray[np.uint8],
             l_gr[ctxg] += 1
 
 
-@njit(fastmath=True, error_model='numpy', cache=True)
+@njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
 def reconstruct_shards_rgb(h: int, w: int, res_gr: npt.NDArray[np.uint8], res_rd: npt.NDArray[np.uint8],
                            res_bd: npt.NDArray[np.uint8], off_gr: npt.NDArray[np.uint32],
                            off_rd: npt.NDArray[np.uint32], off_bd: npt.NDArray[np.uint32],
@@ -555,6 +549,65 @@ def reconstruct_shards_rgb(h: int, w: int, res_gr: npt.NDArray[np.uint8], res_rd
     res_bd = bd_rec[1:h+1, 1:w+1] if not is_grayscale else np.empty((0, 0), dtype=np.uint8)
     return res_gr, res_rd, res_bd
 
+@njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
+def shard_pass_2_rgb_stateless(h: int, w: int,
+                                gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDArray[np.uint8], bd_ch: npt.NDArray[np.uint8],
+                                row_global_offsets: npt.NDArray[np.uint32],
+                                shard_gr: npt.NDArray[np.uint8], shard_rd: npt.NDArray[np.uint8], shard_bd: npt.NDArray[np.uint8],
+                                s_lut: npt.NDArray[np.uint8], i_lut: npt.NDArray[np.uint8], d_lut: npt.NDArray[np.uint8]) -> None:
+    """
+    Stateless Pass 2 (RGB): recomputes prediction+context per pixel from raw channels,
+    eliminating the 12MB ctx_map + residual readback that the original Pass 2 required.
+    """
+    for i in prange(h):
+        l_gr = row_global_offsets[i, 0].copy()
+        l_rd = row_global_offsets[i, 1].copy()
+        l_bd = row_global_offsets[i, 2].copy()
+        for j in range(w):
+            pj = j + 1
+            pi = i + 1
+            ag, bg, cg = gr_ch[pi, pj-1], gr_ch[pi-1, pj], gr_ch[pi-1, pj-1]
+            pg = selected_predictor(ag, bg, cg)
+            vg = gr_ch[pi, pj]
+            ctxg = int(get_context_id_fast(ag, bg, cg, i_lut[pg], s_lut, d_lut))
+            shard_gr[l_gr[ctxg]] = ZIGZAG_LUT[np.uint8((int(vg) - int(pg)) & 0xFF)]
+            l_gr[ctxg] += 1
+            idx_v = i_lut[vg]
+            a1, b1, c1 = rd_ch[pi, pj-1], rd_ch[pi-1, pj], rd_ch[pi-1, pj-1]
+            p1 = selected_predictor(a1, b1, c1)
+            ctx1 = int(get_context_id_fast(a1, b1, c1, idx_v, s_lut, d_lut))
+            shard_rd[l_rd[ctx1]] = ZIGZAG_LUT[np.uint8((int(rd_ch[pi, pj]) - int(p1)) & 0xFF)]
+            l_rd[ctx1] += 1
+            a2, b2, c2 = bd_ch[pi, pj-1], bd_ch[pi-1, pj], bd_ch[pi-1, pj-1]
+            p2 = selected_predictor(a2, b2, c2)
+            ctx2 = int(get_context_id_fast(a2, b2, c2, idx_v, s_lut, d_lut))
+            shard_bd[l_bd[ctx2]] = ZIGZAG_LUT[np.uint8((int(bd_ch[pi, pj]) - int(p2)) & 0xFF)]
+            l_bd[ctx2] += 1
+
+
+@njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
+def shard_pass_2_gray_stateless(h: int, w: int,
+                                 gr_ch: npt.NDArray[np.uint8],
+                                 row_global_offsets: npt.NDArray[np.uint32],
+                                 shard_gr: npt.NDArray[np.uint8],
+                                 s_lut: npt.NDArray[np.uint8], i_lut: npt.NDArray[np.uint8], d_lut: npt.NDArray[np.uint8]) -> None:
+    """
+    Stateless Pass 2 (Gray): recomputes prediction+context per pixel from raw channel,
+    eliminating the ctx_map + residual readback that the original Pass 2 required.
+    """
+    for i in prange(h):
+        l_gr = row_global_offsets[i, 0].copy()
+        for j in range(w):
+            pj = j + 1
+            pi = i + 1
+            ag, bg, cg = gr_ch[pi, pj-1], gr_ch[pi-1, pj], gr_ch[pi-1, pj-1]
+            pg = selected_predictor(ag, bg, cg)
+            vg = gr_ch[pi, pj]
+            ctxg = int(get_context_id_fast(ag, bg, cg, i_lut[pg], s_lut, d_lut))
+            shard_gr[l_gr[ctxg]] = ZIGZAG_LUT[np.uint8((int(vg) - int(pg)) & 0xFF)]
+            l_gr[ctxg] += 1
+
+
 def execute_sharding(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDArray[np.uint8],
                      bd_ch: npt.NDArray[np.uint8], a_ch: npt.NDArray[np.uint8], 
                      is_rgba: bool, is_grayscale: bool, profile: ShardProfile,
@@ -586,13 +639,13 @@ def execute_sharding(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.ND
     
     if is_grayscale:
         s_gr = np.zeros(int(counts[0].sum()), dtype=np.uint8)
-        shard_pass_2_gray(h, w, ctx_map, gr_res, row_offs, s_gr)
+        shard_pass_2_gray_stateless(h, w, gr_ch, row_offs, s_gr, s_lut, i_lut, d_lut)
         s_rd = np.empty(0, dtype=np.uint8)
         s_bd = np.empty(0, dtype=np.uint8)
     else:
         s_gr = np.zeros(int(counts[0].sum()), dtype=np.uint8)
         s_rd = np.zeros(int(counts[1].sum()), dtype=np.uint8)
         s_bd = np.zeros(int(counts[2].sum()), dtype=np.uint8)
-        shard_pass_2_rgb(h, w, ctx_map, gr_res, rd_res, bd_res, row_offs, s_gr, s_rd, s_bd)
+        shard_pass_2_rgb_stateless(h, w, gr_ch, rd_ch, bd_ch, row_offs, s_gr, s_rd, s_bd, s_lut, i_lut, d_lut)
     
     return ShardBuffer(s_gr, s_rd, s_bd, a_res, counts, stats, offsets, row_offs, metrics[0], metrics[1], a_metrics)

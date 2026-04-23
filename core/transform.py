@@ -166,7 +166,7 @@ def predict_2d_residuals(data_ch: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8
             res[i, j] = ZIGZAG_LUT[np.uint8((int(data_ch[i, j]) - int(pred)) & 0xFF)]
     return res
 
-@njit(cache=True)
+@njit(fastmath=True, cache=True)
 def reconstruct_2d_channels(h: int, w: int, res_ch: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8]:
     """ Inverse MED reconstruction from a 2D ZigZag residual matrix using IZIGZAG_LUT. """
     rec = np.zeros((h, w), dtype=uint8)
