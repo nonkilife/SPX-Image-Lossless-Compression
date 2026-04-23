@@ -178,9 +178,15 @@ def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = No
             if is_pass:
                 rgb = np.array(Image.open(io.BytesIO(compressed_data)).convert('RGBA' if is_rgba else 'RGB'))
             elif is_raw:
-                rgb = np.frombuffer(compressed_data, dtype=np.uint8).reshape((h, w, 4 if is_rgba else 3))
+                if is_grayscale:
+                    rgb = np.frombuffer(compressed_data, dtype=np.uint8).reshape((h, w))
+                else:
+                    rgb = np.frombuffer(compressed_data, dtype=np.uint8).reshape((h, w, 4 if is_rgba else 3))
             elif is_simple:
-                rgb = np.frombuffer(zstandard_decompress(compressed_data), dtype=np.uint8).reshape((h, w, 4 if is_rgba else 3))
+                if is_grayscale:
+                    rgb = np.frombuffer(zstandard_decompress(compressed_data), dtype=np.uint8).reshape((h, w))
+                else:
+                    rgb = np.frombuffer(zstandard_decompress(compressed_data), dtype=np.uint8).reshape((h, w, 4 if is_rgba else 3))
             else:
                 if flag & FLAG_BITPLANE:
                     if is_grayscale:

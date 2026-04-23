@@ -147,13 +147,13 @@ def _decide_shard_mode_core(counts: npt.NDArray[np.uint64], width: int,
     num_templates = len(templates)
     for tid in range(num_templates):
         tpl = templates[tid]
-        tpl_bits = calculate_cross_entropy(counts, tpl.astype(uint16))
+        tpl_bits = calculate_cross_entropy(counts, tpl.astype(np.uint16))
         if tpl_bits < min_emp_bits:
             min_emp_bits = tpl_bits
             best_emp_mode = uint8(4 + tid)
             
     # Calculate the exact entropy of the custom table, and add the "Header Tax" penalty.
-    dense_bits = calculate_cross_entropy(counts, dense_pdf.astype(uint16))
+    dense_bits = calculate_cross_entropy(counts, dense_pdf.astype(np.uint16))
     dense_total_bits = dense_bits + penalty
     
     if min_emp_bits < dense_total_bits:

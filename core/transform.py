@@ -186,19 +186,3 @@ def reconstruct_2d_channels(h: int, w: int, res_ch: npt.NDArray[np.uint8]) -> np
             rec[i, j] = uint8((int(IZIGZAG_LUT[res_ch[i, j]]) + int(pred)) & 0xFF)
     return rec
 
-@njit(parallel=True, fastmath=True, cache=True)
-def calculate_aad_estimate(data_ch: npt.NDArray[np.uint8]) -> float:
-    """ Fast AAD (Average Absolute Deviation) estimation using MED residuals. """
-    h, w = data_ch.shape
-    if h == 0 or w == 0: return 0.0
-    total_abs_err = 0.0
-    for i in prange(h):
-        row_sum = 0.0
-        for j in range(w):
-            a = data_ch[i, j-1] if j > 0 else uint8(0)
-            b = data_ch[i-1, j] if i > 0 else uint8(0)
-            c = data_ch[i-1, j-1] if (i > 0 and j > 0) else uint8(0)
-            pred = selected_predictor(a, b, c)
-            row_sum += abs(float(np.int32(data_ch[i, j]) - np.int32(pred)))
-        total_abs_err += row_sum
-    return total_abs_err / (h * w)
