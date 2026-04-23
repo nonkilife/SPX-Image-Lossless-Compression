@@ -1,5 +1,5 @@
 """
-SPX v7.5 [Flexible-Shard Architecture]
+SPX v8.3.1-stable [Flexible-Shard Architecture]
 Module: spx_compress
 Role: Compressor Orchestrator.
 Description: High-throughput lossless image encoder utilizing the 4-pillar modular core.
@@ -23,33 +23,78 @@ import numpy as np
 import numpy.typing as npt
 import logging
 import os, time
-from typing import Optional
+from typing import Optional, Tuple
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 import zstandard as zstd
 import threading
 from .common import (
-    SpxResult, FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE,
-    normalize_shard_stats,
-    calculate_channel_stats,
-    extract_srb_metadata,
+    FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE,
     BITPLANE_H_THRESHOLD, BITPLANE_HIT_RATE_THRESHOLD, BITPLANE_P90_THRESHOLD,
     ENABLE_DIAGNOSTICS
 )
-from .sharding import PROFILE_RGB
+from .sharding import (
+    PROFILE_RGB, execute_sharding, shard_pass_1_rgb, shard_pass_1_gray,
+    SpxResult, normalize_shard_stats, calculate_channel_stats, extract_srb_metadata
+)
 from .transform import (
     extract_channels, predict_2d_residuals,
     calculate_aad_estimate
 )
-from .shard_rgb import (
-    predict_pass_1, predict_pass_2
-)
-from .shard_gray import (
-    predict_pass_1_gray, predict_pass_2_gray
-)
 from .codec import pack_bitstream
 from .rans_bitplane import compress_bitplane_gray_sharded, compress_bitplane_rgb_sharded
 from . import env
+
+# [v8.3.1] Internal Math Helpers
+@numba.njit(cache=True, inline='always')
+def _calculate_alpha_metrics(res_a: npt.NDArray[np.uint8]) -> Tuple[np.uint32, np.uint64]:
+    """ Calculates hits and abs_sums for Alpha channel diagnostic parity. """
+    h, w = res_a.shape
+    hits = np.uint32(0)
+    abs_sum = np.uint64(0)
+    for i in range(h):
+        for j in range(w):
+            val = res_a[i, j]
+            if val == 128:
+                hits += 1
+            abs_sum += np.uint64(abs(int(val) - 128))
+    return hits, abs_sum
+
+def _evaluate_coder_selection(shard_counts: npt.NDArray[np.uint32], 
+                              shard_widths: npt.NDArray[np.uint16],
+                              normalized_stats: npt.NDArray[np.uint32],
+                              hits_total_p1: npt.NDArray[np.uint32]) -> bool:
+    """
+    [v7.6] Encapsulated Coder Selection Gate.
+    Determines if Bitplane rANS should be used based on entropy and hit rate.
+    """
+    active_mask = shard_counts > 0
+    p90_width = float(np.percentile(shard_widths[active_mask], 90)) if active_mask.any() else 256.0
+
+    global_hist = normalized_stats.sum(axis=1)  # (3, 256) - collapse shards
+    h_vals = []
+    for c_idx in range(3):
+        total = float(global_hist[c_idx].sum())
+        if total > 0:
+            probs = global_hist[c_idx].astype(np.float64) / total
+            mask = probs > 0
+            h_vals.append(-float(np.sum(probs[mask] * np.log2(probs[mask]))))
+    H = float(np.mean(h_vals)) if h_vals else 8.0
+
+    total_hits = float(hits_total_p1[0]) + float(hits_total_p1[1]) + float(hits_total_p1[2])
+    total_px = float(shard_counts[0].sum() + shard_counts[1].sum() + shard_counts[2].sum())
+    hit_rate = total_hits / total_px if total_px > 0 else 0.0
+
+    use_bitplane = bool(
+        H < BITPLANE_H_THRESHOLD
+        and hit_rate > BITPLANE_HIT_RATE_THRESHOLD
+        and p90_width < BITPLANE_P90_THRESHOLD
+    )
+    logger.debug(
+        f"Coder auto-select: H={H:.3f} hit_rate={hit_rate:.3f} p90={p90_width:.1f} "
+        f"-> {'bitplane' if use_bitplane else 'standard'}"
+    )
+    return use_bitplane
 
 # --- Startup: Validate Dependencies ---
 env.verify_environment()
@@ -142,6 +187,10 @@ def check_grayscale_robust(arr: npt.NDArray[np.uint8], img_mode: Optional[str] =
     [v6.6] Hybrid Grayscale Detection: Metadata -> Sampling -> Full Verify.
     Designed for 100% Correctness with High Performance.
     """
+    # Phase 0: Dimension Check
+    if arr.ndim == 2:
+        return True
+
     # Phase 1: Metadata Truth
     if img_mode in ('L', 'LA'):
         return True
@@ -193,7 +242,8 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
         actual_mode: Optional[str] = None
         if preloaded_arr is not None:
             arr = preloaded_arr
-            h, w, c = arr.shape
+            h, w = arr.shape[0], arr.shape[1]
+            c = arr.shape[2] if arr.ndim == 3 else 1
             is_rgba: bool = (c == 4)
         else:
             # Standard Path
@@ -203,7 +253,8 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
             target_mode: str = 'RGBA' if img.mode == 'RGBA' else 'RGB'
             img_rgb: Image.Image = img.convert(target_mode)
             arr = np.array(img_rgb)
-            h, w, c = arr.shape
+            h, w = arr.shape[0], arr.shape[1]
+            c = arr.shape[2] if arr.ndim == 3 else 1
             is_rgba: bool = (c == 4)
 
         # [v4.0.8.2] Secure Original Size Tracking
@@ -244,24 +295,17 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
             mode_val = calculate_channel_stats(channel_hists[c_idx])
             modes[c_idx] = np.uint8(mode_val)
         
-        # Pad channel maps with 1-pixel zero border for guard-free Numba kernels
+        # [v8.3.1] Unified Padding and Pass 1 Sharding (Profiling)
         gr_map_p = np.pad(gr_map, 1, constant_values=0)
-        if not is_grayscale:
-            rd_map_p = np.pad(rd_map, 1, constant_values=0)
-            bd_map_p = np.pad(bd_map, 1, constant_values=0)
+        rd_map_p = np.pad(rd_map, 1, constant_values=0) if not is_grayscale else np.empty((0,0), dtype=np.uint8)
+        bd_map_p = np.pad(bd_map, 1, constant_values=0) if not is_grayscale else np.empty((0,0), dtype=np.uint8)
 
         if is_grayscale:
-            shard_counts, shard_stats, shard_offsets_p1, row_global_offsets, \
-            (hits_total_p1, sums_total_p1) = \
-                predict_pass_1_gray(h, w, gr_map_p,
-                                    profile.shard_map, profile.noise_shard_id,
-                                    profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut)
+            shard_counts, shard_stats, shard_offsets_p1, row_global_offsets, (hits_total_p1, sums_total_p1) = \
+                shard_pass_1_gray(h, w, gr_map_p, n_shards, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut)
         else:
-            shard_counts, shard_stats, shard_offsets_p1, row_global_offsets, \
-            (hits_total_p1, sums_total_p1) = \
-                predict_pass_1(h, w, gr_map_p, rd_map_p, bd_map_p, False,
-                               profile.shard_map, profile.noise_shard_id,
-                               profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut)
+            shard_counts, shard_stats, shard_offsets_p1, row_global_offsets, (hits_total_p1, sums_total_p1) = \
+                shard_pass_1_rgb(h, w, gr_map_p, rd_map_p, bd_map_p, n_shards, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut)
         
         # [v8.0] Static Residual Normalization: Transform centered Pass 1 stats to normalized ZigZag stats
         normalized_stats: npt.NDArray[np.uint32] = normalize_shard_stats(shard_stats)
@@ -278,64 +322,15 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
             if is_grayscale:
                 use_bitplane = True
             else:
-                active_mask = shard_counts > 0
-                p90_width = float(np.percentile(shard_widths[active_mask], 90)) if active_mask.any() else 256.0
+                use_bitplane = _evaluate_coder_selection(shard_counts, shard_widths, normalized_stats, hits_total_p1)
 
-                global_hist = normalized_stats.sum(axis=1)  # (3, 256) - collapse shards
-                h_vals = []
-                for c_idx in range(3):
-                    total = float(global_hist[c_idx].sum())
-                    if total > 0:
-                        probs = global_hist[c_idx].astype(np.float64) / total
-                        mask = probs > 0
-                        h_vals.append(-float(np.sum(probs[mask] * np.log2(probs[mask]))))
-                H = float(np.mean(h_vals)) if h_vals else 8.0
-
-                total_hits = float(hits_total_p1[0]) + float(hits_total_p1[1]) + float(hits_total_p1[2])
-                total_px = float(shard_counts[0].sum() + shard_counts[1].sum() + shard_counts[2].sum())
-                hit_rate = total_hits / total_px if total_px > 0 else 0.0
-
-                use_bitplane = bool(
-                    H < BITPLANE_H_THRESHOLD
-                    and hit_rate > BITPLANE_HIT_RATE_THRESHOLD
-                    and p90_width < BITPLANE_P90_THRESHOLD
-                )
-                logger.debug(
-                    f"Coder auto-select: H={H:.3f} hit_rate={hit_rate:.3f} p90={p90_width:.1f} "
-                    f"-> {'bitplane' if use_bitplane else 'standard'}"
-                )
-
-        # 5 & 6. Buffer allocation and Pass 2 are only needed for standard rANS.
-        # Bitplane path uses predict_2d_residuals and does not consume shard buffers.
+        # [v8.2.0] Standard Path: Execute Full Sharding Hub
         if not use_bitplane:
-            total_res_size: int = int(shard_counts.sum())
-            all_shards_flat: npt.NDArray[np.uint8] = np.empty(total_res_size, dtype=np.uint8)
-            gr_size: int = int(shard_counts[0].sum())
-            rd_size: int = int(shard_counts[1].sum())
-            shard_gr = all_shards_flat[0 : gr_size]
-            shard_rd = all_shards_flat[gr_size : gr_size + rd_size]
-            shard_bd = all_shards_flat[gr_size + rd_size :]
-
-            res_a: npt.NDArray[np.uint8]
-            a_hits: np.uint64
-            a_sum: float
-            if is_grayscale:
-                res_a, (a_hits, a_sum) = \
-                    predict_pass_2_gray(h, w, gr_map_p, a_map, is_rgba,
-                                        profile.shard_map, profile.noise_shard_id,
-                                        profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut,
-                                        row_global_offsets, shard_gr)
-            else:
-                res_a, (a_hits, a_sum) = \
-                    predict_pass_2(h, w, gr_map_p, rd_map_p, bd_map_p, a_map, is_rgba, False,
-                                   profile.shard_map, profile.noise_shard_id,
-                                   profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut,
-                                   row_global_offsets,
-                                   shard_gr, shard_rd, shard_bd)
-
+            sbuffer = execute_sharding(h, w, gr_map_p, rd_map_p, bd_map_p, a_map, is_rgba, is_grayscale, profile)
+            
             if is_rgba:
-                hits_total_p1[3] = np.uint32(a_hits)
-                sums_total_p1[3] = np.uint64(a_sum)
+                hits_total_p1[3] = np.uint32(sbuffer.a_metrics[0])
+                sums_total_p1[3] = np.uint64(sbuffer.a_metrics[1])
 
         
         metadata_bytes: bytes = extract_png_metadata(img_path)
@@ -394,6 +389,8 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
             ))
             if is_rgba:
                 res_a = predict_2d_residuals(a_map)
+                # [v8.3.1] Diagnostic Consistency
+                hits_total_p1[3], sums_total_p1[3] = _calculate_alpha_metrics(res_a)
                 c_alpha = zstd.ZstdCompressor(level=1).compress(res_a.tobytes())
                 bit_payload.extend(np.array([len(c_alpha)], dtype='<u4').tobytes())
                 bit_payload.extend(c_alpha)
@@ -413,6 +410,8 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
             ))
             if is_rgba:
                 res_a = predict_2d_residuals(a_map)
+                # [v8.3.1] Diagnostic Consistency
+                hits_total_p1[3], sums_total_p1[3] = _calculate_alpha_metrics(res_a)
                 c_alpha = zstd.ZstdCompressor(level=1).compress(res_a.tobytes())
                 bit_payload.extend(np.array([len(c_alpha)], dtype='<u4').tobytes())
                 bit_payload.extend(c_alpha)
@@ -422,8 +421,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
         else:
             final_payload, modes_diag = pack_bitstream(
                 h, w, is_rgba, is_grayscale, use_gsub,
-                shard_counts, shard_offsets_p1, shard_widths,
-                all_shards_flat, res_a, metadata_bytes
+                sbuffer, metadata_bytes, profile
             )
             
         # [v5.2.2] Emergency Downgrade Protection (Lazy Evaluation)
@@ -462,7 +460,6 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
         res_modes: npt.NDArray[np.uint8] = modes_diag
 
         # Release resources
-        from .decompress import clear_spx_workspaces
         clear_spx_workspaces()
 
         return SpxResult(enc_time=time.time()-t0, h=h, w=w, is_rgba=is_rgba, comp_size=len(final_payload),

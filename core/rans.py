@@ -33,7 +33,7 @@ from numba import njit, prange, uint8, uint16, uint32, uint64, int32
 from typing import Tuple, List, Optional
 
 from .common import (
-    EMPIRICAL_TEMPLATES,
+    get_empirical_templates,
 )
 from .rans_selector import _decide_shard_mode_core
 
@@ -153,7 +153,8 @@ def collect_freqs_jit(data: npt.NDArray[np.uint8], freqs_out: npt.NDArray[np.uin
 
 @njit(fastmath=True, cache=True)
 def build_pdf_tables_from_shards_core(shard_hists: npt.NDArray[np.uint64],
-                                    shard_widths: npt.NDArray[np.uint16]) -> Tuple[npt.NDArray[np.uint64], npt.NDArray[np.uint64], npt.NDArray[np.uint8]]:
+                                    shard_widths: npt.NDArray[np.uint16],
+                                    templates: npt.NDArray[np.uint64]) -> Tuple[npt.NDArray[np.uint64], npt.NDArray[np.uint64], npt.NDArray[np.uint8]]:
     """ Builds cumulative frequency tables for all shards in a single JIT pass. """
     num_shards: int = shard_hists.shape[0]
     all_sym_freqs: npt.NDArray[np.uint64] = np.zeros((num_shards, 256), dtype=np.uint64)
@@ -165,7 +166,7 @@ def build_pdf_tables_from_shards_core(shard_hists: npt.NDArray[np.uint64],
         h_vals = shard_hists[sid]
         
         if np.sum(h_vals) > 0:
-            best_mode, f_arr = _decide_shard_mode_core(h_vals, width, 120.0, EMPIRICAL_TEMPLATES, False)
+            best_mode, f_arr = _decide_shard_mode_core(h_vals, width, 120.0, templates, False)
             shard_modes[sid] = best_mode
             all_sym_freqs[sid] = f_arr
             
@@ -188,8 +189,9 @@ def build_pdf_tables_from_shards(shard_buffers: List[npt.NDArray[np.uint8]],
     for sid in range(num_shards):
         if len(shard_buffers[sid]) > 0:
             collect_freqs_jit(shard_buffers[sid], shard_hists[sid])
-            
-    return build_pdf_tables_from_shards_core(shard_hists, shard_widths)
+    
+    templates = get_empirical_templates()
+    return build_pdf_tables_from_shards_core(shard_hists, shard_widths, templates)
 
 def compact_pdf_tables(all_sym_freqs: npt.NDArray[np.uint64], shard_widths: npt.NDArray[np.uint16], shard_modes: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8]:
     """ 
@@ -241,13 +243,15 @@ def expand_pdf_tables(compacted_data: npt.NDArray[np.uint8], shard_widths: npt.N
     data_bytes = compacted_data.tobytes()
     ptr = 0
     
+    templates = get_empirical_templates()
+    
     for s in range(num_shards):
         mode = shard_modes[s]
         
         if mode >= 4:
             # Empirical template: retrieve hardcoded PDF, no bitstream bytes consumed
             tid = mode - 4
-            expanded[s] = EMPIRICAL_TEMPLATES[tid].astype(np.uint64)
+            expanded[s] = templates[tid].astype(np.uint64)
         elif mode == 3:
             expanded[s, 0] = uint64(4096)
         else:

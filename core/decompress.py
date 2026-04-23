@@ -31,11 +31,9 @@ import numba
 from .transform import (
     restore_channels, decode_alpha_channel, reconstruct_2d_channels
 )
-from .shard_rgb import (
-    reconstruct_channels
-)
+from .sharding import PROFILE_RGB, reconstruct_shards_rgb
 from .codec import unpack_bitstream
-from .rans_bitplane import decompress_bitplane_rgb_sharded
+from .rans_bitplane import decompress_bitplane_rgb_sharded, decompress_bitplane_gray_sharded
 import threading
 from typing import Tuple, Optional, Union
 from .common import (
@@ -157,66 +155,25 @@ def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = No
         else:
             f = open(spx_input, 'rb')
         try:
-            magic: bytes = f.read(8)
-            if magic != b"SPX_CORE": raise ValueError("Unsupported file format")
-            header_base: bytes = f.read(16)
-            h, w, metadata_len, flag = np.frombuffer(header_base, dtype='<u4')
-            if h == 0 or w == 0 or h > 65535 or w > 65535:
-                raise ValueError(f"Invalid image dimensions: {w}x{h}")
+            # 1. Unified Bitstream Unpacking (Handles Magic, Header, Shards, and Metadata)
+            unpacked = unpack_bitstream(f, PROFILE_RGB)
+            h, w, flag = unpacked.h, unpacked.w, unpacked.flag
             is_rgba: bool = bool(flag & FLAG_RGBA)
             is_simple, is_raw, is_pass = bool(flag & FLAG_SIMPLE), bool(flag & FLAG_RAW), bool(flag & FLAG_PASSTHROUGH)
             is_grayscale: bool = bool(flag & FLAG_GRAYSCALE)
             
+            metadata_bytes: bytes = unpacked.metadata
+            res_gr_flat, res_rd_flat, res_bd_flat = unpacked.res_gr, unpacked.res_rd, unpacked.res_bd
+            gr_offs, rd_offs, bd_offs = unpacked.gr_offs, unpacked.rd_offs, unpacked.bd_offs
+            shard_counts = unpacked.shard_counts
+            res_a_flat = unpacked.res_a
+            
             profile = PROFILE_RGB
-            n_shards = profile.total_shards
             nsid = profile.noise_shard_id
-            shard_widths: npt.NDArray[np.uint16] = np.zeros((3, n_shards), dtype=np.uint16)
-            shard_modes: npt.NDArray[np.uint8] = np.zeros((3, n_shards), dtype=np.uint8)
 
-            metadata_bytes: bytes = b""
-            compressed_data: bytes = b""
-            res_a_flat: Optional[npt.NDArray[np.uint8]] = None
-
-            m_len = int(metadata_len)
-            if not (is_simple or is_raw or is_pass):
-                if flag & FLAG_BITPLANE:
-                    shard_widths.fill(1)
-                    compressed_data = f.read()
-                    if m_len > 0:
-                        metadata_bytes = compressed_data[-m_len:]
-                        compressed_data = compressed_data[:-m_len]
-                    else:
-                        metadata_bytes = b""
-                else:
-                    meta_stride = n_shards if is_grayscale else 3 * n_shards
-                    h_len = meta_stride * 2 # Widths and Modes only
-                    h_raw: bytes = f.read(h_len)
-                    if len(h_raw) < h_len:
-                        raise ValueError("Truncated header: Shard metadata missing.")
-
-                    if is_grayscale:
-                        r_widths = np.frombuffer(h_raw[:n_shards], dtype=np.uint8)
-                        shard_widths[0] = np.where(r_widths == 0, np.uint16(256), r_widths.astype(np.uint16))
-                        shard_modes[0] = np.frombuffer(h_raw[n_shards:2*n_shards], dtype=np.uint8)
-                    else:
-                        r_widths = np.frombuffer(h_raw[:3*n_shards], dtype=np.uint8).reshape((3, n_shards))
-                        shard_widths = np.where(r_widths == 0, np.uint16(256), r_widths.astype(np.uint16))
-                        shard_modes = np.frombuffer(h_raw[3*n_shards:6*n_shards], dtype=np.uint8).reshape((3, n_shards))
-
-                    # Pass the stream directly to unpacker
-                    res_gr_flat, res_rd_flat, res_bd_flat, gr_offs, rd_offs, bd_offs, shard_counts, res_a_flat = unpack_bitstream(
-                        f, h, w, is_rgba, is_grayscale, shard_widths, shard_modes, flag
-                    )
-                    
-                    # Read metadata from the end of the stream
-                    metadata_bytes = f.read(m_len) if m_len > 0 else b""
-            else:
-                # simple/raw/pass paths still read full payload (as they use PIL or Zstd directly)
-                all_payload = f.read()
-                shard_widths.fill(1)
-                metadata_bytes = all_payload[-m_len:] if m_len > 0 else b""
-                compressed_data = all_payload[:-m_len] if m_len > 0 else all_payload
-
+            # [v7.3] Universal Payload Handling
+            compressed_data: bytes = unpacked.payload
+            
             rgb: npt.NDArray[np.uint8]
             if is_pass:
                 rgb = np.array(Image.open(io.BytesIO(compressed_data)).convert('RGBA' if is_rgba else 'RGB'))
@@ -226,34 +183,35 @@ def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = No
                 rgb = np.frombuffer(zstandard_decompress(compressed_data), dtype=np.uint8).reshape((h, w, 4 if is_rgba else 3))
             else:
                 if flag & FLAG_BITPLANE:
-                    from .rans_bitplane import decompress_bitplane_gray_sharded
                     if is_grayscale:
-                        res_gr_flat, ptr = decompress_bitplane_gray_sharded(
-                            compressed_data, h, w, profile
-                        )
-                        gr_rec = reconstruct_2d_channels(h, w, res_gr_flat)
+                        # [v8.2.1] Grayscale bitplane now decoded here for protocol symmetry
+                        res_gr_raw, ptr_bp = decompress_bitplane_gray_sharded(compressed_data, h, w, profile)
+                        gr_rec = reconstruct_2d_channels(h, w, res_gr_raw.reshape((h, w)))
                         rd_rec = np.zeros((h, w), dtype=np.uint8)
                         bd_rec = np.zeros((h, w), dtype=np.uint8)
+                        
+                        if is_rgba:
+                            # Correct Alpha extraction logic for bitplane grayscale
+                            a_len = int(np.frombuffer(compressed_data[ptr_bp : ptr_bp+4], dtype=np.uint32)[0])
+                            ptr_bp += 4
+                            res_a_flat = np.frombuffer(zstandard_decompress(compressed_data[ptr_bp : ptr_bp+a_len]), dtype=np.uint8)
                     else:
                         gr_rec, rd_rec, bd_rec, ptr = decompress_bitplane_rgb_sharded(
                             compressed_data, h, w, profile
                         )
-                    
-                    if is_rgba:
-                        a_len = int(np.frombuffer(compressed_data[ptr:ptr+4], dtype=np.uint32)[0])
-                        ptr += 4
-                        res_a_flat = np.frombuffer(zstandard_decompress(compressed_data[ptr:ptr+a_len]), dtype=np.uint8)
-                    else:
-                        res_a_flat = None
+                        if is_rgba:
+                            # res_a_flat logic for RGB bitplane
+                            a_len = int(np.frombuffer(compressed_data[ptr:ptr+4], dtype=np.uint32)[0])
+                            ptr += 4
+                            res_a_flat = np.frombuffer(zstandard_decompress(compressed_data[ptr:ptr+a_len]), dtype=np.uint8)
                 else:
-                    # Standard Shard Path (already unpacked via stream above)
-                    gr_rec, rd_rec, bd_rec = reconstruct_channels(
+                    # Standard Shard Path
+                    gr_rec, rd_rec, bd_rec = reconstruct_shards_rgb(
                         h, w, res_gr_flat, res_rd_flat, res_bd_flat,
-                        gr_offs, rd_offs, bd_offs, shard_counts, is_grayscale,
-                        profile.shard_map, nsid, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut
+                        gr_offs, rd_offs, bd_offs, is_grayscale,
+                        profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut
                     )
 
-                # np.zeros ensures opaque default for RGBA bitplane images (res_a_flat is None there).
                 a_rec: npt.NDArray[np.uint8] = np.zeros((h, w), dtype=np.uint8) if is_rgba else np.zeros((0, 0), dtype=np.uint8)
                 if is_rgba and res_a_flat is not None:
                     decode_alpha_channel(h, w, res_a_flat.reshape((h, w)), a_rec)

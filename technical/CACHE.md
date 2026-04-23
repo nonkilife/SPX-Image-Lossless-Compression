@@ -1,0 +1,64 @@
+# SPX Cache Consumption Audit (v8.2.1)
+
+This document outlines the memory footprint and CPU cache residency of the SPX codec's core components. Understanding this hierarchy is critical for optimizing throughput and avoiding cache thrashing.
+
+## 1. Memory Hierarchy Overview
+
+The SPX architecture is designed to keep hot-path data within the L1 and L2 caches to minimize memory latency.
+
+| Cache Level | Primary Residents | Footprint (Est.) | Status |
+| :--- | :--- | :--- | :--- |
+| **L1 (32-64 KB)** | rANS Models, ZigZag LUTs, Stack Variables | ~10 KB | **Excellent** |
+| **L2 (512 KB - 1 MB)** | Spatial LUT (`s_lut`), Profiling Histograms, Row Pointers | ~600 KB | **Optimized** |
+| **L3 (16 MB+)** | Image Channel Buffers (RGBA), Bitstream Buffers | 4 - 12 MB | **Stable** |
+
+---
+
+## 2. Component Breakdown
+
+### A. Context Derivation (Pillar 4 Foundation)
+The most frequently accessed tables during the sharding process.
+*   **`s_lut` (Spatial Feature LUT)**: $511 \times 511 \times 1$ byte = **256 KB**
+*   **`i_lut` (Intensity Segment LUT)**: $256 \times 1$ byte = **256 Bytes**
+*   **`d_lut` (Dispatch/Shard ID LUT)**: $256 \times 4$ bytes = **1 KB**
+*   **Total Footprint**: **~257 KB**
+*   **Residency**: Permanent L2 residency during `shard_pass`.
+
+### B. Prediction & Mapping (Pillar 2)
+Static lookup tables used for residual normalization.
+*   **ZigZag LUTs** (`ZIGZAG`, `IZIGZAG`, `BICC`): $256 \times 3$ = **768 Bytes**
+*   **Residency**: L1 Cache.
+
+### C. Entropy Coding (rANS)
+Models are swapped per shard but fit entirely in L1.
+*   **`slot_lookup`** (4096 entries): **4 KB**
+*   **`cum_freqs` + `symbol_freqs`**: **4 KB**
+*   **Total per Model**: **8 KB**
+*   **Residency**: L1 Cache (Core hot path).
+
+### D. Intermediate Working Buffers
+Allocated dynamically during the encoding profiling pass.
+*   **`local_hists`**: $3 \text{ channels} \times 42 \text{ shards} \times 256 \text{ symbols} \times 4 \text{ bytes}$ = **126 KB**
+*   **`row_ptrs` / `row_offsets`**: 512 rows $\times$ 3 ch $\times$ 42 shards $\times$ 4 bytes = **~252 KB**
+*   **Residency**: L2 Cache.
+
+---
+
+## 3. Optimization Rationale
+
+### The "Indirection vs. Footprint" Trade-off
+Current performance is limited by the number of lookup steps (3 steps for context derivation). 
+*   **Proposed "Multi-Plane" s_lut**: Merging `s_lut` and `d_lut` into a $(4, 511, 511)$ array.
+    *   **New Footprint**: **~1.02 MB**
+    *   **Impact**: May slightly stress L2 on older CPUs but eliminates one level of indirection, which is typically a net gain for superscalar execution.
+
+### Negative Optimization: 3D Predictor LUT
+A $256^3$ 3D LUT would consume **16.7 MB**.
+*   **Warning**: This would displace the primary image buffers from L3 cache, leading to severe cache pollution and potentially *slower* execution despite fewer arithmetic instructions.
+*   **Decision**: Rejected in favor of arithmetic branchless optimizations and small 2D LUTs.
+
+---
+
+## 4. Current Bottleneck
+The system is **Instruction-Bound** rather than **Memory-Bound**. 
+The primary bottleneck is the branch-heavy logic in the scalar prediction kernels (`selected_predictor`) which limits the effectiveness of Numba's auto-vectorization.

@@ -1,5 +1,5 @@
 """
-SPX v6.2 [Flexible-Shard Architecture]
+SPX v8.2.1 [Flexible-Shard Architecture]
 Module: spx_predictor
 Role: Pillar 2 - Prediction Kernels.
 Description: Core spatial prediction algorithms (MED) and residual mapping (ZigZag).
@@ -47,20 +47,26 @@ def selected_predictor(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     """
     return med_edge_tuned(a, b, c)
 
+""" [DEPRECATED] Standard Median Edge Detector (MED)
 @njit(error_model='numpy', inline='always', cache=True)
 def med_standard(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
-    """ Standard Median Edge Detector (MED). """
     mx: np.uint8 = max(a, b)
     mn: np.uint8 = min(a, b)
     gap: int = int(a) + int(b) - int(c)
     p: int = min(int(mx), max(int(mn), gap))
     return np.uint8(p)
+"""
 
 @njit(error_model='numpy', inline='always', cache=True)
 def med_edge_tuned(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     """
     Edge-Tuned MED v7.3.1 — Robustness fix for extreme neighbor jumps.
     Replaced branchless logic with explicit blocks to ensure Numba sign-safety.
+    
+    Rationale for Threshold (50): 
+    Detects semantic discontinuities (sharp edges) where standard gradients fail.
+    If |diff| is small but C is far (>50), we assume a step-edge and track 
+    the closer neighbor to avoid massive residual overshoot.
     """
     max_ab: int = int(max(a, b))
     min_ab: int = int(min(a, b))
@@ -80,5 +86,17 @@ def med_edge_tuned(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
             return np.uint8(min_ab)
             
     return np.uint8(p)
+
+# --- Static ZigZag Mapping LUTs ---
+# [v8.2.0] Moved to predictor.py to break Pillar 1/4 circular dependency.
+
+# Maps 8-bit residuals to ZigZag symbols.
+ZIGZAG_LUT = np.array([to_zigzag(i) for i in range(256)], dtype=np.uint8)
+# Maps ZigZag symbols back to 8-bit residuals (wrapped to 0-255).
+IZIGZAG_LUT = np.array([from_zigzag(np.uint8(i)) & 0xFF for i in range(256)], dtype=np.uint8)
+# Combined BICC Bias + ZigZag LUT for direct normalization: Map (v - 128) & 0xFF -> ZigZag
+BICC_ZIGZAG_LUT = np.array([to_zigzag(np.uint8((i - 128) & 0xFF)) for i in range(256)], dtype=np.uint8)
+
+
 
 

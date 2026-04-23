@@ -49,7 +49,7 @@ import numpy.typing as npt
 from numba import njit, uint8, uint16, uint32, uint64
 import os
 
-from .common import EMPIRICAL_TEMPLATES
+from .common import get_empirical_templates
 
 @njit(fastmath=True, cache=True)
 def calculate_cross_entropy(counts: npt.NDArray[np.uint64], pdf: npt.NDArray[np.uint16]) -> float:
@@ -140,8 +140,6 @@ def _decide_shard_mode_core(counts: npt.NDArray[np.uint64], width: int,
     min_emp_bits = 1e18
     
     # Pixel-Adaptive Dynamic Penalty: adjusts relative to shard size.
-    # For small images/shards, the physical byte size of the custom table represents a massive % of the payload,
-    # thus the penalty (discouraging Mode 0) becomes exponentially higher.
     n_pixels = uint32(0)
     for i in range(256): n_pixels += uint32(counts[i])
     penalty = header_penalty_bits * (4096.0 / max(float(n_pixels), 1.0))
@@ -169,5 +167,5 @@ def decide_shard_mode(counts: npt.NDArray[np.uint64], width: int, header_penalty
     Default header penalty (120 bits) represents a 15-byte serialization cost.
     """
     disable = is_templates_disabled()
-    # Pass templates array for Njit compatibility
-    return _decide_shard_mode_core(counts, width, header_penalty_bits, EMPIRICAL_TEMPLATES, disable)
+    templates = get_empirical_templates() # Lazy Fetch
+    return _decide_shard_mode_core(counts, width, header_penalty_bits, templates, disable)

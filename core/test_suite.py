@@ -74,12 +74,22 @@ def calculate_mse(arr1: npt.NDArray, arr2: npt.NDArray) -> float:
         if arr1.ndim == 2: arr1 = np.expand_dims(arr1, -1)
         if arr2.ndim == 2: arr2 = np.expand_dims(arr2, -1)
         
-        # If still mismatched, something is logically wrong in the codec
+        # Handle grayscale (1-ch) vs RGB (3-ch) conversion by codecs
+        if arr1.shape[2] == 1 and arr2.shape[2] == 3:
+            arr1 = np.concatenate([arr1, arr1, arr1], axis=-1)
+        elif arr1.shape[2] == 3 and arr2.shape[2] == 1:
+            arr2 = np.concatenate([arr2, arr2, arr2], axis=-1)
+
         if arr1.shape != arr2.shape:
-            return 9999.0 # Signal massive error instead of crashing
+            return 9999.0
             
-    a1 = arr1[..., :3].astype(np.float64)
-    a2 = arr2[..., :3].astype(np.float64)
+    if arr1.ndim == 3:
+        c = min(arr1.shape[2], 3)
+        a1 = arr1[..., :c].astype(np.float64)
+        a2 = arr2[..., :c].astype(np.float64)
+    else:
+        a1 = arr1.astype(np.float64)
+        a2 = arr2.astype(np.float64)
     return float(np.mean((a1 - a2)**2))
 
 # =============================================================================
@@ -98,7 +108,12 @@ def spx_worker(path: str, **kwargs) -> Dict[str, Any]:
 
         with Image.open(path) as img:
             img.load()
-            arr_orig = np.array(img.convert('RGB'))
+            # [v7.5.2] Detect optimal mode to avoid inflating baseline sizes
+            target_mode = 'RGB'
+            if img.mode in ('L', '1'): target_mode = 'L'
+            elif img.mode == 'RGBA': target_mode = 'RGBA'
+            
+            arr_orig = np.array(img.convert(target_mode))
             pixels = arr_orig.shape[0] * arr_orig.shape[1]
             orig_size_bytes = os.path.getsize(path)
 
@@ -130,7 +145,10 @@ def webp_worker(path: str, **kwargs) -> Dict[str, Any]:
     try:
         if path == "__WARMUP__": return {"success": False}
         with Image.open(path) as img:
-            img = img.convert('RGB')
+            target_mode = 'RGB'
+            if img.mode in ('L', '1'): target_mode = 'L'
+            elif img.mode == 'RGBA': target_mode = 'RGBA'
+            img = img.convert(target_mode)
             arr_orig = np.array(img)
             pixels = arr_orig.shape[0] * arr_orig.shape[1]
             orig_size_bytes = os.path.getsize(path)
@@ -170,7 +188,10 @@ def jxl_worker(path: str, **kwargs) -> Dict[str, Any]:
     try:
         if path == "__WARMUP__": return {"success": False}
         with Image.open(path) as img:
-            img = img.convert('RGB')
+            target_mode = 'RGB'
+            if img.mode in ('L', '1'): target_mode = 'L'
+            elif img.mode == 'RGBA': target_mode = 'RGBA'
+            img = img.convert(target_mode)
             arr_orig = np.array(img)
             pixels = arr_orig.shape[0] * arr_orig.shape[1]
             orig_size_bytes = os.path.getsize(path)
@@ -225,10 +246,17 @@ class CodecReporter:
         self.ratios.append(res["comp_bytes"] / res["orig_bytes"] * 100)
 
     def get_stats(self, wall_clock: float) -> Dict[str, Any]:
-        if self.count == 0: return {}
-        agg_ratio = self.total_comp / self.total_orig * 100   # aggregate: total_comp/total_orig
-        mean_ratio = float(np.mean(self.ratios)) if self.ratios else agg_ratio  # per-image arithmetic mean
-
+        if self.count == 0:
+            return {
+                "name": self.name, "count": 0, "success": False,
+                "orig_mb": 0, "pnm_mb": 0, "pnm_bpp": 0, "src_bpp": 0, "comp_mb": 0,
+                "saved_pnm_pct": 0, "saved_pct": 0, "bpp": 0, "mean_ratio": 0, "median_ratio": 0,
+                "range": (0, 0), "mse": 0, "avg_e_ms": 0, "avg_d_ms": 0, "wall_s": wall_clock,
+                "sys_tp": (0, 0), "total_orig": 0, "total_pixels": 0, "core_tp": (0, 0)
+            }
+        
+        agg_ratio = self.total_comp / self.total_orig * 100
+        mean_ratio = np.mean(self.ratios)
         avg_bpp = self.total_comp * 8.0 / self.total_pixels
         src_bpp = self.total_orig * 8.0 / self.total_pixels if self.total_pixels > 0 else 0
         orig_mb = self.total_orig / (1024**2)
@@ -405,6 +433,8 @@ def run_codec_benchmark(codec_name: str, worker_fn: Any, files: List[str], worke
                 reporter.record(res)
                 if res.get("success"):
                     results[res["filename"]] = res
+                else:
+                    print(f"\n  [!] Error in {codec_name} for {res.get('filename')}: {res.get('error')}")
                 if idx % 10 == 0 or idx == len(files):
                     prog_msg = f"  Progress: {idx}/{len(files)} processed"
                     print(f"\r{prog_msg}", end='', flush=True)

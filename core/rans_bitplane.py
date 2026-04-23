@@ -49,9 +49,8 @@ from typing import Tuple
 import zstandard as zstd
 import concurrent.futures
 
-from .common import selected_predictor
+from .predictor import selected_predictor, from_zigzag
 from .sharding import get_context_id_fast, ShardProfile
-from .predictor import from_zigzag
 from .transform import reconstruct_2d_channels
 
 # ---------------------------------------------------------------------------
@@ -111,7 +110,7 @@ def _build_pdf_sharded(resid_2d:  npt.NDArray[np.uint8],
                 intensity = gray_ch[pi, pj]
             else:
                 intensity = selected_predictor(ag, bg, cg)
-            sid = int(get_context_id_fast(ag, bg, cg, intensity, s_lut, i_lut, d_lut))
+            sid = int(get_context_id_fast(ag, bg, cg, i_lut[intensity], s_lut, d_lut))
 
             # ----- bitplane spatial context from residual neighbors -----
             r_l = resid_2d[pi, pj-1]
@@ -189,7 +188,7 @@ def _rans_encode_sharded(resid_2d:  npt.NDArray[np.uint8],
                          d_lut: npt.NDArray[np.uint8],
                          n_ctx: int,
                          is_chroma: bool) -> Tuple[npt.NDArray[np.uint64],
-                                              npt.NDArray[np.uint8]]:
+                                               npt.NDArray[np.uint8]]:
     """
     Reverse-scan 4-way interleaved rANS encoder.
     Layers 3-0 encoded sequentially per pixel (matching decoder pull order).
@@ -224,7 +223,7 @@ def _rans_encode_sharded(resid_2d:  npt.NDArray[np.uint8],
                 intensity = gray_ch[pi, pj]
             else:
                 intensity = selected_predictor(ag, bg, cg)
-            sid = int(get_context_id_fast(ag, bg, cg, intensity, s_lut, i_lut, d_lut))
+            sid = int(get_context_id_fast(ag, bg, cg, i_lut[intensity], s_lut, d_lut))
 
             # ----- bitplane spatial neighbors -----
             r_l = resid_2d[pi, pj-1]
@@ -331,7 +330,7 @@ def _rans_decode_sharded(bitstream:  npt.NDArray[np.uint8],
             bg = orig[pi-1, pj]
             cg = orig[pi-1, pj-1]
             p_g = selected_predictor(ag, bg, cg)
-            sid = int(get_context_id_fast(ag, bg, cg, p_g, s_lut, i_lut, d_lut))
+            sid = int(get_context_id_fast(ag, bg, cg, i_lut[p_g], s_lut, d_lut))
 
             # ----- bitplane spatial contexts from decoded residual neighbors -----
             r_l = resid[pi, pj-1]
@@ -433,8 +432,8 @@ def _rans_decode_sharded_with_ref(bitstream:  npt.NDArray[np.uint8],
             ag = ref_ch[pi, pj-1]
             bg = ref_ch[pi-1, pj]
             cg = ref_ch[pi-1, pj-1]
-            intensity = ref_ch[pi, pj]
-            sid = int(get_context_id_fast(ag, bg, cg, intensity, s_lut, i_lut, d_lut))
+            # Chroma context uses the actual Lead (Green) pixel value
+            sid = int(get_context_id_fast(ag, bg, cg, i_lut[ref_ch[pi, pj]], s_lut, d_lut))
 
             # ----- bitplane spatial contexts from own decoded residual neighbors -----
             r_l = resid[pi, pj-1]
