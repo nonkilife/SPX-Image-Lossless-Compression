@@ -176,6 +176,133 @@ def _build_pdf_sharded(resid_2d:  npt.NDArray[np.uint8],
 
 
 # ---------------------------------------------------------------------------
+# Fused 3-channel frequency table builder (RGB bitplane path)
+# ---------------------------------------------------------------------------
+@njit(parallel=True, boundscheck=False, cache=True)
+def _build_pdf_sharded_rgb(gr_p:     npt.NDArray[np.uint8],
+                           rd_p:     npt.NDArray[np.uint8],
+                           bd_p:     npt.NDArray[np.uint8],
+                           gr_ref_p: npt.NDArray[np.uint8],
+                           s_lut: npt.NDArray[np.uint8],
+                           i_lut: npt.NDArray[np.uint8],
+                           d_lut: npt.NDArray[np.uint8],
+                           n_ctx: int,
+                           nt: int) -> Tuple[npt.NDArray[np.uint64],
+                                             npt.NDArray[np.uint64],
+                                             npt.NDArray[np.uint64],
+                                             npt.NDArray[np.uint64],
+                                             npt.NDArray[np.uint64],
+                                             npt.NDArray[np.uint64]]:
+    """
+    Single raster pass accumulating symbol counts for all three RGB channels
+    simultaneously, replacing three sequential _build_pdf_sharded calls.
+    Saves 2 of 3 full (h+2)×(w+2) raster scans — ~66% reduction in histogram
+    build DRAM traffic for the bitplane-RGB path.
+
+    counts_tls[thread, channel, layer, combined_ctx, symbol]
+    Returns (f_gr, cf_gr, f_rd, cf_rd, f_bd, cf_bd).
+    """
+    h, w = gr_p.shape[0] - 2, gr_p.shape[1] - 2
+    counts_tls = np.zeros((nt, 3, 4, n_ctx, 4), dtype=np.uint64)
+
+    for pi in prange(1, h + 1):
+        tid = get_thread_id()
+        for pj in range(1, w + 1):
+            ag = gr_ref_p[pi, pj-1]
+            bg = gr_ref_p[pi-1, pj]
+            cg = gr_ref_p[pi-1, pj-1]
+            # Green: intensity = MED-predicted green (luma-correlated)
+            sid_gr = int(get_context_id_fast(ag, bg, cg, i_lut[selected_predictor(ag, bg, cg)], s_lut, d_lut))
+            # Chroma: intensity = actual green pixel value
+            sid_ch = int(get_context_id_fast(ag, bg, cg, i_lut[gr_ref_p[pi, pj]], s_lut, d_lut))
+
+            rl_gr = gr_p[pi, pj-1]; ru_gr = gr_p[pi-1, pj]; rn_gr = gr_p[pi-1, pj-1]; px_gr = gr_p[pi, pj]
+            rl_rd = rd_p[pi, pj-1]; ru_rd = rd_p[pi-1, pj]; rn_rd = rd_p[pi-1, pj-1]; px_rd = rd_p[pi, pj]
+            rl_bd = bd_p[pi, pj-1]; ru_bd = bd_p[pi-1, pj]; rn_bd = bd_p[pi-1, pj-1]; px_bd = bd_p[pi, pj]
+
+            for k in range(4):
+                shift = np.uint8(k * 2)
+                # Green
+                bp_gr = int((rl_gr >> shift) & np.uint8(3)) | (int((ru_gr >> shift) & np.uint8(3)) << 2) | (int((rn_gr >> shift) & np.uint8(3)) << 4)
+                counts_tls[tid, 0, k, sid_gr * N_SPATIAL + bp_gr, int((px_gr >> shift) & np.uint8(3))] += np.uint64(1)
+                # Red-diff
+                bp_rd = int((rl_rd >> shift) & np.uint8(3)) | (int((ru_rd >> shift) & np.uint8(3)) << 2) | (int((rn_rd >> shift) & np.uint8(3)) << 4)
+                counts_tls[tid, 1, k, sid_ch * N_SPATIAL + bp_rd, int((px_rd >> shift) & np.uint8(3))] += np.uint64(1)
+                # Blue-diff
+                bp_bd = int((rl_bd >> shift) & np.uint8(3)) | (int((ru_bd >> shift) & np.uint8(3)) << 2) | (int((rn_bd >> shift) & np.uint8(3)) << 4)
+                counts_tls[tid, 2, k, sid_ch * N_SPATIAL + bp_bd, int((px_bd >> shift) & np.uint8(3))] += np.uint64(1)
+
+    counts = counts_tls.sum(axis=0)  # (3, 4, n_ctx, 4)
+
+    precision = np.uint64(4096)
+    f_gr  = np.zeros((4, n_ctx, 4), dtype=np.uint64)
+    cf_gr = np.zeros((4, n_ctx, 5), dtype=np.uint64)
+    f_rd  = np.zeros((4, n_ctx, 4), dtype=np.uint64)
+    cf_rd = np.zeros((4, n_ctx, 5), dtype=np.uint64)
+    f_bd  = np.zeros((4, n_ctx, 4), dtype=np.uint64)
+    cf_bd = np.zeros((4, n_ctx, 5), dtype=np.uint64)
+
+    for ch in range(3):
+        for k in range(4):
+            for c in range(n_ctx):
+                t = np.uint64(0)
+                for s in range(4):
+                    t += counts[ch, k, c, s]
+                if t > np.uint64(0):
+                    nf = np.zeros(4, dtype=np.uint64)
+                    for s in range(4):
+                        nf[s] = np.uint64(int(round(float(counts[ch, k, c, s]) * 4096.0 / float(t))))
+                        if nf[s] == np.uint64(0):
+                            nf[s] = np.uint64(1)
+                    acc = np.uint64(0)
+                    for s in range(4):
+                        acc += nf[s]
+                    diff = int(precision) - int(acc)
+                    peak = 0
+                    for s in range(1, 4):
+                        if nf[s] > nf[peak]:
+                            peak = s
+                    nf[peak] = np.uint64(int(nf[peak]) + diff)
+                    acc = np.uint64(0)
+                    if ch == 0:
+                        for s in range(4):
+                            f_gr[k, c, s]  = nf[s]
+                            cf_gr[k, c, s] = acc
+                            acc += nf[s]
+                        cf_gr[k, c, 4] = acc
+                    elif ch == 1:
+                        for s in range(4):
+                            f_rd[k, c, s]  = nf[s]
+                            cf_rd[k, c, s] = acc
+                            acc += nf[s]
+                        cf_rd[k, c, 4] = acc
+                    else:
+                        for s in range(4):
+                            f_bd[k, c, s]  = nf[s]
+                            cf_bd[k, c, s] = acc
+                            acc += nf[s]
+                        cf_bd[k, c, 4] = acc
+                else:
+                    if ch == 0:
+                        for s in range(4): f_gr[k, c, s] = np.uint64(1024)
+                        cf_gr[k, c, 0] = np.uint64(0); cf_gr[k, c, 1] = np.uint64(1024)
+                        cf_gr[k, c, 2] = np.uint64(2048); cf_gr[k, c, 3] = np.uint64(3072)
+                        cf_gr[k, c, 4] = np.uint64(4096)
+                    elif ch == 1:
+                        for s in range(4): f_rd[k, c, s] = np.uint64(1024)
+                        cf_rd[k, c, 0] = np.uint64(0); cf_rd[k, c, 1] = np.uint64(1024)
+                        cf_rd[k, c, 2] = np.uint64(2048); cf_rd[k, c, 3] = np.uint64(3072)
+                        cf_rd[k, c, 4] = np.uint64(4096)
+                    else:
+                        for s in range(4): f_bd[k, c, s] = np.uint64(1024)
+                        cf_bd[k, c, 0] = np.uint64(0); cf_bd[k, c, 1] = np.uint64(1024)
+                        cf_bd[k, c, 2] = np.uint64(2048); cf_bd[k, c, 3] = np.uint64(3072)
+                        cf_bd[k, c, 4] = np.uint64(4096)
+
+    return f_gr, cf_gr, f_rd, cf_rd, f_bd, cf_bd
+
+
+# ---------------------------------------------------------------------------
 # Encoder kernel
 # ---------------------------------------------------------------------------
 @njit(cache=True, boundscheck=False, nogil=True)
@@ -503,17 +630,16 @@ def _rans_decode_sharded_with_ref(bitstream:  npt.NDArray[np.uint8],
 # Public API
 # ---------------------------------------------------------------------------
 def compress_bitplane_gray_sharded(h: int, w: int,
-                                   gray_ch:   npt.NDArray[np.uint8],
-                                   resid_2d:  npt.NDArray[np.uint8],
-                                   profile:   ShardProfile) -> bytes:
+                                   gray_ch_p:  npt.NDArray[np.uint8],
+                                   resid_2d_p: npt.NDArray[np.uint8],
+                                   profile:    ShardProfile) -> bytes:
     """
     Primary orchestrator: builds shard-conditioned PDF tables, runs the
     reverse-scan rANS encoder, then serialises to bytes.
+    Accepts pre-padded (h+2, w+2) arrays — no internal np.pad needed.
     """
     n_shards = profile.total_shards
     n_ctx = n_shards * N_SPATIAL
-    gray_ch_p  = np.pad(gray_ch,  1, constant_values=0)
-    resid_2d_p = np.pad(resid_2d, 1, constant_values=0)
     f, cf = _build_pdf_sharded(resid_2d_p, gray_ch_p, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut, n_ctx, get_num_threads(), False)
     states, bitstream = _rans_encode_sharded(resid_2d_p, gray_ch_p, cf, f, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut, n_ctx, False)
 
@@ -576,21 +702,20 @@ def decompress_bitplane_gray_sharded(payload:   bytes,
 
 
 def compress_bitplane_rgb_sharded(h: int, w: int,
-                                   gr_ch:    npt.NDArray[np.uint8],
-                                   rd_ch:    npt.NDArray[np.uint8],
-                                   bd_ch:    npt.NDArray[np.uint8],
-                                   gr_resid: npt.NDArray[np.uint8],
-                                   rd_resid: npt.NDArray[np.uint8],
-                                   bd_resid: npt.NDArray[np.uint8],
+                                   gr_ref_p: npt.NDArray[np.uint8],
+                                   gr_p:     npt.NDArray[np.uint8],
+                                   rd_p:     npt.NDArray[np.uint8],
+                                   bd_p:     npt.NDArray[np.uint8],
                                    profile:  ShardProfile) -> bytes:
     """
     RGB sharded bitplane encoder.
-    All three channels use the green channel (gr_ch) for shard context, matching
-    shard_rgb.py's convention. Two-phase parallel strategy:
-      Phase 1 (sequential): _build_pdf_sharded uses prange internally — each of the
-        three calls gets exclusive use of all Numba threads, avoiding oversubscription.
-      Phase 2 (concurrent): _rans_encode_sharded is single-threaded with nogil=True —
-        three threads run on three separate cores with zero contention.
+    Accepts pre-padded (h+2, w+2) channel and residual arrays — no internal
+    np.pad needed. Two-phase strategy:
+      Phase 1 (fused): _build_pdf_sharded_rgb does a single raster pass
+        accumulating counts for all 3 channels simultaneously — 3× fewer
+        DRAM reads vs three sequential calls.
+      Phase 2 (concurrent): _rans_encode_sharded is single-threaded + nogil —
+        three threads run on three cores with zero contention.
     Bitstream format:
       [0xFF]
       [gr_channel_block]  - tables_zstd_len:u32, tables_zstd, states:4*u64, bs_len:u32, bitstream
@@ -601,16 +726,12 @@ def compress_bitplane_rgb_sharded(h: int, w: int,
     n_ctx = n_shards * N_SPATIAL
     nt = get_num_threads()
 
-    # Pad inputs once, shared across all phases.
-    gr_ref_p = np.pad(gr_ch,    1, constant_values=0)
-    gr_p     = np.pad(gr_resid, 1, constant_values=0)
-    rd_p     = np.pad(rd_resid, 1, constant_values=0)
-    bd_p     = np.pad(bd_resid, 1, constant_values=0)
-
-    # Phase 1: histogram — sequential, each call gets full prange parallelism.
-    f_gr, cf_gr = _build_pdf_sharded(gr_p, gr_ref_p, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut, n_ctx, nt, False)
-    f_rd, cf_rd = _build_pdf_sharded(rd_p, gr_ref_p, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut, n_ctx, nt, True)
-    f_bd, cf_bd = _build_pdf_sharded(bd_p, gr_ref_p, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut, n_ctx, nt, True)
+    # Phase 1: fused 3-channel histogram — single raster pass.
+    f_gr, cf_gr, f_rd, cf_rd, f_bd, cf_bd = _build_pdf_sharded_rgb(
+        gr_p, rd_p, bd_p, gr_ref_p,
+        profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut,
+        n_ctx, nt
+    )
 
     # Phase 2: encode — concurrent, each kernel is single-threaded + nogil.
     def _encode(resid_p, f, cf, is_chroma):

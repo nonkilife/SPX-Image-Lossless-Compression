@@ -645,9 +645,9 @@ def fused_rct_p1_rgb(h: int, w: int, rgb_raw: npt.NDArray[np.uint8],
     row_ptrs = np.zeros((h, 3, n_shards), dtype=np.uint32)
     row_hits = np.zeros((h, 3), dtype=np.uint32)
     row_abs_sums = np.zeros((h, 3), dtype=np.uint64)
-    gr_res = np.empty((h, w), dtype=np.uint8)
-    rd_res = np.empty((h, w), dtype=np.uint8)
-    bd_res = np.empty((h, w), dtype=np.uint8)
+    gr_res = np.zeros((h + 2, w + 2), dtype=np.uint8)
+    rd_res = np.zeros((h + 2, w + 2), dtype=np.uint8)
+    bd_res = np.zeros((h + 2, w + 2), dtype=np.uint8)
     a_res = np.empty((h, w), dtype=np.uint8) if is_rgba else np.empty((0, 0), dtype=np.uint8)
     row_a_hits = np.zeros(h, dtype=np.uint64)
     row_a_sums = np.zeros(h, dtype=np.float64)
@@ -670,7 +670,7 @@ def fused_rct_p1_rgb(h: int, w: int, rgb_raw: npt.NDArray[np.uint8],
                 pg = selected_predictor(ag, bg, cg)
                 ctxg = int(get_context_id_fast(ag, bg, cg, i_lut[pg], s_lut, d_lut))
                 resg_zz = ZIGZAG_LUT[uint8((int(vg) - int(pg)) & 0xFF)]
-                gr_res[i, j] = resg_zz
+                gr_res[pi, pj] = resg_zz
                 local_hists[0, ctxg, resg_zz] += 1
                 row_ptrs[i, 0, ctxg] += 1
                 h0 += np.uint32(resg_zz == 0); s0 += np.uint64(abs(int(vg) - int(pg)))
@@ -682,7 +682,7 @@ def fused_rct_p1_rgb(h: int, w: int, rgb_raw: npt.NDArray[np.uint8],
                 p1 = selected_predictor(a1, b1, c1)
                 ctx1 = int(get_context_id_fast(a1, b1, c1, idx_v, s_lut, d_lut))
                 res1_zz = ZIGZAG_LUT[uint8((int(v1) - int(p1)) & 0xFF)]
-                rd_res[i, j] = res1_zz
+                rd_res[pi, pj] = res1_zz
                 local_hists[1, ctx1, res1_zz] += 1
                 row_ptrs[i, 1, ctx1] += 1
                 h1 += np.uint32(res1_zz == 0); s1 += np.uint64(abs(int(v1) - int(p1)))
@@ -693,7 +693,7 @@ def fused_rct_p1_rgb(h: int, w: int, rgb_raw: npt.NDArray[np.uint8],
                 p2 = selected_predictor(a2, b2, c2)
                 ctx2 = int(get_context_id_fast(a2, b2, c2, idx_v, s_lut, d_lut))
                 res2_zz = ZIGZAG_LUT[uint8((int(v2) - int(p2)) & 0xFF)]
-                bd_res[i, j] = res2_zz
+                bd_res[pi, pj] = res2_zz
                 local_hists[2, ctx2, res2_zz] += 1
                 row_ptrs[i, 2, ctx2] += 1
                 h2 += np.uint32(res2_zz == 0); s2 += np.uint64(abs(int(v2) - int(p2)))
@@ -773,7 +773,7 @@ def fused_rct_p1_gray(h: int, w: int, gray_raw: npt.NDArray[np.uint8],
     row_ptrs = np.zeros((h, n_shards), dtype=np.uint32)
     row_hits = np.zeros(h, dtype=np.uint32)
     row_abs_sums = np.zeros(h, dtype=np.uint64)
-    gr_res = np.empty((h, w), dtype=np.uint8)
+    gr_res = np.zeros((h + 2, w + 2), dtype=np.uint8)
     a_res = np.empty((h, w), dtype=np.uint8) if is_rgba else np.empty((0, 0), dtype=np.uint8)
     row_a_hits = np.zeros(h, dtype=np.uint64)
     row_a_sums = np.zeros(h, dtype=np.float64)
@@ -794,7 +794,7 @@ def fused_rct_p1_gray(h: int, w: int, gray_raw: npt.NDArray[np.uint8],
                 resg_zz = ZIGZAG_LUT[uint8((int(curr_valg) - int(pg)) & 0xFF)]
                 local_hists[ctxg, resg_zz] += 1
                 row_ptrs[i, ctxg] += 1
-                gr_res[i, pj-1] = resg_zz
+                gr_res[pi, pj] = resg_zz
                 h_acc += np.uint32(resg_zz == 0)
                 s_acc += np.uint64(abs(int(curr_valg) - int(pg)))
 

@@ -380,10 +380,9 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
             final_payload = b"SPX_CORE" + header_base + raw_bytes + metadata_bytes
         elif use_bitplane and is_grayscale:
             # [v7.3] Shard-Conditioned Bitplane Grayscale Path
-            resid_2d = res_cached[0]
             bit_payload = bytearray(compress_bitplane_gray_sharded(
                 h, w,
-                gr_map_p[1:-1, 1:-1], resid_2d,
+                gr_map_p, res_cached[0],
                 profile
             ))
             if is_rgba:
@@ -399,11 +398,9 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
             final_payload = b"SPX_CORE" + header_base + bytes(bit_payload) + metadata_bytes
         elif use_bitplane and selected_mode == "RGB":
             # [v7.3] Shard-Conditioned Bitplane RGB Path
-            gr_resid, rd_resid, bd_resid = res_cached[0], res_cached[1], res_cached[2]
             bit_payload = bytearray(compress_bitplane_rgb_sharded(
                 h, w,
-                gr_map_p[1:-1, 1:-1], rd_map_p[1:-1, 1:-1], bd_map_p[1:-1, 1:-1],
-                gr_resid, rd_resid, bd_resid,
+                gr_map_p, res_cached[0], res_cached[1], res_cached[2],
                 profile
             ))
             if is_rgba:
