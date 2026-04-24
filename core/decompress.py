@@ -31,7 +31,7 @@ import zstandard as zstd
 import time, logging, io
 import numba
 from .transform import (
-    restore_channels, decode_alpha_channel, reconstruct_2d_channels
+    restore_channels, reconstruct_2d_channels
 )
 from .sharding import PROFILE_RGB, reconstruct_shards_rgb
 from .codec import unpack_bitstream
@@ -222,7 +222,7 @@ def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = No
 
                 a_rec: npt.NDArray[np.uint8] = np.zeros((h, w), dtype=np.uint8) if is_rgba else np.zeros((0, 0), dtype=np.uint8)
                 if is_rgba and res_a_flat is not None:
-                    decode_alpha_channel(h, w, res_a_flat.reshape((h, w)), a_rec)
+                    reconstruct_2d_channels(h, w, res_a_flat.reshape((h, w)), out=a_rec)
                 
                 rgb = restore_channels(gr_rec, rd_rec, bd_rec, a_rec, is_rgba, is_grayscale,
                                       bool(flag & FLAG_COLOR_GSUB))

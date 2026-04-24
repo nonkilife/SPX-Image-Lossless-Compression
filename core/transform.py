@@ -28,7 +28,7 @@ __version__ = "8.3.2"
 import numpy as np
 import numpy.typing as npt
 from numba import njit, prange, uint8
-from typing import Tuple
+from typing import Tuple, Optional
 from .predictor import (ZIGZAG_LUT, IZIGZAG_LUT, selected_predictor)
 
 
@@ -36,32 +36,28 @@ from .predictor import (ZIGZAG_LUT, IZIGZAG_LUT, selected_predictor)
 def extract_channels(rgb: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint32]]:
     """
     Green-Subtract Reversible Color Transform (G-Sub RCT) and Intensity Mapping.
-    
-    Operation:
-    Extracts the G channel directly, then subtracts G from R and B.
-    By doing so, the luminance correlation (which heavily permeates G, R, B simultaneously) 
-    is largely eliminated from R and B, making these newly created RD and BD color-difference 
-    channels highly compressible. Also outputs per-row intensity histograms for profile logic.
-
-    [v8.3.2] Optimized histogram memory footprint.
+    [v8.3.2] Thread-safe histogram reduction using row-level accumulation.
     """
     if rgb.ndim == 2:
-        # Grayscale fast-path [v8.3.2] Parallelized histogram
         h, w = rgb.shape
         gr_map = rgb.copy()
         rd_map = np.empty((0, 0), dtype=np.uint8)
         bd_map = np.empty((0, 0), dtype=np.uint8)
         a_map = np.empty((0, 0), dtype=np.uint8)
         
-        # [v8.3.2] Parallel Accumulation
-        global_hists = np.zeros((3, 256), dtype=np.uint32)
+        row_hists = np.zeros((h, 256), dtype=np.uint32)
         for i in prange(h):
-            local_hist = np.zeros(256, dtype=np.uint32)
             for j in range(w):
-                local_hist[rgb[i, j]] += 1
-            for val in range(256):
-                if local_hist[val] > 0:
-                    global_hists[0, val] += local_hist[val]
+                row_hists[i, rgb[i, j]] += 1
+        
+        global_hists = np.zeros((3, 256), dtype=np.uint32)
+        # Final reduction (Parallelized over symbols for efficiency)
+        for val in prange(256):
+            acc = np.uint32(0)
+            for i in range(h):
+                acc += row_hists[i, val]
+            global_hists[0, val] = acc
+            
         return gr_map, rd_map, bd_map, a_map, global_hists
 
     h, w, c = rgb.shape[0], rgb.shape[1], rgb.shape[2]
@@ -70,11 +66,10 @@ def extract_channels(rgb: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8],
     bd_map = np.empty((h, w), dtype=np.uint8)
     a_map = np.empty((h, w), dtype=np.uint8) if c == 4 else np.empty((0, 0), dtype=np.uint8)
     
-    # [v8.3.2] Reduced memory: Each thread maintains its own local histogram set to avoid collisions
-    global_hists = np.zeros((3, 256), dtype=np.uint32)
+    # [v8.3.2] Row-wise histograms to avoid execute-time race conditions in prange
+    row_hists = np.zeros((h, 3, 256), dtype=np.uint32)
     
     for i in prange(h):
-        local_hist = np.zeros((3, 256), dtype=np.uint32)
         for j in range(w):
             pix = rgb[i, j]
             r, g, b = pix[0], pix[1], pix[2]
@@ -83,18 +78,21 @@ def extract_channels(rgb: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8],
             bd_v = np.uint8((int(b) - int(g)) & 0xFF)
             rd_map[i, j] = rd_v
             bd_map[i, j] = bd_v
-            local_hist[0, g] += 1
-            local_hist[1, rd_v] += 1
-            local_hist[2, bd_v] += 1
+            
+            row_hists[i, 0, g] += 1
+            row_hists[i, 1, rd_v] += 1
+            row_hists[i, 2, bd_v] += 1
             if c == 4:
                 a_map[i, j] = pix[3]
-        
-        # Atomic-like merge back to global (Numba prange handles serialization of critical sections efficiently here)
-        for ch in range(3):
-            for val in range(256):
-                if local_hist[ch, val] > 0:
-                    # Note: Simple += is safe in some Numba versions, but we ensure consistency
-                    global_hists[ch, val] += local_hist[ch, val]
+    
+    # Final global reduction
+    global_hists = np.zeros((3, 256), dtype=np.uint32)
+    for ch in range(3):
+        for val in prange(256):
+            acc = np.uint32(0)
+            for i in range(h):
+                acc += row_hists[i, ch, val]
+            global_hists[ch, val] = acc
 
     return gr_map, rd_map, bd_map, a_map, global_hists
 
@@ -126,30 +124,11 @@ def restore_channels(gr_rec: npt.NDArray[np.uint8], rd_rec: npt.NDArray[np.uint8
                 
     return rgb
 
-@njit(error_model='numpy', cache=True)
-def decode_alpha_channel(h: int, w: int, res_ch: npt.NDArray[np.uint8], rec_ch: npt.NDArray[np.uint8]) -> None:
-    """ Predictive restoration for Alpha channel using IZIGZAG_LUT. """
-    for i in range(h):
-        row_rec, res_row = rec_ch[i], res_ch[i]
-        # Neighbor Row Reference
-        row_trec = rec_ch[i-1] if i > 0 else None
-        
-        a_val = uint8(0)
-        c_val = uint8(0)
-        for j in range(w):
-            b_val = row_trec[j] if row_trec is not None else uint8(0)
-            p = selected_predictor(a_val, b_val, c_val)
-            # Apply LUT-based residual restoration
-            val = uint8((int(IZIGZAG_LUT[res_row[j]]) + int(p)) & 0xFF)
-            row_rec[j] = val
-            a_val = val
-            c_val = b_val 
-
 @njit(parallel=True, cache=True)
 def predict_2d_residuals(data_ch: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8]:
     """
     Applies MED prediction rowwise and encodes each residual as a ZigZag symbol via LUT.
-    Returns a 2D residual matrix with the same shape as the input channel.
+    [v8.3.2] Used primarily for Alpha and non-sharded grayscale modes.
     """
     h, w = data_ch.shape
     res = np.empty((h, w), dtype=uint8)
@@ -170,9 +149,9 @@ def predict_2d_residuals(data_ch: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8
     return res
 
 @njit(fastmath=True, cache=True)
-def reconstruct_2d_channels(h: int, w: int, res_ch: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8]:
+def reconstruct_2d_channels(h: int, w: int, res_ch: npt.NDArray[np.uint8], out: Optional[npt.NDArray[np.uint8]] = None) -> npt.NDArray[np.uint8]:
     """ Inverse MED reconstruction from a 2D ZigZag residual matrix using IZIGZAG_LUT. """
-    rec = np.zeros((h, w), dtype=uint8)
+    rec = out if out is not None else np.zeros((h, w), dtype=uint8)
     if h == 0 or w == 0: return rec
     
     for i in range(h):
@@ -188,4 +167,3 @@ def reconstruct_2d_channels(h: int, w: int, res_ch: npt.NDArray[np.uint8]) -> np
             pred = selected_predictor(a, b, c)
             rec[i, j] = uint8((int(IZIGZAG_LUT[res_ch[i, j]]) + int(pred)) & 0xFF)
     return rec
-

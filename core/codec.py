@@ -62,8 +62,7 @@ from .common import (
     FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH
 )
 from .sharding import (
-    PROFILE_RGB, ShardProfile, ShardBuffer,
-    normalize_shard_stats, extract_srb_metadata
+    PROFILE_RGB, ShardProfile, ShardBuffer, extract_srb_metadata
 )
 from .rans import (
 
@@ -136,9 +135,8 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
     n_channels = 1 if is_grayscale else 3
     
     shard_counts = sbuffer.counts
-    # [v8.3.2] Automatic Width Extraction from ShardBuffer Stats
-    normalized_stats = normalize_shard_stats(sbuffer.stats)
-    shard_widths = extract_srb_metadata(normalized_stats)
+    # [v8.3.2] Automatic Width Extraction from ShardBuffer Stats (Pre-normalized)
+    shard_widths = extract_srb_metadata(sbuffer.stats)
 
     # 1. SRB Block: Widths and Modes (Unified)
     header_widths = (shard_widths[:n_channels, :n_shards] % 256).astype(np.uint8).tobytes()
