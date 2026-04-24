@@ -71,8 +71,7 @@ def clear_spx_workspaces():
     """ [v8.3.2] Forces release of Thread-Local decompressors to prevent memory retention in server workers. """
     if hasattr(thread_local_decomp, 'decomp'):
         del thread_local_decomp.decomp
-    import gc
-    gc.collect()
+
 
 def inject_png_metadata(filepath: str, metadata_bytes: bytes) -> None:
     """

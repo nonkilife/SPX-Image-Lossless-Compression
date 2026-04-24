@@ -31,7 +31,6 @@ from typing import Optional, Tuple
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 import zstandard as zstd
-import threading
 from .common import (
     FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE,
     BITPLANE_H_THRESHOLD, BITPLANE_HIT_RATE_THRESHOLD, BITPLANE_P90_THRESHOLD
@@ -51,20 +50,6 @@ env.verify_environment()
 logger: logging.Logger = logging.getLogger("spx.compress")
 
 # [v8.3.2] Module-level Thread-Local for compressor object reuse
-thread_local_comp: threading.local = threading.local()
-
-def clear_spx_workspaces():
-    """ Forces release of large Thread-Local memory buffers. """
-    if hasattr(thread_local_comp, 'comp'):
-        del thread_local_comp.comp
-    import gc
-    gc.collect()
-
-def zstandard_compress(data: bytes) -> bytes:
-    """ Thread-safe entropy coding utility with compressor reuse. """
-    if not hasattr(thread_local_comp, 'comp'):
-        thread_local_comp.comp = zstd.ZstdCompressor(level=1, threads=1)
-    return thread_local_comp.comp.compress(data)
 
 def set_parallel_threads(n: int):
     """ Configures the number of CPU threads used by Numba. """
@@ -205,8 +190,6 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
 
         if output_path:
             with open(output_path, 'wb') as f_out: f_out.write(final_payload)
-        
-        clear_spx_workspaces()
         return SpxResult(enc_time=time.time()-t0, h=h, w=w, is_rgba=is_rgba, comp_size=len(final_payload), orig_size=orig_size, hits=p1.hits, res_sums=p1.sums, shard_counts=p1.shard_counts, shard_stats=p1.shard_stats, shard_widths=shard_widths, shard_modes=modes_diag, channel_hists=p1.channel_hists, channels=(p1.gr_ch_p[1:-1, 1:-1], p1.rd_ch_p[1:-1, 1:-1] if not is_grayscale else p1.rd_ch_p, p1.bd_ch_p[1:-1, 1:-1] if not is_grayscale else p1.bd_ch_p, a_map), payload=final_payload, mode=selected_mode)
     except Exception as e:
         logger.error(f"Compression Failure: {e}"); raise

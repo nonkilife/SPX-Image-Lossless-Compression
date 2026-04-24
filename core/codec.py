@@ -65,10 +65,9 @@ from .sharding import (
     PROFILE_RGB, ShardProfile, ShardBuffer, extract_srb_metadata
 )
 from .rans import (
-
     rans_encode_shards_parallel,
     build_pdf_tables_from_shards, L_LOWER,
-    compact_pdf_tables,
+    compact_pdf_tables, pack_shard_payloads,
     rans_decode_4way_core, build_all_lookups,
     expand_pdf_tables
 )
@@ -141,32 +140,7 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
     # 1. SRB Block: Widths and Modes (Unified)
     header_widths = (shard_widths[:n_channels, :n_shards] % 256).astype(np.uint8).tobytes()
     
-    # 2. Build PDF tables and extract modes (Unified Channel Stacking)
-    all_shards = []
-    src_channels = [sbuffer.gr_payload] if is_grayscale else [sbuffer.gr_payload, sbuffer.rd_payload, sbuffer.bd_payload]
-    for c_idx, c_data in enumerate(src_channels):
-        c_counts = shard_counts[c_idx]
-        shard_offs = np.zeros(n_shards + 1, dtype=np.uint32)
-        shard_offs[1:] = np.cumsum(c_counts)
-        for s in range(n_shards):
-            all_shards.append(c_data[shard_offs[s]:shard_offs[s+1]])
-
-    c_cums, c_syms, c_modes = build_pdf_tables_from_shards(all_shards, shard_widths[:n_channels].ravel())
-    
-    # 3. Compact and Compress PDF Block
-    pdf_compact = compact_pdf_tables(c_syms, shard_widths[:n_channels, :n_shards].ravel(), c_modes)
-    c_pdf = get_zstd_comp(level=3).compress(pdf_compact.tobytes())
-    
-    # 4. Assemble Payload Structure
-    payload_parts = []
-    payload_parts.append(np.uint32(len(c_pdf)).tobytes())
-    payload_parts.append(c_pdf)
-    
-    sc_out = shard_counts[:n_channels].tobytes()
-    payload_parts.append(np.uint32(len(sc_out)).tobytes())
-    payload_parts.append(sc_out)
-
-    # 5. Parallel rANS Encoding
+    # 2. Build res_flat + shard offset arrays (reused by both histogram and rANS encode)
     if is_grayscale:
         res_flat = sbuffer.gr_payload
     else:
@@ -176,17 +150,39 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
     shard_offsets_ans = np.zeros(len(shard_lengths_ans), dtype=np.uint32)
     if len(shard_lengths_ans) > 0:
         shard_offsets_ans[1:] = np.cumsum(shard_lengths_ans[:-1])
-        
+
+    # 3. Build PDF tables (parallel histogram collection + parallel per-shard PDF building)
+    c_cums, c_syms, c_modes = build_pdf_tables_from_shards(
+        res_flat, shard_offsets_ans, shard_lengths_ans, shard_widths[:n_channels].ravel()
+    )
+
+    # 4. Compact and Compress PDF Block
+    pdf_compact = compact_pdf_tables(c_syms, shard_widths[:n_channels, :n_shards].ravel(), c_modes)
+    c_pdf = get_zstd_comp(level=3).compress(pdf_compact.tobytes())
+
+    # 5. Assemble Header
+    payload_parts = []
+    payload_parts.append(np.uint32(len(c_pdf)).tobytes())
+    payload_parts.append(c_pdf)
+
+    sc_out = shard_counts[:n_channels].tobytes()
+    payload_parts.append(np.uint32(len(sc_out)).tobytes())
+    payload_parts.append(sc_out)
+
+    # 6. Parallel rANS Encoding
     final_states, bitstreams_flat, bs_offsets, bs_lengths = rans_encode_shards_parallel(
         res_flat, shard_offsets_ans, shard_lengths_ans, c_cums, c_syms, L_LOWER
     )
-    
-    for idx in range(len(shard_lengths_ans)):
-        payload_parts.append(final_states[idx].astype('<u8').tobytes())
-        payload_parts.append(np.uint32(bs_lengths[idx]).tobytes())
-        if bs_lengths[idx] > 0:
-            off = int(bs_offsets[idx])
-            payload_parts.append(bitstreams_flat[off : off + int(bs_lengths[idx])])
+
+    # 7. Serialize shard payloads into a single pre-allocated buffer (eliminates Python loop)
+    num_shards_total = len(shard_lengths_ans)
+    shard_payload_sizes = bs_lengths + np.uint32(36)
+    shard_write_offsets = np.zeros(num_shards_total, dtype=np.uint32)
+    if num_shards_total > 0:
+        shard_write_offsets[1:] = np.cumsum(shard_payload_sizes[:-1])
+    shard_buf = np.empty(int(np.sum(shard_payload_sizes)), dtype=np.uint8)
+    pack_shard_payloads(final_states, bs_lengths, bs_offsets, bitstreams_flat, shard_buf, shard_write_offsets)
+    payload_parts.append(shard_buf.tobytes())
 
     # 6. Optional Alpha Layer
     if is_rgba:

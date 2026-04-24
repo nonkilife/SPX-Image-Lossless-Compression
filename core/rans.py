@@ -158,25 +158,37 @@ def collect_freqs_jit(data: npt.NDArray[np.uint8], freqs_out: npt.NDArray[np.uin
     for i in range(len(data)):
         freqs_out[data[i]] += uint64(1)
 
-@njit(fastmath=True, cache=True)
+@njit(parallel=True, fastmath=True, cache=True)
+def collect_all_freqs_parallel(data_flat: npt.NDArray[np.uint8],
+                                shard_offsets: npt.NDArray[np.uint32],
+                                shard_lengths: npt.NDArray[np.uint32],
+                                hists_out: npt.NDArray[np.uint64]):
+    n = len(shard_lengths)
+    for i in prange(n):
+        start = int(shard_offsets[i])
+        length = int(shard_lengths[i])
+        for j in range(length):
+            hists_out[i, data_flat[start + j]] += uint64(1)
+
+@njit(parallel=True, fastmath=True, cache=True)
 def build_pdf_tables_from_shards_core(shard_hists: npt.NDArray[np.uint64],
                                     shard_widths: npt.NDArray[np.uint16],
                                     templates: npt.NDArray[np.uint64]) -> Tuple[npt.NDArray[np.uint64], npt.NDArray[np.uint64], npt.NDArray[np.uint8]]:
-    """ Builds cumulative frequency tables for all shards in a single JIT pass. """
+    """ Builds cumulative frequency tables for all shards in parallel. """
     num_shards: int = shard_hists.shape[0]
     all_sym_freqs: npt.NDArray[np.uint64] = np.zeros((num_shards, 256), dtype=np.uint64)
     all_cum_freqs: npt.NDArray[np.uint64] = np.zeros((num_shards, 257), dtype=np.uint64)
     shard_modes: npt.NDArray[np.uint8] = np.zeros(num_shards, dtype=np.uint8)
-    
-    for sid in range(num_shards):
+
+    for sid in prange(num_shards):
         width = int(shard_widths[sid])
         h_vals = shard_hists[sid]
-        
+
         if np.sum(h_vals) > 0:
             best_mode, f_arr = _decide_shard_mode_core(h_vals, width, 120.0, templates, False)
             shard_modes[sid] = best_mode
             all_sym_freqs[sid] = f_arr
-            
+
             acc = uint64(0)
             for j in range(256):
                 all_cum_freqs[sid, j] = acc
@@ -186,17 +198,16 @@ def build_pdf_tables_from_shards_core(shard_hists: npt.NDArray[np.uint64],
             shard_modes[sid] = uint8(3)
             all_sym_freqs[sid, 0] = uint64(4096)
             all_cum_freqs[sid, 1:] = uint64(4096)
-            
+
     return all_cum_freqs, all_sym_freqs, shard_modes
 
-def build_pdf_tables_from_shards(shard_buffers: List[npt.NDArray[np.uint8]], 
-                                 shard_widths: npt.NDArray[np.uint16]) -> Tuple[npt.NDArray[np.uint64], npt.NDArray[np.uint64], npt.NDArray[np.uint8]]:
-    num_shards: int = len(shard_buffers)
+def build_pdf_tables_from_shards(data_flat: npt.NDArray[np.uint8],
+                                  shard_offsets: npt.NDArray[np.uint32],
+                                  shard_lengths: npt.NDArray[np.uint32],
+                                  shard_widths: npt.NDArray[np.uint16]) -> Tuple[npt.NDArray[np.uint64], npt.NDArray[np.uint64], npt.NDArray[np.uint8]]:
+    num_shards = len(shard_lengths)
     shard_hists = np.zeros((num_shards, 256), dtype=np.uint64)
-    for sid in range(num_shards):
-        if len(shard_buffers[sid]) > 0:
-            collect_freqs_jit(shard_buffers[sid], shard_hists[sid])
-    
+    collect_all_freqs_parallel(data_flat, shard_offsets, shard_lengths, shard_hists)
     templates = get_empirical_templates()
     return build_pdf_tables_from_shards_core(shard_hists, shard_widths, templates)
 
@@ -421,6 +432,32 @@ def rans_encode_shards_parallel(shard_data_flat: npt.NDArray[np.uint8],
             bs_lengths[i] = uint32(ptr - bs_start)
         
     return final_states, bitstreams_flat, bs_offsets, bs_lengths
+
+@njit(cache=True)
+def pack_shard_payloads(final_states: npt.NDArray[np.uint64],
+                         bs_lengths: npt.NDArray[np.uint32],
+                         bs_offsets: npt.NDArray[np.uint32],
+                         bitstreams_flat: npt.NDArray[np.uint8],
+                         out: npt.NDArray[np.uint8],
+                         shard_write_offsets: npt.NDArray[np.uint32]):
+    """Serializes all shard payloads (states + length + bitstream) into a pre-allocated buffer."""
+    n = len(bs_lengths)
+    for i in range(n):
+        dst = int(shard_write_offsets[i])
+        for lane in range(4):
+            st = final_states[i, lane]
+            for byte_idx in range(8):
+                out[dst] = uint8((st >> uint64(byte_idx * 8)) & uint64(0xFF))
+                dst += 1
+        bl = int(bs_lengths[i])
+        out[dst]     = uint8(bl & 0xFF)
+        out[dst + 1] = uint8((bl >> 8) & 0xFF)
+        out[dst + 2] = uint8((bl >> 16) & 0xFF)
+        out[dst + 3] = uint8((bl >> 24) & 0xFF)
+        dst += 4
+        src = int(bs_offsets[i])
+        for j in range(bl):
+            out[dst + j] = bitstreams_flat[src + j]
 
 @njit(parallel=True, cache=True)
 def build_all_lookups(all_cum_freqs: npt.NDArray[np.uint64]) -> npt.NDArray[np.uint8]:
