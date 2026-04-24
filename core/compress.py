@@ -17,6 +17,8 @@ graph TD
 ```
 """
 
+__version__ = "8.3.2"
+
 import numba
 import numpy as np
 import numpy.typing as npt
@@ -474,5 +476,6 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
     except Exception as e:
         logger.error(f"Compression Failure: {e}")
         import traceback
+
         logger.debug(traceback.format_exc())
         raise

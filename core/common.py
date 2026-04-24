@@ -8,7 +8,7 @@ Architecture: Pillar-based modular codec with experience-based rANS probability 
 Logic Path (Context ID Derivation):
 ```mermaid
 graph TD
-    In[Input: ag, bg, cg, LeadValue] --> ST[Double Feature Lookup: spatial_lut]
+    In[Input: ag, bg, cg] --> ST[Double Feature Lookup: spatial_lut]
     In --> IL[Intensity Lookup: intensity_lut]
     ST --> Feat[Extract: v_tier, t_idx, ns_hit]
     IL --> Feat
@@ -22,6 +22,8 @@ import numpy as np
 import numpy.typing as npt
 import os
 from typing import Optional
+
+__version__ = "8.3.2"
 
 # [v8.3.2] Lazy Initialization for Empirical Templates to reduce Import Overhead
 _CACHED_TEMPLATES: Optional[npt.NDArray[np.uint64]] = None
@@ -45,20 +47,25 @@ def get_empirical_templates() -> npt.NDArray[np.uint64]:
         if not os.path.exists(path):
             raise FileNotFoundError(f"SPX Critical Error: Missing rANS templates at {path}")
             
-        with np.load(path) as data:
-            _CACHED_TEMPLATES = data['templates']
+        try:
+            with np.load(path) as data:
+                if 'templates' not in data:
+                    raise KeyError("Key 'templates' not found in rans_mode.npz")
+                _CACHED_TEMPLATES = data['templates']
+        except Exception as e:
+            raise RuntimeError(f"SPX Critical Error: Failed to load rANS templates: {e}")
             
     return _CACHED_TEMPLATES
 
 # --- 1. Protocol Constants (Header Flags) ---
 # [v8.3.2] Standardized Bitstream Protocol Flags
-FLAG_RGBA: int        = 0x01
-FLAG_SIMPLE: int      = 0x02  # Zstd-compressed Raw Pixels (No sharding)
-FLAG_RAW: int         = 0x04  # Uncompressed Raw Pixels (No zstd)
-FLAG_PASSTHROUGH: int = 0x08  # Original File Storage (PNG/JPG)
-FLAG_GRAYSCALE: int   = 0x10  # Hardware-accelerated true monochrome bypassing RCT
+FLAG_RGBA: int         = 0x01
+FLAG_SIMPLE: int       = 0x02  # Zstd-compressed Raw Pixels (No sharding)
+FLAG_RAW: int          = 0x04  # Uncompressed Raw Pixels (No zstd)
+FLAG_PASSTHROUGH: int  = 0x08  # Original File Storage (PNG/JPG)
+FLAG_GRAYSCALE: int    = 0x10  # Vectorized monochrome engine bypassing RCT
 FLAG_COLOR_GSUB: int   = 0x20  # Adaptive Green-Subtract Transform (Smooth Image Optimization)
-FLAG_BITPLANE: int    = 0x40  # 2D Bit-Context engine (BICC Stage 2)
+FLAG_BITPLANE: int     = 0x40  # 2D Bit-Context engine (BICC Stage 2)
 
 # --- 2. Bitplane rANS Sensitivity Thresholds ---
 # [v8.3.2] Calibrated for Zero-Regression on Photographic Datasets.
@@ -68,10 +75,8 @@ FLAG_BITPLANE: int    = 0x40  # 2D Bit-Context engine (BICC Stage 2)
 #   derivation usually offsets the coding gains for high-entropy noisy regions.
 # - BITPLANE_HIT_RATE_THRESHOLD (0.30): Minimum required fraction of zero-residuals 
 #   to ensure the bitplane's sparse coding model is effective.
-# - P90 < 112 Rationale: The 90th percentile of residuals must be below 112 to 
-#   ensure the "residual noise" doesn't overwhelm the spatial context derivation. 
-#   This filter prevents the bitplane mode from triggering on complex natural textures 
-#   where standard rANS is more efficient.
+# - P90 < 112 Rationale: Ensures the residual width is strictly controlled to 
+#   prevent bitplane triggering on complex photographic noise where standard rANS excels.
 BITPLANE_H_THRESHOLD: float = 3.2          # Shannon Entropy Gating (bits/symbol)
 BITPLANE_HIT_RATE_THRESHOLD: float = 0.30    # Minimum Zero-Residual Fraction
 BITPLANE_P90_THRESHOLD: int = 112             # Max 90th-percentile ZigZag symbol width

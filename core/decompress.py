@@ -21,6 +21,8 @@ graph TD
 ```
 """
 
+__version__ = "8.3.2"
+
 import numpy as np
 import numpy.typing as npt
 from PIL import Image, ImageFile
@@ -234,6 +236,7 @@ def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = No
     except Exception as e:
         logger.error(f"Decompression Failure: {e}")
         import traceback
+
         logger.debug(traceback.format_exc())
         raise
 

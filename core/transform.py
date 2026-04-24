@@ -23,11 +23,14 @@ graph TD
 ```
 """
 
+__version__ = "8.3.2"
+
 import numpy as np
 import numpy.typing as npt
 from numba import njit, prange, uint8
 from typing import Tuple
 from .predictor import (ZIGZAG_LUT, IZIGZAG_LUT, selected_predictor)
+
 
 @njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
 def extract_channels(rgb: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint32]]:

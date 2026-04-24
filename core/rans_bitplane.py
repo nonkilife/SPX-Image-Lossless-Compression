@@ -42,6 +42,8 @@ graph TD
 ```
 """
 
+__version__ = "8.3.2"
+
 import numpy as np
 import numpy.typing as npt
 from numba import njit, prange, uint8, uint64, get_num_threads, get_thread_id
@@ -439,6 +441,7 @@ def _rans_decode_sharded(bitstream:  npt.NDArray[np.uint8],
     Forward-scan decoder.
     Maintains orig[h,w] alongside resid[h,w] so shard IDs are computable
     from already-reconstructed original pixel neighbors.
+
     Returns resid_2d (ZigZag residuals) for downstream reconstruct_2d_channels.
     """
     # Zero-padded internal arrays: border stays 0, loop from 1..h+1 / 1..w+1

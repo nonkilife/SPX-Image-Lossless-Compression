@@ -21,6 +21,8 @@ graph TD
     Stats --> CSV[test_results.csv]
 ```
 """
+
+__version__ = "8.3.2"
 import os
 import time
 import numpy as np
@@ -495,6 +497,7 @@ def export_to_csv(stats_list: List[Dict], dataset_name: str):
 
 def main() -> None:
     import argparse
+
     parser = argparse.ArgumentParser(description="SPX Comparative Benchmark Suite")
     parser.add_argument("codec", choices=["spx", "webp", "jxl", "bench"], help="Sub-command: webp, spx, jxl, or bench")
     parser.add_argument("path", nargs='?', help="Dataset path or alias (clic, gold, kodak, etc.)")

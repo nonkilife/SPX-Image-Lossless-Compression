@@ -32,6 +32,8 @@ graph TD
 ```
 """
 
+__version__ = "8.3.2"
+
 import numpy as np
 import numpy.typing as npt
 from numba import njit, prange, uint8, uint16, uint32, uint64, int32
@@ -41,6 +43,7 @@ from .common import (
     get_empirical_templates,
 )
 from .rans_selector import _decide_shard_mode_core
+
 
 # =============================================================================
 # --- Global Industrial Constants ---

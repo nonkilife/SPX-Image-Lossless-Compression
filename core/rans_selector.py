@@ -44,12 +44,15 @@ simulate the physical file size required to save the table into the header. If t
 PDF more expensive than the "slightly ill-fitting but free" Static Template, the Template is chosen.
 """
 
+__version__ = "8.3.2"
+
 import numpy as np
 import numpy.typing as npt
 from numba import njit, uint8, uint16, uint32, uint64
 import os
 
 from .common import get_empirical_templates
+
 
 @njit(fastmath=True, cache=True)
 def calculate_cross_entropy(counts: npt.NDArray[np.uint64], pdf: npt.NDArray[np.uint16]) -> float:

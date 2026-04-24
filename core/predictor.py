@@ -23,8 +23,11 @@ graph TD
 ```
 """
 
+__version__ = "8.3.2"
+
 import numpy as np
 from numba import njit
+
 
 @njit(error_model='numpy', inline='always', cache=True)
 def to_zigzag(val: int) -> np.uint8:

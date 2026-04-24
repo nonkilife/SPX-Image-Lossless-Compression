@@ -19,6 +19,8 @@ SPX utilizes Numba's `cache=True` for all performance-critical kernels.
 - Versioning: JIT cache is automatically invalidated if the source code changes.
 """
 
+__version__ = "8.3.2"
+
 import sys
 import logging
 import importlib.metadata
@@ -70,6 +72,7 @@ def verify_environment() -> bool:
     # Check Numba JIT status
     try:
         import numba
+
         if not numba.config.DISABLE_JIT:
             logger.debug("Numba JIT is enabled and functional.")
         else:
