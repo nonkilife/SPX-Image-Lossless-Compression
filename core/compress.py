@@ -34,11 +34,11 @@ from .common import (
     ENABLE_DIAGNOSTICS
 )
 from .sharding import (
-    PROFILE_RGB, execute_sharding, shard_pass_1_rgb, shard_pass_1_gray,
+    PROFILE_RGB, execute_sharding, fused_rct_p1_rgb, fused_rct_p1_gray,
     SpxResult, normalize_shard_stats, calculate_channel_stats, extract_srb_metadata
 )
 from .transform import (
-    extract_channels, predict_2d_residuals
+    predict_2d_residuals
 )
 from .codec import pack_bitstream
 from .rans_bitplane import compress_bitplane_gray_sharded, compress_bitplane_rgb_sharded
@@ -266,43 +266,44 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
         # [v6.6] Optimized Grayscale Detection (Metadata aware)
         is_grayscale: bool = check_grayscale_robust(arr, actual_mode)
         
-        # 3. Channel Extraction & Statistical Prep
-        # USH utilizes the GradMean (AAD) estimate for reporting/diagnostics.
+        # 3. Fused RCT + Shard Pass 1 — eliminates separate extract_channels scan and np.pad copies.
         pixels: int = h * w
-        gr_map, rd_map, bd_map, a_map, channel_hists = extract_channels(arr)
-        
-        
-        # [v6.6] Unified RGB Sharding
         profile = PROFILE_RGB
-        
         n_shards: int = profile.total_shards
-        
-        # [Diagnostic] Mode Signaling
+        s_lut, i_lut, d_lut = profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut
+
+        # [v6.6] Unified RGB Sharding
         logger.debug(f"Entropy Profile: RGB")
-        
-        shard_counts: npt.NDArray[np.uint32] = np.zeros((3, n_shards), dtype=np.uint32)
-        shard_stats: npt.NDArray[np.uint32] = np.zeros((3, n_shards, 256), dtype=np.uint32)
-        
-        # G-sub is applied inside extract_channels; this flag only marks the bitstream header.
+
+        # G-sub is applied inside fused kernel; this flag only marks the bitstream header.
         use_gsub = True
- 
+
+        a_map: npt.NDArray[np.uint8] = arr[:, :, 3].copy() if is_rgba else np.empty((0, 0), dtype=np.uint8)
+
+        if is_grayscale:
+            gray_raw = arr if arr.ndim == 2 else arr[:, :, 0]
+            (gr_map_p, _rd_p, _bd_p, _ch_hists,
+             shard_counts, shard_stats, shard_offsets_p1, row_global_offsets,
+             (hits_total_p1, sums_total_p1), res_cached) = fused_rct_p1_gray(
+                h, w, gray_raw, a_map, is_rgba, n_shards, s_lut, i_lut, d_lut)
+            rd_map_p = np.empty((0, 0), dtype=np.uint8)
+            bd_map_p = np.empty((0, 0), dtype=np.uint8)
+            channel_hists = np.zeros((3, 256), dtype=np.uint32)
+        else:
+            (gr_map_p, rd_map_p, bd_map_p, channel_hists,
+             shard_counts, shard_stats, shard_offsets_p1, row_global_offsets,
+             (hits_total_p1, sums_total_p1), res_cached) = fused_rct_p1_rgb(
+                h, w, arr, a_map, is_rgba, n_shards, s_lut, i_lut, d_lut)
+
+        ctx_map = np.empty((0, 0, 0), dtype=np.uint8)
+        p1_cached = (shard_counts, shard_stats, shard_offsets_p1, row_global_offsets,
+                     (hits_total_p1, sums_total_p1), res_cached, ctx_map)
+
         # Calculate Global Modes for Noise Shard Prediction
         modes: npt.NDArray[np.uint8] = np.zeros(3, dtype=np.uint8)
         for c_idx in range(3):
             mode_val = calculate_channel_stats(channel_hists[c_idx])
             modes[c_idx] = np.uint8(mode_val)
-        
-        # [v8.3.1] Unified Padding and Pass 1 Sharding (Profiling)
-        gr_map_p = np.pad(gr_map, 1, constant_values=0)
-        rd_map_p = np.pad(rd_map, 1, constant_values=0) if not is_grayscale else np.empty((0,0), dtype=np.uint8)
-        bd_map_p = np.pad(bd_map, 1, constant_values=0) if not is_grayscale else np.empty((0,0), dtype=np.uint8)
-
-        if is_grayscale:
-            p1_cached = shard_pass_1_gray(h, w, gr_map_p, a_map, is_rgba, n_shards, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut)
-        else:
-            p1_cached = shard_pass_1_rgb(h, w, gr_map_p, rd_map_p, bd_map_p, a_map, is_rgba, n_shards, profile.spatial_lut, profile.intensity_lut, profile.dispatch_lut)
-        
-        shard_counts, shard_stats, shard_offsets_p1, row_global_offsets, (hits_total_p1, sums_total_p1), res_cached, ctx_map = p1_cached
         
         # [v8.0] Static Residual Normalization: Transform centered Pass 1 stats to normalized ZigZag stats
         normalized_stats: npt.NDArray[np.uint32] = normalize_shard_stats(shard_stats)
@@ -343,7 +344,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
         # [v4.9.1 Fix] Optimization: Only check SIMPLE for tiny icons (<64k pixels)
         if force_mode == 1 or pixels < 65536:
             if not raw_bytes:
-                raw_bytes = gr_map.tobytes() if is_grayscale else arr.tobytes()
+                raw_bytes = gr_map_p[1:-1, 1:-1].tobytes() if is_grayscale else arr.tobytes()
             simple_payload = zstandard_compress(raw_bytes)
             size_simple = 8 + 16 + len(simple_payload) + metadata_len
 
@@ -382,7 +383,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
             resid_2d = res_cached[0]
             bit_payload = bytearray(compress_bitplane_gray_sharded(
                 h, w,
-                gr_map, resid_2d,
+                gr_map_p[1:-1, 1:-1], resid_2d,
                 profile
             ))
             if is_rgba:
@@ -401,7 +402,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
             gr_resid, rd_resid, bd_resid = res_cached[0], res_cached[1], res_cached[2]
             bit_payload = bytearray(compress_bitplane_rgb_sharded(
                 h, w,
-                gr_map, rd_map, bd_map,
+                gr_map_p[1:-1, 1:-1], rd_map_p[1:-1, 1:-1], bd_map_p[1:-1, 1:-1],
                 gr_resid, rd_resid, bd_resid,
                 profile
             ))
@@ -427,7 +428,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
         if selected_mode in ("RGB", "GRAY") and len(final_payload) > size_raw:
             if not simple_payload:
                 if not raw_bytes:
-                    raw_bytes = gr_map.tobytes() if is_grayscale else arr.tobytes()
+                    raw_bytes = gr_map_p[1:-1, 1:-1].tobytes() if is_grayscale else arr.tobytes()
                 simple_payload = zstandard_compress(raw_bytes)
                 size_simple = 8 + 16 + len(simple_payload) + metadata_len
             
@@ -450,7 +451,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
                 flag = (flag & (FLAG_RGBA | FLAG_GRAYSCALE)) | FLAG_RAW
                 header_base = np.array([h, w, metadata_len, flag], dtype='<u4').tobytes()
                 if not raw_bytes:
-                    raw_bytes = gr_map.tobytes() if is_grayscale else arr.tobytes()
+                    raw_bytes = gr_map_p[1:-1, 1:-1].tobytes() if is_grayscale else arr.tobytes()
                 final_payload = b"SPX_CORE" + header_base + raw_bytes + metadata_bytes
                 selected_mode = "RAW"
 
@@ -471,7 +472,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
                           shard_modes=res_modes,
                           channel_hists=channel_hists,
                           channel_modes=modes,
-                          channels=(gr_map, rd_map, bd_map, a_map),
+                          channels=(gr_map_p[1:-1, 1:-1], rd_map_p[1:-1, 1:-1] if not is_grayscale else rd_map_p, bd_map_p[1:-1, 1:-1] if not is_grayscale else bd_map_p, a_map),
                           payload=final_payload,
                           mode=selected_mode)
     except Exception as e:

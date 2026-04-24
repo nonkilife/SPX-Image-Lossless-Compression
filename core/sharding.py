@@ -608,6 +608,249 @@ def shard_pass_2_gray_stateless(h: int, w: int,
             l_gr[ctxg] += 1
 
 
+@njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
+def fused_rct_p1_rgb(h: int, w: int, rgb_raw: npt.NDArray[np.uint8],
+                      a_ch: npt.NDArray[np.uint8], is_rgba: bool,
+                      n_shards: int, s_lut: npt.NDArray[np.uint8],
+                      i_lut: npt.NDArray[np.uint8], d_lut: npt.NDArray[np.uint8]):
+    """
+    Fused G-sub RCT + Shard Pass 1 (RGB).
+    Eliminates the separate extract_channels scan and np.pad copies by writing
+    directly into the padded channel arrays and accumulating channel histograms
+    in the same shard-profiling pass.  Memory traffic: 24N → 18N per encode.
+
+    Sub-pass 1 (prange by row): G-sub RCT → fills gr/rd/bd_ch_p interior; no inter-row deps.
+    Sub-pass 2 (prange by chunk): MED prediction + ZigZag + shard counts + channel hists.
+    Numba serializes the two prange loops so sub-pass 1 is always complete before sub-pass 2 reads.
+    """
+    gr_ch_p = np.zeros((h + 2, w + 2), dtype=np.uint8)
+    rd_ch_p = np.zeros((h + 2, w + 2), dtype=np.uint8)
+    bd_ch_p = np.zeros((h + 2, w + 2), dtype=np.uint8)
+
+    # Sub-pass 1: G-sub RCT — parallel by row, writes padded interior
+    for i in prange(h):
+        pi = i + 1
+        for j in range(w):
+            pj = j + 1
+            r = rgb_raw[i, j, 0]; g = rgb_raw[i, j, 1]; b = rgb_raw[i, j, 2]
+            gr_ch_p[pi, pj] = g
+            rd_ch_p[pi, pj] = uint8((int(r) - int(g)) & 0xFF)
+            bd_ch_p[pi, pj] = uint8((int(b) - int(g)) & 0xFF)
+
+    # Sub-pass 2: MED + shard profiling + channel hists — parallel by chunk
+    num_chunks = int(min(16, h)) if h > 0 else 1
+    chunk_size = (h + num_chunks - 1) // num_chunks
+    chunk_shard_hists = np.zeros((num_chunks, 3, n_shards, 256), dtype=np.uint32)
+    chunk_ch_hists = np.zeros((num_chunks, 3, 256), dtype=np.uint32)
+    row_ptrs = np.zeros((h, 3, n_shards), dtype=np.uint32)
+    row_hits = np.zeros((h, 3), dtype=np.uint32)
+    row_abs_sums = np.zeros((h, 3), dtype=np.uint64)
+    gr_res = np.empty((h, w), dtype=np.uint8)
+    rd_res = np.empty((h, w), dtype=np.uint8)
+    bd_res = np.empty((h, w), dtype=np.uint8)
+    a_res = np.empty((h, w), dtype=np.uint8) if is_rgba else np.empty((0, 0), dtype=np.uint8)
+    row_a_hits = np.zeros(h, dtype=np.uint64)
+    row_a_sums = np.zeros(h, dtype=np.float64)
+
+    for c_idx in prange(num_chunks):
+        start_i = c_idx * chunk_size
+        end_i = min((c_idx + 1) * chunk_size, h)
+        local_hists = np.zeros((3, n_shards, 256), dtype=np.uint32)
+        local_ch = np.zeros((3, 256), dtype=np.uint32)
+
+        for i in range(start_i, end_i):
+            pi = i + 1
+            h0, h1, h2 = np.uint32(0), np.uint32(0), np.uint32(0)
+            s0, s1, s2 = np.uint64(0), np.uint64(0), np.uint64(0)
+
+            for j in range(w):
+                pj = j + 1
+                vg = gr_ch_p[pi, pj]
+                ag, bg, cg = gr_ch_p[pi, pj-1], gr_ch_p[pi-1, pj], gr_ch_p[pi-1, pj-1]
+                pg = selected_predictor(ag, bg, cg)
+                ctxg = int(get_context_id_fast(ag, bg, cg, i_lut[pg], s_lut, d_lut))
+                resg_zz = ZIGZAG_LUT[uint8((int(vg) - int(pg)) & 0xFF)]
+                gr_res[i, j] = resg_zz
+                local_hists[0, ctxg, resg_zz] += 1
+                row_ptrs[i, 0, ctxg] += 1
+                h0 += np.uint32(resg_zz == 0); s0 += np.uint64(abs(int(vg) - int(pg)))
+                local_ch[0, vg] += 1
+
+                v1 = rd_ch_p[pi, pj]
+                a1, b1, c1 = rd_ch_p[pi, pj-1], rd_ch_p[pi-1, pj], rd_ch_p[pi-1, pj-1]
+                idx_v = i_lut[vg]
+                p1 = selected_predictor(a1, b1, c1)
+                ctx1 = int(get_context_id_fast(a1, b1, c1, idx_v, s_lut, d_lut))
+                res1_zz = ZIGZAG_LUT[uint8((int(v1) - int(p1)) & 0xFF)]
+                rd_res[i, j] = res1_zz
+                local_hists[1, ctx1, res1_zz] += 1
+                row_ptrs[i, 1, ctx1] += 1
+                h1 += np.uint32(res1_zz == 0); s1 += np.uint64(abs(int(v1) - int(p1)))
+                local_ch[1, v1] += 1
+
+                v2 = bd_ch_p[pi, pj]
+                a2, b2, c2 = bd_ch_p[pi, pj-1], bd_ch_p[pi-1, pj], bd_ch_p[pi-1, pj-1]
+                p2 = selected_predictor(a2, b2, c2)
+                ctx2 = int(get_context_id_fast(a2, b2, c2, idx_v, s_lut, d_lut))
+                res2_zz = ZIGZAG_LUT[uint8((int(v2) - int(p2)) & 0xFF)]
+                bd_res[i, j] = res2_zz
+                local_hists[2, ctx2, res2_zz] += 1
+                row_ptrs[i, 2, ctx2] += 1
+                h2 += np.uint32(res2_zz == 0); s2 += np.uint64(abs(int(v2) - int(p2)))
+                local_ch[2, v2] += 1
+
+            if is_rgba:
+                ag_a, cg_a, h_acc, s_acc = uint8(0), uint8(0), uint64(0), 0.0
+                r_s = a_ch[i]
+                r_ts = a_ch[i-1] if i > 0 else a_ch[i]
+                for j in range(w):
+                    bg_a = r_ts[j] if i > 0 else uint8(0)
+                    pg_a = selected_predictor(ag_a, bg_a, cg_a)
+                    r_a = ZIGZAG_LUT[uint8((int(r_s[j]) - int(pg_a)) & 0xFF)]
+                    a_res[i, j] = r_a
+                    s_acc += abs(float(r_s[j]) - float(pg_a))
+                    h_acc += uint64(r_a == 0)
+                    ag_a = r_s[j]
+                    cg_a = r_ts[j] if i > 0 else uint8(0)
+                row_a_hits[i] = h_acc
+                row_a_sums[i] = s_acc
+
+            row_hits[i, 0] = h0; row_hits[i, 1] = h1; row_hits[i, 2] = h2
+            row_abs_sums[i, 0] = s0; row_abs_sums[i, 1] = s1; row_abs_sums[i, 2] = s2
+
+        chunk_shard_hists[c_idx] = local_hists
+        chunk_ch_hists[c_idx] = local_ch
+
+    shard_stats = chunk_shard_hists.sum(axis=0)
+    channel_hists = chunk_ch_hists.sum(axis=0)
+    shard_counts = shard_stats.sum(axis=2).astype(np.uint32)
+
+    shard_offsets = np.zeros((3, n_shards), dtype=np.uint32)
+    for c in range(3):
+        curr = 0
+        for s in range(n_shards):
+            shard_offsets[c, s] = curr
+            curr += int(shard_counts[c, s])
+
+    row_global_offsets = np.zeros((h, 3, n_shards), dtype=np.uint32)
+    for c in range(3):
+        for s in range(n_shards):
+            curr = int(shard_offsets[c, s])
+            for i in range(h):
+                row_global_offsets[i, c, s] = uint32(curr)
+                curr += int(row_ptrs[i, c, s])
+
+    hits = row_hits.sum(axis=0)
+    sums = row_abs_sums.sum(axis=0)
+    res_cached = (gr_res, rd_res, bd_res, a_res, (uint64(row_a_hits.sum()), row_a_sums.sum()))
+
+    return (gr_ch_p, rd_ch_p, bd_ch_p, channel_hists,
+            shard_counts, shard_stats, shard_offsets, row_global_offsets,
+            (hits, sums), res_cached)
+
+
+@njit(parallel=True, fastmath=True, error_model='numpy', cache=True)
+def fused_rct_p1_gray(h: int, w: int, gray_raw: npt.NDArray[np.uint8],
+                       a_ch: npt.NDArray[np.uint8], is_rgba: bool,
+                       n_shards: int, s_lut: npt.NDArray[np.uint8],
+                       i_lut: npt.NDArray[np.uint8], d_lut: npt.NDArray[np.uint8]):
+    """
+    Fused pad + Shard Pass 1 (Grayscale).
+    Writes directly into the padded channel array, avoiding the separate np.pad copy.
+    """
+    gr_ch_p = np.zeros((h + 2, w + 2), dtype=np.uint8)
+
+    # Sub-pass 1: copy into padded interior — parallel by row
+    for i in prange(h):
+        pi = i + 1
+        for j in range(w):
+            gr_ch_p[pi, j + 1] = gray_raw[i, j]
+
+    # Sub-pass 2: MED + shard profiling — parallel by chunk (same as shard_pass_1_gray body)
+    num_chunks = int(min(16, h)) if h > 0 else 1
+    chunk_size = (h + num_chunks - 1) // num_chunks
+    chunk_shard_hists = np.zeros((num_chunks, n_shards, 256), dtype=np.uint32)
+    row_ptrs = np.zeros((h, n_shards), dtype=np.uint32)
+    row_hits = np.zeros(h, dtype=np.uint32)
+    row_abs_sums = np.zeros(h, dtype=np.uint64)
+    gr_res = np.empty((h, w), dtype=np.uint8)
+    a_res = np.empty((h, w), dtype=np.uint8) if is_rgba else np.empty((0, 0), dtype=np.uint8)
+    row_a_hits = np.zeros(h, dtype=np.uint64)
+    row_a_sums = np.zeros(h, dtype=np.float64)
+
+    for c_idx in prange(num_chunks):
+        start_i = c_idx * chunk_size
+        end_i = min((c_idx + 1) * chunk_size, h)
+        local_hists = np.zeros((n_shards, 256), dtype=np.uint32)
+
+        for i in range(start_i, end_i):
+            pi = i + 1
+            h_acc, s_acc = np.uint32(0), np.uint64(0)
+            for pj in range(1, w + 1):
+                ag, bg, cg = gr_ch_p[pi, pj-1], gr_ch_p[pi-1, pj], gr_ch_p[pi-1, pj-1]
+                pg = selected_predictor(ag, bg, cg)
+                curr_valg = gr_ch_p[pi, pj]
+                ctxg = int(get_context_id_fast(ag, bg, cg, i_lut[pg], s_lut, d_lut))
+                resg_zz = ZIGZAG_LUT[uint8((int(curr_valg) - int(pg)) & 0xFF)]
+                local_hists[ctxg, resg_zz] += 1
+                row_ptrs[i, ctxg] += 1
+                gr_res[i, pj-1] = resg_zz
+                h_acc += np.uint32(resg_zz == 0)
+                s_acc += np.uint64(abs(int(curr_valg) - int(pg)))
+
+            if is_rgba:
+                ag_a, cg_a, h_acc_a, s_acc_a = uint8(0), uint8(0), uint64(0), 0.0
+                r_s = a_ch[i]
+                r_ts = a_ch[i-1] if i > 0 else a_ch[i]
+                for j in range(w):
+                    bg_a = r_ts[j] if i > 0 else uint8(0)
+                    pg_a = selected_predictor(ag_a, bg_a, cg_a)
+                    r_a = ZIGZAG_LUT[uint8((int(r_s[j]) - int(pg_a)) & 0xFF)]
+                    a_res[i, j] = r_a
+                    s_acc_a += abs(float(r_s[j]) - float(pg_a))
+                    h_acc_a += uint64(r_a == 0)
+                    ag_a = r_s[j]
+                    cg_a = r_ts[j] if i > 0 else uint8(0)
+                row_a_hits[i] = h_acc_a
+                row_a_sums[i] = s_acc_a
+
+            row_hits[i] = h_acc
+            row_abs_sums[i] = s_acc
+        chunk_shard_hists[c_idx] = local_hists
+
+    shard_stats_1ch = chunk_shard_hists.sum(axis=0)
+    shard_counts_1ch = row_ptrs.sum(axis=0).astype(np.uint32)
+
+    shard_offsets_1ch = np.zeros(n_shards, dtype=np.uint32)
+    curr = np.uint32(0)
+    for s in range(n_shards):
+        shard_offsets_1ch[s] = curr
+        curr += shard_counts_1ch[s]
+
+    row_global_offsets_1ch = np.zeros((h, n_shards), dtype=np.uint32)
+    for s in range(n_shards):
+        curr = shard_offsets_1ch[s]
+        for i in range(h):
+            row_global_offsets_1ch[i, s] = curr
+            curr += row_ptrs[i, s]
+
+    shard_counts = np.zeros((3, n_shards), dtype=np.uint32); shard_counts[0] = shard_counts_1ch
+    shard_stats = np.zeros((3, n_shards, 256), dtype=np.uint32); shard_stats[0] = shard_stats_1ch
+    shard_offsets = np.zeros((3, n_shards), dtype=np.uint32); shard_offsets[0] = shard_offsets_1ch
+    row_global_offsets = np.zeros((h, 3, n_shards), dtype=np.uint32)
+    for i in range(h): row_global_offsets[i, 0] = row_global_offsets_1ch[i]
+
+    hits = np.zeros(3, dtype=np.uint32); hits[0] = row_hits.sum()
+    sums = np.zeros(3, dtype=np.uint64); sums[0] = row_abs_sums.sum()
+    empty = np.empty((0, 0), dtype=np.uint8)
+    res_cached = (gr_res, empty, empty, a_res, (uint64(row_a_hits.sum()), row_a_sums.sum()))
+
+    return (gr_ch_p, np.zeros((1, 1), dtype=np.uint8), np.zeros((1, 1), dtype=np.uint8),
+            np.zeros((3, 256), dtype=np.uint32),
+            shard_counts, shard_stats, shard_offsets, row_global_offsets,
+            (hits, sums), res_cached)
+
+
 def execute_sharding(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDArray[np.uint8],
                      bd_ch: npt.NDArray[np.uint8], a_ch: npt.NDArray[np.uint8], 
                      is_rgba: bool, is_grayscale: bool, profile: ShardProfile,
