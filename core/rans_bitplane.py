@@ -54,27 +54,56 @@ import concurrent.futures
 from .predictor import selected_predictor, from_zigzag, IZIGZAG_LUT
 from .sharding import get_context_id_fast, ShardProfile
 from .transform import reconstruct_2d_channels
+from .rans import mul_hi as _mul_hi
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 N_SPATIAL: int = 64                         # 2-bit L|U<<2|NW<<4 contexts
 BITPLANE_MAGIC: int = 0xFF                  # first-byte sentinel
+ANS_M_BITS: int = 12                        # 12-bit precision
+ANS_PRECISION: uint64 = uint64(4096)
+ANS_L_LOWER: uint64 = uint64(1 << 31)
+ANS_NORM_THRESHOLD: uint64 = (ANS_L_LOWER >> uint64(ANS_M_BITS)) << uint64(8)
+
+
+# _mul_hi removed (imported from .rans)
 
 
 # ---------------------------------------------------------------------------
-# Math helper (inlined by Numba)
+# Quantization helper
 # ---------------------------------------------------------------------------
-@njit(inline='always', fastmath=True, cache=True)
-def _mul_hi(a: uint64, b: uint64) -> uint64:
-    a_lo = a & np.uint64(0xFFFFFFFF); a_hi = a >> np.uint64(32)
-    b_lo = b & np.uint64(0xFFFFFFFF); b_hi = b >> np.uint64(32)
-    p00 = a_lo * b_lo; p01 = a_lo * b_hi
-    p10 = a_hi * b_lo; p11 = a_hi * b_hi
-    mid_lo = ((p01 & np.uint64(0xFFFFFFFF)) + (p10 & np.uint64(0xFFFFFFFF))
-              + (p00 >> np.uint64(32)))
-    return p11 + (p01 >> np.uint64(32)) + (p10 >> np.uint64(32)) + (mid_lo >> np.uint64(32))
-
+@njit(inline='always', cache=True)
+def _rescale_to_rans_freqs(counts: npt.NDArray[np.uint64], 
+                           f_out: npt.NDArray[np.uint64], 
+                           cf_out: npt.NDArray[np.uint64]):
+    """ Quantizes arbitrary counts to ANS_PRECISION frequencies. """
+    total = np.uint64(0)
+    for s in range(4): total += counts[s]
+    
+    if total > np.uint64(0):
+        nf = np.zeros(4, dtype=np.uint64)
+        acc = np.uint64(0)
+        for s in range(4):
+            nf[s] = np.uint64(max(1, int(round(float(counts[s]) * 4096.0 / float(total)))))
+            acc += nf[s]
+        
+        diff = int(ANS_PRECISION) - int(acc)
+        peak = 0
+        for s in range(1, 4):
+            if nf[s] > nf[peak]: peak = s
+        nf[peak] = np.uint64(int(nf[peak]) + diff)
+        
+        acc_cf = np.uint64(0)
+        for s in range(4):
+            f_out[s] = nf[s]
+            cf_out[s] = acc_cf
+            acc_cf += nf[s]
+        cf_out[4] = acc_cf
+    else:
+        # Uniform fallback
+        for s in range(4): f_out[s] = np.uint64(1024)
+        for s in range(5): cf_out[s] = np.uint64(s * 1024)
 
 # ---------------------------------------------------------------------------
 # Frequency table builder
@@ -133,46 +162,12 @@ def _build_pdf_sharded(resid_2d:  npt.NDArray[np.uint8],
     counts = counts_tls.sum(axis=0)
 
     # ----- quantise to 12-bit rANS tables -----
-    precision = np.uint64(4096)
     f  = np.zeros((4, n_ctx, 4), dtype=np.uint64)
     cf = np.zeros((4, n_ctx, 5), dtype=np.uint64)
 
     for k in range(4):
         for c in range(n_ctx):
-            t = np.uint64(0)
-            for s in range(4):
-                t += counts[k, c, s]
-
-            if t > np.uint64(0):
-                nf = np.zeros(4, dtype=np.uint64)
-                for s in range(4):
-                    nf[s] = np.uint64(int(round(float(counts[k, c, s]) * 4096.0 / float(t))))
-                    if nf[s] == np.uint64(0):
-                        nf[s] = np.uint64(1)
-                acc = np.uint64(0)
-                for s in range(4):
-                    acc += nf[s]
-                diff = int(precision) - int(acc)
-                peak = 0
-                for s in range(1, 4):
-                    if nf[s] > nf[peak]:
-                        peak = s
-                nf[peak] = np.uint64(int(nf[peak]) + diff)
-                acc = np.uint64(0)
-                for s in range(4):
-                    f[k, c, s]  = nf[s]
-                    cf[k, c, s] = acc
-                    acc += nf[s]
-                cf[k, c, 4] = acc
-            else:
-                # Uniform fallback for unseen contexts
-                for s in range(4):
-                    f[k, c, s] = np.uint64(1024)
-                cf[k, c, 0] = np.uint64(0)
-                cf[k, c, 1] = np.uint64(1024)
-                cf[k, c, 2] = np.uint64(2048)
-                cf[k, c, 3] = np.uint64(3072)
-                cf[k, c, 4] = np.uint64(4096)
+            _rescale_to_rans_freqs(counts[k, c], f[k, c], cf[k, c])
 
     return f, cf
 
@@ -236,70 +231,15 @@ def _build_pdf_sharded_rgb(gr_p:     npt.NDArray[np.uint8],
 
     counts = counts_tls.sum(axis=0)  # (3, 4, n_ctx, 4)
 
-    precision = np.uint64(4096)
-    f_gr  = np.zeros((4, n_ctx, 4), dtype=np.uint64)
-    cf_gr = np.zeros((4, n_ctx, 5), dtype=np.uint64)
-    f_rd  = np.zeros((4, n_ctx, 4), dtype=np.uint64)
-    cf_rd = np.zeros((4, n_ctx, 5), dtype=np.uint64)
-    f_bd  = np.zeros((4, n_ctx, 4), dtype=np.uint64)
-    cf_bd = np.zeros((4, n_ctx, 5), dtype=np.uint64)
+    f_gr  = np.zeros((4, n_ctx, 4), dtype=np.uint64); cf_gr = np.zeros((4, n_ctx, 5), dtype=np.uint64)
+    f_rd  = np.zeros((4, n_ctx, 4), dtype=np.uint64); cf_rd = np.zeros((4, n_ctx, 5), dtype=np.uint64)
+    f_bd  = np.zeros((4, n_ctx, 4), dtype=np.uint64); cf_bd = np.zeros((4, n_ctx, 5), dtype=np.uint64)
 
-    for ch in range(3):
-        for k in range(4):
-            for c in range(n_ctx):
-                t = np.uint64(0)
-                for s in range(4):
-                    t += counts[ch, k, c, s]
-                if t > np.uint64(0):
-                    nf = np.zeros(4, dtype=np.uint64)
-                    for s in range(4):
-                        nf[s] = np.uint64(int(round(float(counts[ch, k, c, s]) * 4096.0 / float(t))))
-                        if nf[s] == np.uint64(0):
-                            nf[s] = np.uint64(1)
-                    acc = np.uint64(0)
-                    for s in range(4):
-                        acc += nf[s]
-                    diff = int(precision) - int(acc)
-                    peak = 0
-                    for s in range(1, 4):
-                        if nf[s] > nf[peak]:
-                            peak = s
-                    nf[peak] = np.uint64(int(nf[peak]) + diff)
-                    acc = np.uint64(0)
-                    if ch == 0:
-                        for s in range(4):
-                            f_gr[k, c, s]  = nf[s]
-                            cf_gr[k, c, s] = acc
-                            acc += nf[s]
-                        cf_gr[k, c, 4] = acc
-                    elif ch == 1:
-                        for s in range(4):
-                            f_rd[k, c, s]  = nf[s]
-                            cf_rd[k, c, s] = acc
-                            acc += nf[s]
-                        cf_rd[k, c, 4] = acc
-                    else:
-                        for s in range(4):
-                            f_bd[k, c, s]  = nf[s]
-                            cf_bd[k, c, s] = acc
-                            acc += nf[s]
-                        cf_bd[k, c, 4] = acc
-                else:
-                    if ch == 0:
-                        for s in range(4): f_gr[k, c, s] = np.uint64(1024)
-                        cf_gr[k, c, 0] = np.uint64(0); cf_gr[k, c, 1] = np.uint64(1024)
-                        cf_gr[k, c, 2] = np.uint64(2048); cf_gr[k, c, 3] = np.uint64(3072)
-                        cf_gr[k, c, 4] = np.uint64(4096)
-                    elif ch == 1:
-                        for s in range(4): f_rd[k, c, s] = np.uint64(1024)
-                        cf_rd[k, c, 0] = np.uint64(0); cf_rd[k, c, 1] = np.uint64(1024)
-                        cf_rd[k, c, 2] = np.uint64(2048); cf_rd[k, c, 3] = np.uint64(3072)
-                        cf_rd[k, c, 4] = np.uint64(4096)
-                    else:
-                        for s in range(4): f_bd[k, c, s] = np.uint64(1024)
-                        cf_bd[k, c, 0] = np.uint64(0); cf_bd[k, c, 1] = np.uint64(1024)
-                        cf_bd[k, c, 2] = np.uint64(2048); cf_bd[k, c, 3] = np.uint64(3072)
-                        cf_bd[k, c, 4] = np.uint64(4096)
+    for k in range(4):
+        for c in range(n_ctx):
+            _rescale_to_rans_freqs(counts[0, k, c], f_gr[k, c], cf_gr[k, c])
+            _rescale_to_rans_freqs(counts[1, k, c], f_rd[k, c], cf_rd[k, c])
+            _rescale_to_rans_freqs(counts[2, k, c], f_bd[k, c], cf_bd[k, c])
 
     return f_gr, cf_gr, f_rd, cf_rd, f_bd, cf_bd
 
@@ -323,12 +263,8 @@ def _rans_encode_sharded(resid_2d:  npt.NDArray[np.uint8],
     Layers 3-0 encoded sequentially per pixel (matching decoder pull order).
     Returns (final_states[4], bitstream_bytes).
     """
-    h, w = resid_2d.shape[0] - 2, resid_2d.shape[1] - 2  # inputs are zero-padded (h+2, w+2)
-    l_lower = np.uint64(1 << 31)
-    m_bits  = np.uint64(12)
-    l_max   = (l_lower >> m_bits) << np.uint64(8)
-
-    st0 = l_lower; st1 = l_lower; st2 = l_lower; st3 = l_lower
+    h, w = resid_2d.shape[0] - 2, resid_2d.shape[1] - 2
+    st0 = ANS_L_LOWER; st1 = ANS_L_LOWER; st2 = ANS_L_LOWER; st3 = ANS_L_LOWER
 
     # Precompute magic constants for branchless division
     magic = np.zeros((4, n_ctx, 4), dtype=np.uint64)
@@ -368,12 +304,12 @@ def _rans_encode_sharded(resid_2d:  npt.NDArray[np.uint8],
             s3   = int((px >> np.uint8(6)) & np.uint8(3))
             f3  = all_sf[3, ctx3, s3];  cf3 = all_cf[3, ctx3, s3]
             m3  = magic[3, ctx3, s3]
-            while st3 >= l_max * f3:
+            while st3 >= ANS_NORM_THRESHOLD * f3:
                 out[ptr] = np.uint8(st3 & np.uint64(0xFF)); ptr += 1
                 st3 >>= np.uint64(8)
             q3 = _mul_hi(st3, m3); r3_ = st3 - q3 * f3
             if r3_ >= f3: q3 += np.uint64(1); r3_ -= f3
-            st3 = (q3 << m_bits) + r3_ + cf3
+            st3 = (q3 << ANS_M_BITS) + r3_ + cf3
 
             # ----- Layer 2 -----
             l2 = (r_l >> np.uint8(4)) & np.uint8(3)
@@ -383,12 +319,12 @@ def _rans_encode_sharded(resid_2d:  npt.NDArray[np.uint8],
             s2   = int((px >> np.uint8(4)) & np.uint8(3))
             f2  = all_sf[2, ctx2, s2];  cf2 = all_cf[2, ctx2, s2]
             m2  = magic[2, ctx2, s2]
-            while st2 >= l_max * f2:
+            while st2 >= ANS_NORM_THRESHOLD * f2:
                 out[ptr] = np.uint8(st2 & np.uint64(0xFF)); ptr += 1
                 st2 >>= np.uint64(8)
             q2 = _mul_hi(st2, m2); r2_ = st2 - q2 * f2
             if r2_ >= f2: q2 += np.uint64(1); r2_ -= f2
-            st2 = (q2 << m_bits) + r2_ + cf2
+            st2 = (q2 << ANS_M_BITS) + r2_ + cf2
 
             # ----- Layer 1 -----
             l1 = (r_l >> np.uint8(2)) & np.uint8(3)
@@ -398,12 +334,12 @@ def _rans_encode_sharded(resid_2d:  npt.NDArray[np.uint8],
             s1   = int((px >> np.uint8(2)) & np.uint8(3))
             f1  = all_sf[1, ctx1, s1];  cf1 = all_cf[1, ctx1, s1]
             m1  = magic[1, ctx1, s1]
-            while st1 >= l_max * f1:
+            while st1 >= ANS_NORM_THRESHOLD * f1:
                 out[ptr] = np.uint8(st1 & np.uint64(0xFF)); ptr += 1
                 st1 >>= np.uint64(8)
             q1 = _mul_hi(st1, m1); r1_ = st1 - q1 * f1
             if r1_ >= f1: q1 += np.uint64(1); r1_ -= f1
-            st1 = (q1 << m_bits) + r1_ + cf1
+            st1 = (q1 << ANS_M_BITS) + r1_ + cf1
 
             # ----- Layer 0 -----
             l0 = r_l & np.uint8(3)
@@ -413,12 +349,12 @@ def _rans_encode_sharded(resid_2d:  npt.NDArray[np.uint8],
             s0   = int(px & np.uint8(3))
             f0  = all_sf[0, ctx0, s0];  cf0 = all_cf[0, ctx0, s0]
             m0  = magic[0, ctx0, s0]
-            while st0 >= l_max * f0:
+            while st0 >= ANS_NORM_THRESHOLD * f0:
                 out[ptr] = np.uint8(st0 & np.uint64(0xFF)); ptr += 1
                 st0 >>= np.uint64(8)
             q0 = _mul_hi(st0, m0); r0_ = st0 - q0 * f0
             if r0_ >= f0: q0 += np.uint64(1); r0_ -= f0
-            st0 = (q0 << m_bits) + r0_ + cf0
+            st0 = (q0 << ANS_M_BITS) + r0_ + cf0
 
     states = np.zeros(4, dtype=np.uint64)
     states[0], states[1], states[2], states[3] = st0, st1, st2, st3
@@ -447,11 +383,8 @@ def _rans_decode_sharded(bitstream:  npt.NDArray[np.uint8],
     # Zero-padded internal arrays: border stays 0, loop from 1..h+1 / 1..w+1
     resid = np.zeros((h + 2, w + 2), dtype=np.uint8)
     orig  = np.zeros((h + 2, w + 2), dtype=np.uint8)
-
-    l_lower = np.uint64(1 << 31)
-    m_bits  = np.uint64(12)
-    mask    = np.uint64((1 << 12) - 1)
-    ptr     = len(bitstream) - 1
+    mask  = np.uint64(ANS_PRECISION - 1)
+    ptr   = len(bitstream) - 1
 
     for pi in range(1, h + 1):
         for pj in range(1, w + 1):
@@ -473,10 +406,10 @@ def _rans_decode_sharded(bitstream:  npt.NDArray[np.uint8],
             cf0 = all_cf[0, ctx0]; sf0 = all_sf[0, ctx0]
             slot0 = st0 & mask
             sym0 = np.uint8(int(slot0 >= cf0[1]) + int(slot0 >= cf0[2]) + int(slot0 >= cf0[3]))
-            st0 = sf0[sym0] * (st0 >> m_bits) + (slot0 - cf0[sym0])
-            if st0 < l_lower and ptr >= 0:
+            st0 = sf0[sym0] * (st0 >> ANS_M_BITS) + (slot0 - cf0[sym0])
+            if st0 < ANS_L_LOWER and ptr >= 0:
                 st0 = (st0 << np.uint64(8)) | np.uint64(bitstream[ptr]); ptr -= 1
-                if st0 < l_lower and ptr >= 0:
+                if st0 < ANS_L_LOWER and ptr >= 0:
                     st0 = (st0 << np.uint64(8)) | np.uint64(bitstream[ptr]); ptr -= 1
 
             # ----- Decode Layer 1 -----
@@ -487,10 +420,10 @@ def _rans_decode_sharded(bitstream:  npt.NDArray[np.uint8],
             cf1 = all_cf[1, ctx1]; sf1 = all_sf[1, ctx1]
             slot1 = st1 & mask
             sym1 = np.uint8(int(slot1 >= cf1[1]) + int(slot1 >= cf1[2]) + int(slot1 >= cf1[3]))
-            st1 = sf1[sym1] * (st1 >> m_bits) + (slot1 - cf1[sym1])
-            if st1 < l_lower and ptr >= 0:
+            st1 = sf1[sym1] * (st1 >> ANS_M_BITS) + (slot1 - cf1[sym1])
+            if st1 < ANS_L_LOWER and ptr >= 0:
                 st1 = (st1 << np.uint64(8)) | np.uint64(bitstream[ptr]); ptr -= 1
-                if st1 < l_lower and ptr >= 0:
+                if st1 < ANS_L_LOWER and ptr >= 0:
                     st1 = (st1 << np.uint64(8)) | np.uint64(bitstream[ptr]); ptr -= 1
 
             # ----- Decode Layer 2 -----
@@ -501,10 +434,10 @@ def _rans_decode_sharded(bitstream:  npt.NDArray[np.uint8],
             cf2 = all_cf[2, ctx2]; sf2 = all_sf[2, ctx2]
             slot2 = st2 & mask
             sym2 = np.uint8(int(slot2 >= cf2[1]) + int(slot2 >= cf2[2]) + int(slot2 >= cf2[3]))
-            st2 = sf2[sym2] * (st2 >> m_bits) + (slot2 - cf2[sym2])
-            if st2 < l_lower and ptr >= 0:
+            st2 = sf2[sym2] * (st2 >> ANS_M_BITS) + (slot2 - cf2[sym2])
+            if st2 < ANS_L_LOWER and ptr >= 0:
                 st2 = (st2 << np.uint64(8)) | np.uint64(bitstream[ptr]); ptr -= 1
-                if st2 < l_lower and ptr >= 0:
+                if st2 < ANS_L_LOWER and ptr >= 0:
                     st2 = (st2 << np.uint64(8)) | np.uint64(bitstream[ptr]); ptr -= 1
 
             # ----- Decode Layer 3 -----
@@ -515,10 +448,10 @@ def _rans_decode_sharded(bitstream:  npt.NDArray[np.uint8],
             cf3 = all_cf[3, ctx3]; sf3 = all_sf[3, ctx3]
             slot3 = st3 & mask
             sym3 = np.uint8(int(slot3 >= cf3[1]) + int(slot3 >= cf3[2]) + int(slot3 >= cf3[3]))
-            st3 = sf3[sym3] * (st3 >> m_bits) + (slot3 - cf3[sym3])
-            if st3 < l_lower and ptr >= 0:
+            st3 = sf3[sym3] * (st3 >> ANS_M_BITS) + (slot3 - cf3[sym3])
+            if st3 < ANS_L_LOWER and ptr >= 0:
                 st3 = (st3 << np.uint64(8)) | np.uint64(bitstream[ptr]); ptr -= 1
-                if st3 < l_lower and ptr >= 0:
+                if st3 < ANS_L_LOWER and ptr >= 0:
                     st3 = (st3 << np.uint64(8)) | np.uint64(bitstream[ptr]); ptr -= 1
 
             # ----- Assemble residual and update orig -----

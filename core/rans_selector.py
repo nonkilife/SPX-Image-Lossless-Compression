@@ -42,6 +42,11 @@ fitted Custom PDF, versus the "best-fit" Static Template. Since the Custom PDF i
 ALWAYS yield the lowest mathematical bit-cost. However, it applies a 'penalty' to the Custom PDF's cost to
 simulate the physical file size required to save the table into the header. If the penalty makes the Custom
 PDF more expensive than the "slightly ill-fitting but free" Static Template, the Template is chosen.
+
+Conceptual Architecture:
+-------------------------
+- Sub-mode decision (Dense vs Sparse) is finalized during serialization in rans.py.
+- Mode 3 is prioritized for mono-symbol (zero-entropy) payloads.
 """
 
 __version__ = "8.3.2"
@@ -54,16 +59,25 @@ import os
 from .common import get_empirical_templates
 
 
+# Pre-compute LOG2 LUT for 12-bit rANS cross-entropy (1..4096)
+_LOG2_LUT = np.zeros(4097, dtype=np.float64)
+for _i in range(1, 4097):
+    _LOG2_LUT[_i] = 12.0 - np.log2(float(_i))
+
+
 @njit(fastmath=True, cache=True)
 def calculate_cross_entropy(counts: npt.NDArray[np.uint64], pdf: npt.NDArray[np.uint16]) -> float:
-    """ Calculates BPP representation: Sum(counts[i] * -log2(pdf[i]/4096)) """
+    """ Calculates BPP representation using pre-computed Log2 LUT. """
     entropy = 0.0
-    # Pre-scale pdf values to avoid per-pixel division; 4096 is the sum(pdf)
-    # entropy = counts * (log2(4096) - log2(pdf))
-    # log2(4096) = 12.0
     for i in range(256):
-        if counts[i] > 0:
-            entropy += float(counts[i]) * (12.0 - np.log2(float(pdf[i])))
+        c = counts[i]
+        if c > 0:
+            p = pdf[i]
+            if p > 0:
+                entropy += float(c) * _LOG2_LUT[p]
+            else:
+                # Impossible symbol penalty (should not happen with fitted PDF)
+                entropy += float(c) * 24.0 
     return entropy
 
 @njit(fastmath=True, cache=True)
@@ -132,6 +146,16 @@ def _decide_shard_mode_core(counts: npt.NDArray[np.uint64], width: int,
                             templates: npt.NDArray[np.uint64],
                             disable_templates: bool) -> tuple[uint8, npt.NDArray[np.uint64]]:
     
+    # 0. Detect Mode 3 (Zero-Entropy / Mono-symbol)
+    total_non_zero = np.uint64(0)
+    for i in range(1, 256): total_non_zero += counts[i]
+    
+    if total_non_zero == 0:
+        # Shard is empty or only contains symbol 0
+        mono_pdf = np.zeros(256, dtype=np.uint64)
+        mono_pdf[0] = uint64(4096)
+        return uint8(3), mono_pdf
+
     # 1. Build Custom Dynamic PDF
     dense_pdf = build_pdf_from_counts(counts, width)
 
@@ -142,10 +166,8 @@ def _decide_shard_mode_core(counts: npt.NDArray[np.uint64], width: int,
     best_emp_mode = uint8(0)
     min_emp_bits = 1e18
     
-    # Pixel-Adaptive Dynamic Penalty: adjusts relative to shard size.
-    n_pixels = uint32(0)
-    for i in range(256): n_pixels += uint32(counts[i])
-    penalty = header_penalty_bits * (4096.0 / max(float(n_pixels), 1.0))
+    # Fixed Penalty: Represents the physical bit-cost of the custom PDF header (~15 bytes).
+    penalty = header_penalty_bits
     
     num_templates = len(templates)
     for tid in range(num_templates):

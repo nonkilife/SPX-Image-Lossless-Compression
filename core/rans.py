@@ -36,7 +36,7 @@ __version__ = "8.3.2"
 
 import numpy as np
 import numpy.typing as npt
-from numba import njit, prange, uint8, uint16, uint32, uint64, int32
+from numba import njit, prange, uint8, uint16, uint32, uint64
 from typing import Tuple, List, Optional
 
 from .common import (
@@ -51,10 +51,9 @@ from .rans_selector import _decide_shard_mode_core
 # rANS Precision and Bounds
 L_LOWER: uint64 = uint64(2147483648) # 1 << 31 (L_ANS Lower Bound)
 M_BITS: int     = 12                  # Probability precision (Total mass = 4096)
-L_MAX_BOUND: uint64 = (L_LOWER >> M_BITS) << 8 # Normalization threshold
+L_NORM_THRESHOLD: uint64 = (L_LOWER >> M_BITS) << 8 # Normalization threshold
 M_TOTAL: uint64 = uint64(1 << M_BITS)
 M_MASK: uint64  = M_TOTAL - 1
-SENTINEL_BYTES: int = 8       # Memory safety offset for 64-bit state flushing
 
 
 # =============================================================================
@@ -96,7 +95,7 @@ def rans_decode_4way_core(st0: uint64, st1: uint64, st2: uint64, st3: uint64,
     remainder: int = target_len % 4
     
     if symbol_freqs[0] == uint64(4096):
-        out.fill(0)
+        out.fill(slot_lookup[0])
         return
     
     idx: int = 0
@@ -336,9 +335,7 @@ def rans_encode_shards_parallel(shard_data_flat: npt.NDArray[np.uint8],
             st1 = initial_state
             st2 = initial_state
             st3 = initial_state
-            ptr = bs_start + SENTINEL_BYTES
-            
-            bitstreams_flat[bs_start : ptr].fill(0)
+            ptr = bs_start
             
             cfreqs = all_cum_freqs[i]
             magics = all_magics[i]
@@ -359,7 +356,7 @@ def rans_encode_shards_parallel(shard_data_flat: npt.NDArray[np.uint8],
                 elif pos_val == 2: curr_st = st2
                 else: curr_st = st3
                 
-                x_max_val = L_MAX_BOUND * f_val
+                x_max_val = L_NORM_THRESHOLD * f_val
                 while curr_st >= x_max_val:
                     bitstreams_flat[ptr] = uint8(curr_st & 0xFF); ptr += 1
                     curr_st >>= 8
@@ -381,7 +378,7 @@ def rans_encode_shards_parallel(shard_data_flat: npt.NDArray[np.uint8],
                 f3_val = sfreqs[s3_val]
                 cf3_val = cfreqs[s3_val]
                 m3_val = magics[s3_val]
-                while st3 >= L_MAX_BOUND * f3_val:
+                while st3 >= L_NORM_THRESHOLD * f3_val:
                     bitstreams_flat[ptr] = uint8(st3 & 0xFF); ptr += 1; st3 >>= 8
                 q3 = mul_hi(st3, m3_val); r3 = st3 - q3 * f3_val
                 if r3 >= f3_val: q3 += np.uint64(1); r3 -= f3_val
@@ -391,7 +388,7 @@ def rans_encode_shards_parallel(shard_data_flat: npt.NDArray[np.uint8],
                 f2_val = sfreqs[s2_val]
                 cf2_val = cfreqs[s2_val]
                 m2_val = magics[s2_val]
-                while st2 >= L_MAX_BOUND * f2_val:
+                while st2 >= L_NORM_THRESHOLD * f2_val:
                     bitstreams_flat[ptr] = uint8(st2 & 0xFF); ptr += 1; st2 >>= 8
                 q2 = mul_hi(st2, m2_val); r2 = st2 - q2 * f2_val
                 if r2 >= f2_val: q2 += np.uint64(1); r2 -= f2_val
@@ -401,7 +398,7 @@ def rans_encode_shards_parallel(shard_data_flat: npt.NDArray[np.uint8],
                 f1_val = sfreqs[s1_val]
                 cf1_val = cfreqs[s1_val]
                 m1_val = magics[s1_val]
-                while st1 >= L_MAX_BOUND * f1_val:
+                while st1 >= L_NORM_THRESHOLD * f1_val:
                     bitstreams_flat[ptr] = uint8(st1 & 0xFF); ptr += 1; st1 >>= 8
                 q1 = mul_hi(st1, m1_val); r1 = st1 - q1 * f1_val
                 if r1 >= f1_val: q1 += np.uint64(1); r1 -= f1_val
@@ -411,7 +408,7 @@ def rans_encode_shards_parallel(shard_data_flat: npt.NDArray[np.uint8],
                 f0_val = sfreqs[s0_val]
                 cf0_val = cfreqs[s0_val]
                 m0_val = magics[s0_val]
-                while st0 >= L_MAX_BOUND * f0_val:
+                while st0 >= L_NORM_THRESHOLD * f0_val:
                     bitstreams_flat[ptr] = uint8(st0 & 0xFF); ptr += 1; st0 >>= 8
                 q0 = mul_hi(st0, m0_val); r0 = st0 - q0 * f0_val
                 if r0 >= f0_val: q0 += np.uint64(1); r0 -= f0_val
