@@ -194,7 +194,8 @@ def build_shard_map_universal_42() -> npt.NDArray[np.uint8]:
             s_map[v, i, 0], s_map[v, i, 1], s_map[v, i, 2] = base, base + 1, base + 2
     return s_map
 
-_s_lut_rgb, _i_lut_rgb, _d_lut_rgb = precompute_luts(V_BOUND_RGB, INTENSITY_SEG_RGB, build_shard_map_universal_42(), -1)
+_shard_map_rgb = build_shard_map_universal_42()
+_s_lut_rgb, _i_lut_rgb, _d_lut_rgb = precompute_luts(V_BOUND_RGB, INTENSITY_SEG_RGB, _shard_map_rgb, -1)
 
 PROFILE_RGB = ShardProfile(
     name="Universal-42",
@@ -202,7 +203,7 @@ PROFILE_RGB = ShardProfile(
     intensity_segments=INTENSITY_SEG_RGB,
     noise_shard_id=-1,
     total_shards=42,
-    shard_map=build_shard_map_universal_42(),
+    shard_map=_shard_map_rgb,
     spatial_lut=_s_lut_rgb,
     intensity_lut=_i_lut_rgb,
     dispatch_lut=_d_lut_rgb
@@ -389,7 +390,7 @@ def fused_rct_p1_gray(h: int, w: int, gray_raw: npt.NDArray[np.uint8],
     for i in range(h): row_global_offsets[i, 0] = row_global_offsets_1ch[i]
     hits, sums = np.zeros(3, dtype=np.uint32), np.zeros(3, dtype=np.uint64)
     hits[0], sums[0] = row_hits.sum(), row_abs_sums.sum()
-    empty_pad = np.zeros((h + 2, w + 2), dtype=np.uint8)
+    empty_pad = np.empty((0, 0), dtype=np.uint8)
     res_cached = (gr_res, empty_pad, empty_pad, a_res)
     return (gr_ch_p, shard_counts, shard_stats, shard_offsets, row_global_offsets, hits, sums, res_cached, (uint64(row_a_hits.sum()), row_a_sums.sum()))
 
@@ -439,11 +440,11 @@ def shard_pass_2_gray_stateless(h: int, w: int,
 def reconstruct_shards_rgb(h: int, w: int, res_gr: npt.NDArray[np.uint8], res_rd: npt.NDArray[np.uint8],
                            res_bd: npt.NDArray[np.uint8], off_gr: npt.NDArray[np.uint32],
                            off_rd: npt.NDArray[np.uint32], off_bd: npt.NDArray[np.uint32],
-                           is_grayscale: bool, s_lut: npt.NDArray[np.uint8], 
+                           s_lut: npt.NDArray[np.uint8],
                            i_lut: npt.NDArray[np.uint8], d_lut: npt.NDArray[np.uint8]):
     gr_rec = np.zeros((h + 2, w + 2), dtype=np.uint8)
-    rd_rec = np.zeros((h + 2, w + 2), dtype=np.uint8) if not is_grayscale else np.zeros((1, 1), dtype=np.uint8)
-    bd_rec = np.zeros((h + 2, w + 2), dtype=np.uint8) if not is_grayscale else np.zeros((1, 1), dtype=np.uint8)
+    rd_rec = np.zeros((h + 2, w + 2), dtype=np.uint8)
+    bd_rec = np.zeros((h + 2, w + 2), dtype=np.uint8)
     p_gr, p_rd, p_bd = off_gr.copy(), off_rd.copy(), off_bd.copy()
     for pi in range(1, h + 1):
         for pj in range(1, w + 1):
@@ -452,27 +453,26 @@ def reconstruct_shards_rgb(h: int, w: int, res_gr: npt.NDArray[np.uint8], res_rd
             ctx = int(get_context_id_fast(ag, bg, cg, i_lut[pg], s_lut, d_lut))
             res = IZIGZAG_LUT[res_gr[p_gr[ctx]]]; p_gr[ctx] += 1
             gr_rec[pi, pj] = np.uint8((int(res) + int(pg)) & 0xFF)
-    if not is_grayscale:
-        for c_idx in prange(2):
-            if c_idx == 0:
-                for pi in range(1, h + 1):
-                    for pj in range(1, w + 1):
-                        cur_g = gr_rec[pi, pj]
-                        a, b, c = rd_rec[pi, pj-1], rd_rec[pi-1, pj], rd_rec[pi-1, pj-1]
-                        p = selected_predictor(a, b, c)
-                        ctx = int(get_context_id_fast(a, b, c, i_lut[cur_g], s_lut, d_lut))
-                        res = IZIGZAG_LUT[res_rd[p_rd[ctx]]]; p_rd[ctx] += 1
-                        rd_rec[pi, pj] = np.uint8((int(res) + int(p)) & 0xFF)
-            else:
-                for pi in range(1, h + 1):
-                    for pj in range(1, w + 1):
-                        cur_g = gr_rec[pi, pj]
-                        a, b, c = bd_rec[pi, pj-1], bd_rec[pi-1, pj], bd_rec[pi-1, pj-1]
-                        p = selected_predictor(a, b, c)
-                        ctx = int(get_context_id_fast(a, b, c, i_lut[cur_g], s_lut, d_lut))
-                        res = IZIGZAG_LUT[res_bd[p_bd[ctx]]]; p_bd[ctx] += 1
-                        bd_rec[pi, pj] = np.uint8((int(res) + int(p)) & 0xFF)
-    return gr_rec[1:h+1, 1:w+1], rd_rec[1:h+1, 1:w+1] if not is_grayscale else np.empty((0, 0), dtype=np.uint8), bd_rec[1:h+1, 1:w+1] if not is_grayscale else np.empty((0, 0), dtype=np.uint8)
+    for c_idx in prange(2):
+        if c_idx == 0:
+            for pi in range(1, h + 1):
+                for pj in range(1, w + 1):
+                    cur_g = gr_rec[pi, pj]
+                    a, b, c = rd_rec[pi, pj-1], rd_rec[pi-1, pj], rd_rec[pi-1, pj-1]
+                    p = selected_predictor(a, b, c)
+                    ctx = int(get_context_id_fast(a, b, c, i_lut[cur_g], s_lut, d_lut))
+                    res = IZIGZAG_LUT[res_rd[p_rd[ctx]]]; p_rd[ctx] += 1
+                    rd_rec[pi, pj] = np.uint8((int(res) + int(p)) & 0xFF)
+        else:
+            for pi in range(1, h + 1):
+                for pj in range(1, w + 1):
+                    cur_g = gr_rec[pi, pj]
+                    a, b, c = bd_rec[pi, pj-1], bd_rec[pi-1, pj], bd_rec[pi-1, pj-1]
+                    p = selected_predictor(a, b, c)
+                    ctx = int(get_context_id_fast(a, b, c, i_lut[cur_g], s_lut, d_lut))
+                    res = IZIGZAG_LUT[res_bd[p_bd[ctx]]]; p_bd[ctx] += 1
+                    bd_rec[pi, pj] = np.uint8((int(res) + int(p)) & 0xFF)
+    return gr_rec[1:h+1, 1:w+1], rd_rec[1:h+1, 1:w+1], bd_rec[1:h+1, 1:w+1]
 
 def execute_sharding_stateless(h: int, w: int, p1: Pass1Result, profile: ShardProfile, is_grayscale: bool) -> ShardBuffer:
     """ 

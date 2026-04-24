@@ -51,12 +51,12 @@ def selected_predictor(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     return med_edge_tuned(a, b, c)
 
 """    Engineering Rationale (Branchless MED):
-    Standard MED (Median Edge Detector) requires conditional branching:
+    Standard MED (Median Edge Detector) logic:
         if c >= max(a, b): pred = min(a, b)
         elif c <= min(a, b): pred = max(a, b)
         else: pred = a + b - c
-    
-    This is expensive in SIMD/JIT contexts. The branchless implementation uses:
+
+    Branchless implementation uses:
         max_ab = max(a, b); min_ab = min(a, b)
         pred = (max_ab + min_ab - c)
         pred = max(min_ab, min(max_ab, pred))
@@ -69,14 +69,6 @@ def selected_predictor(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     - If min_ab < c < max_ab, then min_ab < (max_ab + min_ab - c) < max_ab.
       The clamping has no effect, returning a + b - c. Correct.
 """
-@njit(error_model='numpy', inline='always', cache=True)
-def med_standard(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
-    mx: np.uint8 = max(a, b)
-    mn: np.uint8 = min(a, b)
-    gap: int = int(a) + int(b) - int(c)
-    p: int = min(int(mx), max(int(mn), gap))
-    return np.uint8(p)
-
 @njit(error_model='numpy', inline='always', cache=True)
 def med_edge_tuned(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     """
@@ -115,9 +107,6 @@ def med_edge_tuned(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
 ZIGZAG_LUT = np.array([to_zigzag(i) for i in range(256)], dtype=np.uint8)
 # Maps ZigZag symbols back to 8-bit residuals (wrapped to 0-255).
 IZIGZAG_LUT = np.array([from_zigzag(np.uint8(i)) & 0xFF for i in range(256)], dtype=np.uint8)
-# Combined BICC Bias + ZigZag LUT for direct normalization: Map (v - 128) & 0xFF -> ZigZag
-BICC_ZIGZAG_LUT = np.array([to_zigzag(np.uint8((i - 128) & 0xFF)) for i in range(256)], dtype=np.uint8)
-
 
 
 

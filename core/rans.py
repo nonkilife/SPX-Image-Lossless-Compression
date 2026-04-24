@@ -37,12 +37,12 @@ __version__ = "8.3.2"
 import numpy as np
 import numpy.typing as npt
 from numba import njit, prange, uint8, uint16, uint32, uint64
-from typing import Tuple, List, Optional
+from typing import Tuple
 
 from .common import (
     get_empirical_templates,
 )
-from .rans_selector import _decide_shard_mode_core
+from .rans_selector import _decide_shard_mode_core, is_templates_disabled
 
 
 # =============================================================================
@@ -54,6 +54,11 @@ M_BITS: int     = 12                  # Probability precision (Total mass = 4096
 L_NORM_THRESHOLD: uint64 = (L_LOWER >> M_BITS) << 8 # Normalization threshold
 M_TOTAL: uint64 = uint64(1 << M_BITS)
 M_MASK: uint64  = M_TOTAL - 1
+
+# Precomputed magic LUT: magic[f] = (2^64-1) // f for f in 1..4096 (32 KB, L1-resident)
+_MAGIC_LUT: npt.NDArray[np.uint64] = np.zeros(4097, dtype=np.uint64)
+for _f in range(1, 4097):
+    _MAGIC_LUT[_f] = np.uint64(0xFFFFFFFFFFFFFFFF) // np.uint64(_f)
 
 
 # =============================================================================
@@ -153,11 +158,6 @@ def rans_decode_4way_core(st0: uint64, st1: uint64, st2: uint64, st3: uint64,
                 if st2 < L_LOWER and ptr >= 0: st2 = (st2 << 8) | uint64(bitstream[ptr]); ptr -= 1
 
 
-@njit(fastmath=True, cache=True)
-def collect_freqs_jit(data: npt.NDArray[np.uint8], freqs_out: npt.NDArray[np.uint64]):
-    for i in range(len(data)):
-        freqs_out[data[i]] += uint64(1)
-
 @njit(parallel=True, fastmath=True, cache=True)
 def collect_all_freqs_parallel(data_flat: npt.NDArray[np.uint8],
                                 shard_offsets: npt.NDArray[np.uint32],
@@ -173,7 +173,8 @@ def collect_all_freqs_parallel(data_flat: npt.NDArray[np.uint8],
 @njit(parallel=True, fastmath=True, cache=True)
 def build_pdf_tables_from_shards_core(shard_hists: npt.NDArray[np.uint64],
                                     shard_widths: npt.NDArray[np.uint16],
-                                    templates: npt.NDArray[np.uint64]) -> Tuple[npt.NDArray[np.uint64], npt.NDArray[np.uint64], npt.NDArray[np.uint8]]:
+                                    templates: npt.NDArray[np.uint64],
+                                    disable_templates: bool) -> Tuple[npt.NDArray[np.uint64], npt.NDArray[np.uint64], npt.NDArray[np.uint8]]:
     """ Builds cumulative frequency tables for all shards in parallel. """
     num_shards: int = shard_hists.shape[0]
     all_sym_freqs: npt.NDArray[np.uint64] = np.zeros((num_shards, 256), dtype=np.uint64)
@@ -185,7 +186,7 @@ def build_pdf_tables_from_shards_core(shard_hists: npt.NDArray[np.uint64],
         h_vals = shard_hists[sid]
 
         if np.sum(h_vals) > 0:
-            best_mode, f_arr = _decide_shard_mode_core(h_vals, width, 120.0, templates, False)
+            best_mode, f_arr = _decide_shard_mode_core(h_vals, width, 120.0, templates, disable_templates)
             shard_modes[sid] = best_mode
             all_sym_freqs[sid] = f_arr
 
@@ -209,14 +210,15 @@ def build_pdf_tables_from_shards(data_flat: npt.NDArray[np.uint8],
     shard_hists = np.zeros((num_shards, 256), dtype=np.uint64)
     collect_all_freqs_parallel(data_flat, shard_offsets, shard_lengths, shard_hists)
     templates = get_empirical_templates()
-    return build_pdf_tables_from_shards_core(shard_hists, shard_widths, templates)
+    disable = is_templates_disabled()
+    return build_pdf_tables_from_shards_core(shard_hists, shard_widths, templates, disable)
 
 def compact_pdf_tables(all_sym_freqs: npt.NDArray[np.uint64], shard_widths: npt.NDArray[np.uint16], shard_modes: npt.NDArray[np.uint8]) -> npt.NDArray[np.uint8]:
     """ 
     Serializes custom frequency tables into a compact bytes-buffer for the .spx Header.
 
     Routing Logic:
-    - Modes 4-9 (Static Empirical Templates) and Mode 3 (Uniform/Empty) are skipped entirely.
+    - Modes 4-33 (Static Empirical Templates) and Mode 3 (Uniform/Empty) are skipped entirely.
       They consume 0 bytes in the payload block since they are hardcoded in the Decoder.
     - Mode 0 (Custom Dynamic): Takes the generated PDF and decides on the most physically 
       compact byte-representation before writing:
@@ -228,7 +230,7 @@ def compact_pdf_tables(all_sym_freqs: npt.NDArray[np.uint64], shard_widths: npt.
     
     for s in range(num_shards):
         mode = shard_modes[s]
-        if mode >= 3: # Mode 3 (Empty) or 4-9 (Templates)
+        if mode >= 3: # Mode 3 (Empty) or 4-33 (Templates)
             continue
             
         w = int(shard_widths[s])
@@ -251,7 +253,7 @@ def expand_pdf_tables(compacted_data: npt.NDArray[np.uint8], shard_widths: npt.N
     Reconstructs the 256-symbol probability arrays during decompression.
 
     Routing Logic:
-    - Intercepts Modes 4-9 and retrieves the Static Template from local memory without consuming IO bytes.
+    - Intercepts Modes 4-33 and retrieves the Static Template from local memory without consuming IO bytes.
     - Intercepts Mode 3 and synthesizes a [4096, 0, 0...] perfect hit array.
     - For Custom PDFs (Mode 0), it decodes the payload stream (Dense vs Sparse byte-shapes) up to
       the limits defined by `shard_widths`.
@@ -319,16 +321,6 @@ def rans_encode_shards_parallel(shard_data_flat: npt.NDArray[np.uint8],
         bs_offsets[i] = curr_bs_offset
         curr_bs_offset += uint32(shard_lengths[i] * 2 + 1024)
     
-    all_magics = np.empty((num_shards, 256), dtype=uint64)
-    for i in prange(num_shards):
-        sf = all_sym_freqs[i]
-        for s_idx in range(256):
-            f_v = sf[s_idx]
-            if f_v > 0: 
-                all_magics[i, s_idx] = uint64(0xFFFFFFFFFFFFFFFF) // f_v
-            else: 
-                all_magics[i, s_idx] = uint64(0)
-
     for i in prange(num_shards):
         n_val = int(shard_lengths[i])
         sfreqs = all_sym_freqs[i]
@@ -349,36 +341,35 @@ def rans_encode_shards_parallel(shard_data_flat: npt.NDArray[np.uint8],
             ptr = bs_start
             
             cfreqs = all_cum_freqs[i]
-            magics = all_magics[i]
-            
+
             rem_val = n_val % 4
             tail_start = n_val - rem_val
-            
+
             for j in range(n_val - 1, tail_start - 1, -1):
                 s_val = int(shard_data_flat[data_start + j])
                 f_val = sfreqs[s_val]
                 cf_val = cfreqs[s_val]
-                m_val = magics[s_val]
-                
+                m_val = _MAGIC_LUT[f_val]
+
                 pos_val = j % 4
                 curr_st = uint64(0)
                 if pos_val == 0: curr_st = st0
                 elif pos_val == 1: curr_st = st1
                 elif pos_val == 2: curr_st = st2
                 else: curr_st = st3
-                
+
                 x_max_val = L_NORM_THRESHOLD * f_val
                 while curr_st >= x_max_val:
                     bitstreams_flat[ptr] = uint8(curr_st & 0xFF); ptr += 1
                     curr_st >>= 8
-                
+
                 q = mul_hi(curr_st, m_val)
                 r = curr_st - q * f_val
                 if r >= f_val:
                     q += np.uint64(1)
                     r -= f_val
                 curr_st = (q << M_BITS) + cf_val + r
-                
+
                 if pos_val == 0: st0 = curr_st
                 elif pos_val == 1: st1 = curr_st
                 elif pos_val == 2: st2 = curr_st
@@ -386,42 +377,34 @@ def rans_encode_shards_parallel(shard_data_flat: npt.NDArray[np.uint8],
 
             for j in range(tail_start - 4, -1, -4):
                 s3_val = int(shard_data_flat[data_start + j + 3])
-                f3_val = sfreqs[s3_val]
-                cf3_val = cfreqs[s3_val]
-                m3_val = magics[s3_val]
+                f3_val = sfreqs[s3_val]; cf3_val = cfreqs[s3_val]
                 while st3 >= L_NORM_THRESHOLD * f3_val:
                     bitstreams_flat[ptr] = uint8(st3 & 0xFF); ptr += 1; st3 >>= 8
-                q3 = mul_hi(st3, m3_val); r3 = st3 - q3 * f3_val
+                q3 = mul_hi(st3, _MAGIC_LUT[f3_val]); r3 = st3 - q3 * f3_val
                 if r3 >= f3_val: q3 += np.uint64(1); r3 -= f3_val
                 st3 = (q3 << M_BITS) + cf3_val + r3
 
                 s2_val = int(shard_data_flat[data_start + j + 2])
-                f2_val = sfreqs[s2_val]
-                cf2_val = cfreqs[s2_val]
-                m2_val = magics[s2_val]
+                f2_val = sfreqs[s2_val]; cf2_val = cfreqs[s2_val]
                 while st2 >= L_NORM_THRESHOLD * f2_val:
                     bitstreams_flat[ptr] = uint8(st2 & 0xFF); ptr += 1; st2 >>= 8
-                q2 = mul_hi(st2, m2_val); r2 = st2 - q2 * f2_val
+                q2 = mul_hi(st2, _MAGIC_LUT[f2_val]); r2 = st2 - q2 * f2_val
                 if r2 >= f2_val: q2 += np.uint64(1); r2 -= f2_val
                 st2 = (q2 << M_BITS) + cf2_val + r2
 
                 s1_val = int(shard_data_flat[data_start + j + 1])
-                f1_val = sfreqs[s1_val]
-                cf1_val = cfreqs[s1_val]
-                m1_val = magics[s1_val]
+                f1_val = sfreqs[s1_val]; cf1_val = cfreqs[s1_val]
                 while st1 >= L_NORM_THRESHOLD * f1_val:
                     bitstreams_flat[ptr] = uint8(st1 & 0xFF); ptr += 1; st1 >>= 8
-                q1 = mul_hi(st1, m1_val); r1 = st1 - q1 * f1_val
+                q1 = mul_hi(st1, _MAGIC_LUT[f1_val]); r1 = st1 - q1 * f1_val
                 if r1 >= f1_val: q1 += np.uint64(1); r1 -= f1_val
                 st1 = (q1 << M_BITS) + cf1_val + r1
 
                 s0_val = int(shard_data_flat[data_start + j])
-                f0_val = sfreqs[s0_val]
-                cf0_val = cfreqs[s0_val]
-                m0_val = magics[s0_val]
+                f0_val = sfreqs[s0_val]; cf0_val = cfreqs[s0_val]
                 while st0 >= L_NORM_THRESHOLD * f0_val:
                     bitstreams_flat[ptr] = uint8(st0 & 0xFF); ptr += 1; st0 >>= 8
-                q0 = mul_hi(st0, m0_val); r0 = st0 - q0 * f0_val
+                q0 = mul_hi(st0, _MAGIC_LUT[f0_val]); r0 = st0 - q0 * f0_val
                 if r0 >= f0_val: q0 += np.uint64(1); r0 -= f0_val
                 st0 = (q0 << M_BITS) + cf0_val + r0
 
@@ -477,38 +460,4 @@ def build_all_lookups(all_cum_freqs: npt.NDArray[np.uint64]) -> npt.NDArray[np.u
                     lk[start:end] = uint8(sym)
     return lookups
 
-@njit(parallel=True, boundscheck=False, cache=True)
-def rans_decode_shards_parallel(
-    compressed_data: npt.NDArray[np.uint8],
-    states: npt.NDArray[np.uint64],        
-    bs_offsets: npt.NDArray[np.uint32],    
-    bs_lengths: npt.NDArray[np.uint32],    
-    all_cum_freqs: npt.NDArray[np.uint64], 
-    all_sym_freqs: npt.NDArray[np.uint64], 
-    all_lookups: npt.NDArray[np.uint8],    
-    out_flat: npt.NDArray[np.uint8],
-    out_offsets: npt.NDArray[np.uint32],   
-    shard_counts: npt.NDArray[np.uint32]   
-) -> None:
-    """ Flattened Parallel Decoder Dispatcher: Saturates all CPU cores across shards. """
-    num_shards = len(shard_counts)
-    for i in prange(num_shards):
-        target_cnt = int(shard_counts[i])
-        if target_cnt > 0:
-            st0, st1, st2, st3 = states[i, 0], states[i, 1], states[i, 2], states[i, 3]
-            bs_start = int(bs_offsets[i])
-            bs_len = int(bs_lengths[i])
-            out_start = int(out_offsets[i])
-            
-            b_stream = compressed_data[bs_start : bs_start + bs_len]
-            out_view = out_flat[out_start : out_start + target_cnt]
-            
-            rans_decode_4way_core(
-                st0, st1, st2, st3, 
-                b_stream, 
-                all_cum_freqs[i], 
-                all_sym_freqs[i], 
-                all_lookups[i], 
-                out_view
-            )
 

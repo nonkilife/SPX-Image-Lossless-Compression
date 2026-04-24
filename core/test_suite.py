@@ -70,6 +70,17 @@ def get_pnm_stats(arr: npt.NDArray) -> int:
     pnm_header = f"P{'6' if channels==3 else '5'}\n{arr.shape[1]} {arr.shape[0]}\n255\n".encode('ascii')
     return len(pnm_header) + arr.size
 
+def get_ref_png_size(path: str) -> Optional[int]:
+    if path == "__WARMUP__": return None
+    base, ext = os.path.splitext(path)
+    if ext.lower() == ".png":
+        return os.path.getsize(path)
+    # Check if a .png sibling exists
+    png_path = base + ".png"
+    if os.path.exists(png_path):
+        return os.path.getsize(png_path)
+    return None
+
 def calculate_mse(arr1: npt.NDArray, arr2: npt.NDArray) -> float:
     """Calculate Mean Squared Error between two arrays with shape validation."""
     if arr1.shape != arr2.shape:
@@ -139,10 +150,12 @@ def spx_worker(path: str, **kwargs) -> Dict[str, Any]:
         comp_size_bytes = len(res_spx.payload)
         mse = calculate_mse(arr_orig, rec_rgb)
         pnm_bytes = get_pnm_stats(arr_orig)
+        png_bytes = get_ref_png_size(path)
 
         return {
             "name": "SPX", "filename": filename, "pixels": pixels,
-            "orig_bytes": orig_size_bytes, "pnm_bytes": pnm_bytes, "comp_bytes": comp_size_bytes,
+            "orig_bytes": orig_size_bytes, "pnm_bytes": pnm_bytes, 
+            "png_bytes": png_bytes, "comp_bytes": comp_size_bytes,
             "e_s": ze_s, "d_s": zd_s, "mse": mse, "success": True
         }
     except Exception as e:
@@ -177,10 +190,12 @@ def webp_worker(path: str, **kwargs) -> Dict[str, Any]:
             
             pnm_bytes = get_pnm_stats(arr_orig)
             mse = calculate_mse(arr_orig, arr_rec)
+            png_bytes = get_ref_png_size(path)
 
             return {
                 "name": "WebP", "filename": filename, "pixels": pixels,
-                "orig_bytes": orig_size_bytes, "pnm_bytes": pnm_bytes, "comp_bytes": comp_size_bytes,
+                "orig_bytes": orig_size_bytes, "pnm_bytes": pnm_bytes, 
+                "png_bytes": png_bytes, "comp_bytes": comp_size_bytes,
                 "e_s": we_s, "d_s": wd_s, "mse": mse, "success": True
             }
     except Exception as e:
@@ -215,10 +230,12 @@ def jxl_worker(path: str, **kwargs) -> Dict[str, Any]:
             comp_size_bytes = len(encoded)
             pnm_bytes = get_pnm_stats(arr_orig)
             mse = calculate_mse(arr_orig, arr_rec)
+            png_bytes = get_ref_png_size(path)
 
             return {
                 "name": "JXL", "filename": filename, "pixels": pixels,
-                "orig_bytes": orig_size_bytes, "pnm_bytes": pnm_bytes, "comp_bytes": comp_size_bytes,
+                "orig_bytes": orig_size_bytes, "pnm_bytes": pnm_bytes, 
+                "png_bytes": png_bytes, "comp_bytes": comp_size_bytes,
                 "e_s": je_s, "d_s": jd_s, "mse": mse, "success": True
             }
     except Exception as e:
@@ -234,6 +251,8 @@ class CodecReporter:
         self.count = 0
         self.total_orig = 0
         self.total_pnm = 0
+        self.total_png = 0
+        self.png_count = 0
         self.total_comp = 0
         self.total_pixels = 0
         self.total_e_s = 0.0
@@ -247,6 +266,9 @@ class CodecReporter:
         self.total_pixels += res["pixels"]
         self.total_orig += res["orig_bytes"]
         self.total_pnm += res["pnm_bytes"]
+        if res.get("png_bytes") is not None:
+            self.total_png += res["png_bytes"]
+            self.png_count += 1
         self.total_comp += res["comp_bytes"]
         self.total_e_s += res["e_s"]
         self.total_d_s += res["d_s"]
@@ -257,8 +279,10 @@ class CodecReporter:
         if self.count == 0:
             return {
                 "name": self.name, "count": 0, "success": False,
-                "orig_mb": 0, "pnm_mb": 0, "pnm_bpp": 0, "src_bpp": 0, "comp_mb": 0,
-                "saved_pnm_pct": 0, "saved_pct": 0, "bpp": 0, "mean_ratio": 0, "median_ratio": 0,
+                "orig_mb": 0, "pnm_mb": 0, "pnm_bpp": 0, "src_bpp": 0, 
+                "png_mb": None, "png_bpp": None,
+                "comp_mb": 0, "saved_pnm_pct": 0, "saved_pct": 0, "saved_png_pct": None,
+                "bpp": 0, "mean_ratio": 0, "median_ratio": 0,
                 "range": (0, 0), "mse": 0, "avg_e_ms": 0, "avg_d_ms": 0, "wall_s": wall_clock,
                 "sys_tp": (0, 0), "total_orig": 0, "total_pixels": 0, "core_tp": (0, 0)
             }
@@ -272,14 +296,12 @@ class CodecReporter:
         total_work = self.total_e_s + self.total_d_s
         if total_work > 0:
             # Normalized Wall-Clock: Distribute wall-clock proportionally to core-second fractions.
-            # We cap at total core-seconds to ensure single-threaded TP doesn't look slower
-            # than Core Efficiency just because of IO/PIL overhead outside the timed loop.
-            enc_wall = min(wall_clock * (self.total_e_s / total_work), self.total_e_s)
-            dec_wall = min(wall_clock * (self.total_d_s / total_work), self.total_d_s)
+            enc_wall = wall_clock * (self.total_e_s / total_work)
+            dec_wall = wall_clock * (self.total_d_s / total_work)
             sys_enc_tp = orig_mb / enc_wall if enc_wall > 0 else 0
             sys_dec_tp = orig_mb / dec_wall if dec_wall > 0 else 0
         else:
-            sys_enc_tp = sys_dec_tp = 0
+            enc_wall = dec_wall = sys_enc_tp = sys_dec_tp = 0
 
         return {
             "name": self.name,
@@ -288,8 +310,11 @@ class CodecReporter:
             "pnm_mb": self.total_pnm / (1024**2),
             "pnm_bpp": self.total_pnm * 8.0 / self.total_pixels if self.total_pixels > 0 else 0,
             "src_bpp": src_bpp,
+            "png_mb": self.total_png / (1024**2) if self.png_count > 0 else None,
+            "png_bpp": self.total_png * 8.0 / self.total_pixels if self.png_count > 0 and self.total_pixels > 0 else None,
             "comp_mb": self.total_comp / (1024**2),
             "saved_pnm_pct": (1.0 - self.total_comp / self.total_pnm) * 100 if self.total_pnm > 0 else 0,
+            "saved_png_pct": (1.0 - self.total_comp / self.total_png) * 100 if self.png_count > 0 and self.total_png > 0 else None,
             "saved_pct": 100 - agg_ratio, "bpp": avg_bpp,
             "mean_ratio": mean_ratio, "median_ratio": np.median(self.ratios),
             "range": (min(self.ratios), max(self.ratios)),
@@ -297,6 +322,8 @@ class CodecReporter:
             # [v8.3.2 Fix] Reporting Throughput-weighted time per image instead of aggregate core-seconds.
             "avg_e_ms": (enc_wall * 1000) / self.count if self.count > 0 else 0,
             "avg_d_ms": (dec_wall * 1000) / self.count if self.count > 0 else 0,
+            "enc_wall_s": enc_wall,
+            "dec_wall_s": dec_wall,
             "wall_s": wall_clock,
             "sys_tp": (sys_enc_tp, sys_dec_tp),
             "total_orig": self.total_orig,
@@ -324,19 +351,22 @@ def print_comparison_table(stats_list: List[Dict], dataset_name: str):
         (f"Dataset Size ({int(img_count)} imgs)", "orig_mb", "{:>10.2f} MB"),
         ("SPX Size", "comp_mb", "{:>10.2f} MB"),
         ("BPP (PNM)", "pnm_bpp", "{:>13.4f}"),
-        ("BPP (PNG)", "src_bpp", "{:>13.4f}"),
+        ("BPP (PNG)", "png_bpp", "{:>13.4f}"),
         ("BPP (Compressed)", "bpp", "{:>13.6f}"),
         ("SEPARATOR", "", ""),
         ("Savings % (vs PNM)", "saved_pnm_pct", "{:>10.2f} %"),
-        ("Savings % (vs PNG)", "saved_pct", "{:>10.2f} %"),
+        ("Savings % (vs PNG)", "saved_png_pct", "{:>10.2f} %"),
         ("Mean Ratio (%)", "mean_ratio", "{:>10.2f} %"),
         ("Median Ratio (%)", "median_ratio", "{:>10.2f} %"),
         ("Ratio Range (%)", "range", "{0:5.1f}-{1:1.1f} %"),
         ("SEPARATOR", "", ""),
         ("Avg Enc Time", "avg_e_ms", "{:>10.1f} ms"),
         ("Avg Dec Time", "avg_d_ms", "{:>10.1f} ms"),
+        ("Total Enc Time", "enc_wall_s", "{:>10.2f} s"),
+        ("Total Dec Time", "dec_wall_s", "{:>10.2f} s"),
         ("Warmup Time", "warmup_s", "{:>10.2f} s"),
         ("Wall-clock", "wall_s", "{:>10.2f} s"),
+        ("SEPARATOR", "", ""),
         ("Single Core (Enc)", "core_tp", "{:>10.2f} MB/s", 0),
         ("Single Core (Dec)", "core_tp", "{:>10.2f} MB/s", 1),
         ("Throughput (Enc)", "sys_tp", "{:>10.2f} MB/s", 0),
@@ -375,8 +405,8 @@ def print_comparison_table(stats_list: List[Dict], dataset_name: str):
             if idx and isinstance(val, (tuple, list)):
                 val = val[idx[0]]
             
-            if val == "-":
-                formatted_val = f"{'N/A':^{col_widths[i+1]}}"
+            if val == "-" or val is None:
+                formatted_val = f"{'n/a':^{col_widths[i+1]}}"
             else:
                 try:
                     if isinstance(val, (tuple, list)):
@@ -402,9 +432,11 @@ def show_codec_summary(s: Dict):
     print(f"  PNM Size      : {s['pnm_mb']:6.2f} MB | BPP {s['pnm_bpp']:6.4f}")
     print(f"  Dataset Size  : {s['orig_mb']:6.2f} MB | BPP {s['src_bpp']:6.4f}")
     print(f"  SPX Size      : {s['comp_mb']:6.2f} MB | BPP {s['bpp']:6.4f}")
-    print(f"  Savings %     : vs PNM {s['saved_pnm_pct']:5.2f}% | vs PNG {s['saved_pct']:5.2f}%")
+    png_saved = f"{s['saved_png_pct']:5.2f}%" if s.get('saved_png_pct') is not None else "n/a"
+    print(f"  Savings %     : vs PNM {s['saved_pnm_pct']:5.2f}% | vs PNG {png_saved}")
     print(f"  Comp. Ratio   : Mean {s['mean_ratio']:5.2f}% | Median {s['median_ratio']:5.2f}% | Range {s['range'][0]:5.1f}-{s['range'][1]:5.1f}%")
     print(f"  Avg File Speed: Enc {s['avg_e_ms']:7.1f} ms | Dec {s['avg_d_ms']:7.1f} ms")
+    print(f"  Total Phase   : Enc {s['enc_wall_s']:7.2f} s  | Dec {s['dec_wall_s']:7.2f} s")
     print(f"  Throughput    : Enc {s['sys_tp'][0]:6.2f} MB/s | Dec {s['sys_tp'][1]:6.2f} MB/s")
     print(f"  Single Core   : Enc {s['core_tp'][0]:6.2f} MB/s | Dec {s['core_tp'][1]:6.2f} MB/s")
     print(f"  Wall-clock    : {s['wall_s']:6.2f} s")
@@ -470,7 +502,7 @@ def export_to_csv(stats_list: List[Dict], dataset_name: str):
     headers = [
         "Timestamp", "Dataset", "Codec", "Images", "Orig_MB", "PNM_MB", "Comp_MB",
         "Saved_PNG%", "Saved_PNM%", "BPP", "Ratio_Mean", "Ratio_Med", 
-        "Avg_Enc_ms", "Avg_Dec_ms", 
+        "Avg_Enc_ms", "Avg_Dec_ms", "Total_Enc_s", "Total_Dec_s",
         "Enc_TP", "Dec_TP", "Core_E_TP", "Core_D_TP",
         "Wins_S", "Wins_E", "Wins_D", "MSE"
     ]
@@ -489,6 +521,7 @@ def export_to_csv(stats_list: List[Dict], dataset_name: str):
                 f"{s['saved_pct']:.2f}", f"{s['saved_pnm_pct']:.2f}", f"{s['bpp']:.6f}",
                 f"{s['mean_ratio']:.2f}", f"{s['median_ratio']:.2f}",
                 f"{s.get('avg_e_ms', 0):.1f}", f"{s.get('avg_d_ms', 0):.1f}",
+                f"{s.get('enc_wall_s', 0):.2f}", f"{s.get('dec_wall_s', 0):.2f}",
                 f"{s['sys_tp'][0]:.2f}", f"{s['sys_tp'][1]:.2f}",
                 f"{s['core_tp'][0]:.2f}", f"{s['core_tp'][1]:.2f}",
                 s.get("wins_s", 0), s.get("wins_e", 0), s.get("wins_d", 0),

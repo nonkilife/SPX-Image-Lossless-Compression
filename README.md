@@ -19,6 +19,7 @@ The following data characterizes the throughput and compression efficiency acros
 | **CLIC '25** | RGB | **8.03** | **-28.52 %** | **29.46 MB/s** | 1.10 MB/s | 5.35 MB/s |
 | **DIV2K Val**| 2K | **9.20** | **-27.46 %** | **42.36 MB/s** | 1.36 MB/s | 6.08 MB/s |
 | **Tecnick** | Gray | **1.68** | **-27.62 %** | **7.19 MB/s** | 0.28 MB/s | 2.19 MB/s |
+| **Waterloo** | Gray | **3.44** | **n/a** | **45.44 MB/s** | n/a | 12.10 MB/s |
 
 > [!NOTE]
 > **Hardware Benchmark Environment**:
@@ -291,9 +292,17 @@ Detailed performance metrics and official benchmarks comparing SPX against WebP 
 To verify the benchmarks or test the engine with standard datasets, you can download the images from the following official sources:
 
 - **DIV2K Data Set - Train & Validation**: [ETH Zurich CVL](https://data.vision.ee.ethz.ch/cvl/DIV2K/)
-- **Kodak Data Set**: [Kaggle - Kodak Dataset](https://www.kaggle.com/datasets/sherylmehta/kodak-dataset/data)
-- **Clic Data Set**: [Kaggle - CLIC Dataset](https://www.kaggle.com/datasets/mustafaalkhafaji95/clic-dataset?resource=download)
+
+- **Kodak Data Set**: [Kaggle - Kodak Dataset]
+(https://www.kaggle.com/datasets/sherylmehta/kodak-dataset/data)
+
+- **Clic Data Set**: [Kaggle - CLIC Dataset]
+(https://www.kaggle.com/datasets/mustafaalkhafaji95/clic-dataset?resource=download)
+
 - **Tecnick Data Set**: [SourceForge - TestImages](https://sourceforge.net/projects/testimages/files/SAMPLING/)
+
+- **Waterloo Data Set**: [Image Compression Info]
+(https://imagecompression.info/test_images/)
 
 ---
 

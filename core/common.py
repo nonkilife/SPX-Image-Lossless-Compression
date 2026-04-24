@@ -60,9 +60,6 @@ def get_empirical_templates() -> npt.NDArray[np.uint64]:
 # --- 1. Protocol Constants (Header Flags) ---
 # [v8.3.2] Standardized Bitstream Protocol Flags
 FLAG_RGBA: int         = 0x01
-FLAG_SIMPLE: int       = 0x02  # Zstd-compressed Raw Pixels (No sharding)
-FLAG_RAW: int          = 0x04  # Uncompressed Raw Pixels (No zstd)
-FLAG_PASSTHROUGH: int  = 0x08  # Original File Storage (PNG/JPG)
 FLAG_GRAYSCALE: int    = 0x10  # Vectorized monochrome engine bypassing RCT
 FLAG_COLOR_GSUB: int   = 0x20  # Adaptive Green-Subtract Transform (Smooth Image Optimization)
 FLAG_BITPLANE: int     = 0x40  # 2D Bit-Context engine (BICC Stage 2)
@@ -81,4 +78,3 @@ BITPLANE_H_THRESHOLD: float = 3.2          # Shannon Entropy Gating (bits/symbol
 BITPLANE_HIT_RATE_THRESHOLD: float = 0.30    # Minimum Zero-Residual Fraction
 BITPLANE_P90_THRESHOLD: int = 112             # Max 90th-percentile ZigZag symbol width
 
-ENABLE_DIAGNOSTICS: bool = False  # Production Gate

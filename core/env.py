@@ -48,11 +48,17 @@ def _compare_version(current: str, required: str) -> bool:
     r_parts = [int(p) for p in required.split('.')[:3]]
     return c_parts >= r_parts
 
+_verified: bool = False
+
 def verify_environment() -> bool:
-    """ 
+    """
     Validates that all external dependencies and versions are correctly configured.
     Raises SystemExit if a critical dependency is missing or outdated.
+    Safe to call multiple times — runs only once per process.
     """
+    global _verified
+    if _verified:
+        return True
     failed = False
     for pkg, req_v, desc in REQUIRED_PACKAGES:
         try:
@@ -68,18 +74,17 @@ def verify_environment() -> bool:
     if failed:
         logger.error("Environment verification failed. Please run: pip install -U numpy numba zstandard Pillow")
         sys.exit(1)
-        
-    # Check Numba JIT status
+
     try:
         import numba
-
         if not numba.config.DISABLE_JIT:
             logger.debug("Numba JIT is enabled and functional.")
         else:
             logger.warning("Numba JIT is DISABLED. Performance will be severely impacted.")
     except Exception as e:
         logger.error(f"Numba configuration check failed: {e}")
-        
+
+    _verified = True
     return True
 
 if __name__ == "__main__":

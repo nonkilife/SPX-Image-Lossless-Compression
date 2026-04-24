@@ -32,12 +32,12 @@ from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 import zstandard as zstd
 from .common import (
-    FLAG_RGBA, FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE,
+    FLAG_RGBA, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE,
     BITPLANE_H_THRESHOLD, BITPLANE_HIT_RATE_THRESHOLD, BITPLANE_P90_THRESHOLD
 )
 from .sharding import (
     PROFILE_RGB, Pass1Result, execute_sharding_stateless, fused_rct_p1_rgb, fused_rct_p1_gray,
-    SpxResult, calculate_channel_stats, extract_srb_metadata
+    SpxResult, extract_srb_metadata
 )
 from .codec import pack_bitstream
 from .rans_bitplane import compress_bitplane_gray_sharded, compress_bitplane_rgb_sharded
@@ -117,7 +117,6 @@ def _evaluate_coder_selection(shard_counts: npt.NDArray[np.uint32],
 
 def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
                   preloaded_arr: Optional[npt.NDArray[np.uint8]] = None,
-                  force_mode: Optional[int] = None,
                   use_bitplane: Optional[bool] = None) -> SpxResult:
     """ Main SPX Compression Entry Point (v8.3.2 Stable). """
     t0: float = time.time()
@@ -160,6 +159,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
 
         shard_widths = extract_srb_metadata(p1.shard_stats)
         if use_bitplane is None:
+            # Grayscale is always bitplane: single channel means no chroma sharding benefit.
             use_bitplane = True if is_grayscale else _evaluate_coder_selection(p1.shard_counts, shard_widths, p1.shard_stats, p1.hits)
 
         sbuffer = None

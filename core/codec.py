@@ -20,7 +20,7 @@ Bitstream Specification (SPX_CORE v8.3.2):
 | 8      | uint32 | Height         | Image height in pixels                       |
 | 12     | uint32 | Width          | Image width in pixels                        |
 | 16     | uint32 | MetaLen        | Length of trailing metadata                  |
-| 20     | uint32 | Flags          | RGBA(0x1), Gray(0x8), GSUB(0x10), BP(0x40)   |
+| 20     | uint32 | Flags          | RGBA(0x1), Gray(0x10), GSUB(0x20), BP(0x40)  |
 | 24     | uint8[]| ShardWidths    | [N_CH x N_SHARD] values (0=256)              |
 | ...    | uint8[]| ShardModes     | [N_CH x N_SHARD] Mode 0-33                   |
 | ...    | Block  | PDF_Tables     | Zstd[Compacted 12-bit frequencies]           |
@@ -58,8 +58,7 @@ import concurrent.futures
 import threading
 from typing import Tuple, List, Optional, Union, BinaryIO, NamedTuple
 from .common import (
-    FLAG_RGBA, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE,
-    FLAG_SIMPLE, FLAG_RAW, FLAG_PASSTHROUGH
+    FLAG_RGBA, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE
 )
 from .sharding import (
     PROFILE_RGB, ShardProfile, ShardBuffer, extract_srb_metadata
@@ -229,13 +228,6 @@ def unpack_bitstream(compressed_data: Union[bytes, BinaryIO], profile: ShardProf
     meta_start = src_len - m_len
     metadata, _ = _read_bytes(src_mv, m_len, meta_start)
     
-    # Mode-specific Bypass (Simple/Bitplane)
-    if flag & (FLAG_SIMPLE | FLAG_RAW | FLAG_PASSTHROUGH):
-        payload, _ = _read_bytes(src_mv, meta_start - p, p)
-        return SpxUnpackResult(h, w, flag, np.empty(0, np.uint8), np.empty(0, np.uint8), np.empty(0, np.uint8), 
-                               np.zeros(n_shards, np.uint32), np.zeros(n_shards, np.uint32), np.zeros(n_shards, np.uint32), 
-                               np.zeros((3, n_shards), np.uint32), None, bytes(payload), bytes(metadata))
-
     if flag & FLAG_BITPLANE:
         payload_for_bp, _ = _read_bytes(src_mv, meta_start - p, p)
         return SpxUnpackResult(h, w, flag, np.empty(0, np.uint8), np.empty(0, np.uint8), np.empty(0, np.uint8), 
