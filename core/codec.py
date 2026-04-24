@@ -1,8 +1,8 @@
 """
-SPX [Stable Parallel Architecture]
+SPX v8.3.2 [Stable Parallel Architecture]
 Module: codec
 Role: Bitstream Orchestration.
-Description: Logic for packing and unpacking the SPX tiered bitstream container.
+Description: Logic for packing and unpacking the SPX tiered bitstream container (v8.3.2).
 Architecture: Structured serialization layer bridging the Model and rANS pillars.
 Engineering Rationale:
 1. Deterministic Block Order: The header and SRB (Metadata) must appear first
@@ -12,15 +12,40 @@ Engineering Rationale:
    preceding the content, allowing the decompressor to spawn independent threads
    that jump directly to their target payload without sequential bit-scanning.
 
-Bitstream Structure:
+Bitstream Specification (SPX_CORE v8.3.2):
+------------------------------------------
+| Offset | Type   | Name           | Description                                  |
+|--------|--------|----------------|----------------------------------------------|
+| 0      | char[8]| Magic          | "SPX_CORE"                                   |
+| 8      | uint32 | Height         | Image height in pixels                       |
+| 12     | uint32 | Width          | Image width in pixels                        |
+| 16     | uint32 | MetaLen        | Length of trailing metadata                  |
+| 20     | uint32 | Flags          | RGBA(0x1), Gray(0x8), GSUB(0x10), BP(0x40)   |
+| 24     | uint8[]| ShardWidths    | [N_CH x N_SHARD] values (0=256)              |
+| ...    | uint8[]| ShardModes     | [N_CH x N_SHARD] Mode 0-33                   |
+| ...    | Block  | PDF_Tables     | Zstd[Compacted 12-bit frequencies]           |
+| ...    | Block  | Shard_Counts   | [N_CH x N_SHARD] uint32 residuals per shard  |
+| ...    | Shard[]| Shard_Payloads | [States(32B) | Len(4B) | Bitstream(NB)] x N |
+| ...    | Block  | Alpha_Layer    | Zstd[Raw residuals] (Optional)               |
+| EOF-M  | bytes  | Metadata       | User-defined trailing data                   |
+
+Internal Dependency Map:
 ```mermaid
 graph TD
-    Meta[Header: H, W, Flags] --> SRB[SRB Block: Widths, Modes]
-    SRB --> PDF[PDF Block: Zstd Compacted Tables]
-    PDF --> SC[Shard Counts Block]
-    SC --> Data[Shard Block: rANS Payloads]
-    Data --> Alpha[Alpha Block, if RGBA]
-    Alpha --> End[Trailing Metadata]
+    subgraph Core Engine
+        CO[codec.py] --> SH[sharding.py]
+        CO --> RA[rans.py]
+        CO --> CM[common.py]
+        SH --> PR[predictor.py]
+        RA --> PR
+        RA --> RB[rans_bitplane.py]
+    end
+    subgraph Entry Points
+        CP[compress.py] --> CO
+        DP[decompress.py] --> CO
+        TS[test_suite.py] --> CP
+        TS --> DP
+    end
 ```
 """
 
@@ -46,7 +71,7 @@ from .rans import (
     expand_pdf_tables
 )
  
-# [v8.2.1] Thread-Local for compressor reuse
+# [v8.3.2] Thread-Local for compressor reuse
 thread_local_codec = threading.local()
 
 def get_zstd_comp(level: int = 3) -> zstd.ZstdCompressor:
@@ -78,7 +103,7 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
                      profile: ShardProfile = PROFILE_RGB) -> Tuple[bytes, npt.NDArray[np.uint8]]:
     """
     Serializes compressed data into the final SPX file block.
-    [v8.2.1] Optimized ShardBuffer Serialization.
+    [v8.3.2] Optimized ShardBuffer Serialization.
     """
     flag: int = FLAG_RGBA if is_rgba else 0
     if is_grayscale: flag |= FLAG_GRAYSCALE
@@ -88,7 +113,7 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
     n_channels = 1 if is_grayscale else 3
     
     shard_counts = sbuffer.counts
-    # [v8.2.0] Automatic Width Extraction from ShardBuffer Stats
+    # [v8.3.2] Automatic Width Extraction from ShardBuffer Stats
     normalized_stats = normalize_shard_stats(sbuffer.stats)
     shard_widths = extract_srb_metadata(normalized_stats)
 
@@ -98,7 +123,7 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
     # 2. Build PDF tables and extract modes (Unified Channel Stacking)
     all_shards = []
     
-    # [v8.2.1] Reconstruct shard views directly from channel payloads to avoid redundant slicing of res_flat
+    # [v8.3.2] Reconstruct shard views directly from channel payloads to avoid redundant slicing of res_flat
     src_channels = [sbuffer.gr_payload] if is_grayscale else [sbuffer.gr_payload, sbuffer.rd_payload, sbuffer.bd_payload]
     for c_idx, c_data in enumerate(src_channels):
         c_counts = shard_counts[c_idx]
@@ -163,7 +188,7 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
 def unpack_bitstream(compressed_data: Union[bytes, BinaryIO], profile: ShardProfile = PROFILE_RGB) -> SpxUnpackResult:
     """
     Deserializes the SPX bitstream format.
-    [v8.2.1] Unified Transport Layer (Protocol Symmetry).
+    [v8.3.2] Unified Transport Layer (Protocol Symmetry).
     """
     if not isinstance(compressed_data, bytes) and not compressed_data.seekable():
         compressed_data = compressed_data.read()

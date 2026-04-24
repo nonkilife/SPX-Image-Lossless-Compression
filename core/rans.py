@@ -1,15 +1,20 @@
 """
-SPX [Stable Parallel Architecture]
+SPX v8.3.2 [Stable Parallel Architecture]
 Module: rans
 Role: Pillar 4 - Entropy Engine (Unified).
-Description: Integrated 4-way interleaved rANS core with sharded parallel encoding and decoding.
+Description: Integrated 4-way interleaved rANS core with sharded parallel encoding.
 Architecture: Precision-indexed SIMD-optimized symbols for O(1) branchless decoding.
 
-Engineering Rationale:
-1. Instruction Level Parallelism (ILP): SPX uses 4-way interleaved rANS states to saturate 
-   CPU superscalar pipelines. By decoding 4 symbols per loop iteration, we hide the 
-   dependency latency between state updates and memory lookups.
-2. LIFO Property: rANS is a stack-based (LIFO) engine. Symbols are encoded in 
+Engineering Rationale (4-Way Interleaving):
+1. ILP Optimization: Standard rANS is inherently sequential (State = F(State, Symbol)). 
+   By interleaving 4 independent streams (4 states), we allow the CPU's out-of-order 
+   execution engine to pipeline multiple state updates simultaneously.
+2. Branchless Decoding: The decoder core uses a 4096-entry lookup table to eliminate 
+   the search for symbols, reducing the inner loop to a series of arithmetic operations 
+   that map perfectly to modern super-scalar pipelines.
+3. Cache Efficiency: The 4-way structure fits within the L1 instruction cache while 
+   processing 4 symbols per iteration, significantly reducing the "Stall-to-Compute" ratio.
+4. LIFO Property: rANS is a stack-based (LIFO) engine. Symbols are encoded in 
    forward order and decoded in reverse order (bottom-up), allowing states to be 
    revolved back to their initial base through fractional probability divisions.
 

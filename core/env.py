@@ -1,8 +1,22 @@
 """
-SPX v6.2 [System Suite]
+SPX v8.3.2 [System Suite]
 Module: spx_env
 Role: Environment Validator.
 Description: Dependency and JIT-status verification for the SPX 4-pillar engine.
+
+Supported Environment Variables:
+------------------------------
+- SPX_DUMP_SHARDS: [0|1] Dumps raw shard residuals to binary files for diagnostic auditing.
+- SPX_DISABLE_TEMPLATES: [0|1] Forces Mode 0 (Custom PDF) for all shards, bypassing empirical templates.
+- SPX_FORCE_BITPLANE: [0|1] Forces the Bitplane rANS engine regardless of entropy gating.
+- SPX_LOG_LEVEL: [DEBUG|INFO|WARNING|ERROR] Sets the internal logger verbosity.
+
+JIT Caching Strategy:
+--------------------
+SPX utilizes Numba's `cache=True` for all performance-critical kernels. 
+- Fast Onboarding: First-run compilation takes ~20s; subsequent runs are near-instant.
+- Cache Location: Typically `__pycache__` within the core folder.
+- Versioning: JIT cache is automatically invalidated if the source code changes.
 """
 
 import sys

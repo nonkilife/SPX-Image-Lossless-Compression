@@ -1,5 +1,5 @@
 """
-SPX Unified Benchmark Suite (test_suite)
+SPX v8.3.2 Unified Benchmark Suite (test_suite)
 Module: test_suite
 Role: QA & Performance Validation.
 Description: Cross-codec comparative benchmarking and bit-perfect verification (MSE).
@@ -40,7 +40,7 @@ from typing import List, Dict, Tuple, Any, Optional
 
 # Ensure core engine components are accessible
 try:
-    # [v7.5.0 Migration] test_suite moved inside core package
+    # [v8.3.2 Migration] test_suite moved inside core package
     from .compress import compress_spx
     from .decompress import decompress_spx
 except ImportError:
@@ -114,7 +114,7 @@ def spx_worker(path: str, **kwargs) -> Dict[str, Any]:
 
         with Image.open(path) as img:
             img.load()
-            # [v7.5.2] Detect optimal mode to avoid inflating baseline sizes
+            # [v8.3.2] Detect optimal mode to avoid inflating baseline sizes
             target_mode = 'RGB'
             if img.mode in ('L', '1'): target_mode = 'L'
             elif img.mode == 'RGBA': target_mode = 'RGBA'
@@ -124,7 +124,7 @@ def spx_worker(path: str, **kwargs) -> Dict[str, Any]:
             orig_size_bytes = os.path.getsize(path)
 
         t0 = time.perf_counter()
-        # [v7.5.0] Propagation of bitplane flag if provided via kwargs. 
+        # [v8.3.2] Propagation of bitplane flag if provided via kwargs. 
         # Default to None to enable Auto-Selection.
         use_bitplane = kwargs.get('use_bitplane', None)
         res_spx = compress_spx(path, None, preloaded_arr=arr_orig, use_bitplane=use_bitplane)
@@ -464,7 +464,7 @@ def run_codec_benchmark(codec_name: str, worker_fn: Any, files: List[str], worke
 def export_to_csv(stats_list: List[Dict], dataset_name: str):
     csv_path = "test_results.csv"
     file_exists = os.path.exists(csv_path)
-    # [v6.2.2] Harmonized Comprehensive Metric Set
+    # [v8.3.2] Harmonized Comprehensive Metric Set
     headers = [
         "Timestamp", "Dataset", "Codec", "Images", "Orig_MB", "PNM_MB", "Comp_MB",
         "Saved_PNG%", "Saved_PNM%", "BPP", "Ratio_Mean", "Ratio_Med", 
@@ -597,7 +597,7 @@ def main() -> None:
 
     try:
         for name, worker in queue:
-            # [v7.5.1] Pass None for use_bitplane if not explicitly forced, to enable auto-selection
+            # [v8.3.2] Pass None for use_bitplane if not explicitly forced, to enable auto-selection
             bp_flag = True if args.bitplane else None
             stats, res_map = run_codec_benchmark(name, worker, files, args.workers, use_bitplane=bp_flag)
             # Ensure stats is at least a dict with the codec name if failure occurred

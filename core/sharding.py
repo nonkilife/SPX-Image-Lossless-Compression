@@ -1,5 +1,5 @@
 """
-SPX [Stateless Sharding Hub]
+SPX v8.3.2 [Stateless Sharding Hub]
 Module: sharding
 Role: Pillar 4 - Strategic Partitioning.
 Description: Definitions for shard profiles, O(1) context derivation, and shard data containers.
@@ -12,20 +12,17 @@ from the execution logic. By centralizing all profiles here, we enable rapid
 switching between different segmentation strategies without modifying the core 
 context derivation kernels.
 
-Logic Flow:
+Logic Flow (Fused Pass Architecture):
 ```mermaid
 graph TD
-    Input[Input Channels: Gr, Rd, Bd, A] --> Mode{is_grayscale?}
-    Mode -- Yes --> S1G[Pass 1 Gray: Profiling]
-    Mode -- No --> S1R[Pass 1 RGB: Profiling]
+    Input[Input Channels: Gr, Rd, Bd, A] --> Fused{Fused RCT/Pass 1}
+    Fused -->|Pillars 3 & 4| Meta[Stats: counts, hists, row_offsets]
+    Fused -->|Caching| Res[2D Residual & Context Maps]
     
-    S1G & S1R --> Meta[Stats: counts, hists, row_offsets]
-    Meta --> Alloc[Buffer Allocation: s_gr, s_rd, s_bd]
+    Meta & Res --> Alloc[Buffer Allocation: s_gr, s_rd, s_bd]
     
-    Alloc --> S2G[Pass 2 Gray: Payload Creation]
-    Alloc --> S2R[Pass 2 RGB: Payload Creation]
-    
-    S2G & S2R --> Output[ShardBuffer Container]
+    Alloc --> Pass2[Pass 2: Gather-only Payload Creation]
+    Pass2 --> Output[ShardBuffer Container]
 ```
 """
 
@@ -93,7 +90,7 @@ def extract_srb_metadata(shard_stats: npt.NDArray[np.uint32]) -> npt.NDArray[np.
     for c in range(n_channels):
         for s in range(n_shards):
             hist = shard_stats[c, s]
-            # [v8.1.0] Fix potential IndexError by checking indices size before access
+            # [v8.3.2] Fix potential IndexError by checking indices size before access
             indices = np.where(hist > 0)[0]
             if indices.size > 0:
                 widths[c, s] = np.uint16(int(indices[-1]) + 1)
@@ -112,7 +109,7 @@ def normalize_shard_stats(shard_stats: npt.NDArray[np.uint32]) -> npt.NDArray[np
     2. BICC_ZIGZAG_LUT maps these indices directly to ZigZag symbols.
     3. Output histograms are indexed by normalized ZigZag symbols.
     
-    [v8.3.1] Passthrough: Histograms are now pre-normalized to ZigZag space during Pass 1 
+    [v8.3.2] Passthrough: Histograms are now pre-normalized to ZigZag space during Pass 1 
     profiling to eliminate this separate O(N) scan.
     """
     return shard_stats
@@ -264,7 +261,7 @@ def get_context_id_fast(ag: uint8, bg: uint8, cg: uint8, intensity_idx: uint8,
                         d_lut: npt.NDArray[np.uint8]) -> uint8:
     """ 
     Stateless 2-step LUT dispatch for shard context derivation. 
-    [v8.2.1] Optimized for L2 cache residency (~300KB footprint).
+    [v8.3.2] Optimized for L2 cache residency (~300KB footprint).
     """
     # Cast to int for indexing safety in Numba
     da = int(ag) - int(cg) + 255
@@ -383,7 +380,7 @@ def shard_pass_2_rgb(h: int, w: int, ctx_map: npt.NDArray[np.uint8],
     """ 
     Stage 2: O(N) Encoding Payload Construction.
     -------------------------------------------
-    [v8.3.1] Gather-only: Uses pre-calculated Context IDs and residuals from Pass 1 
+    [v8.3.2] Gather-only: Uses pre-calculated Context IDs and residuals from Pass 1 
     to fill the shard-partitioned buffers. This scan is now purely a data-gathering 
     operation, as all prediction and context profiling is completed in Stage 1.
     """
@@ -406,7 +403,7 @@ def shard_pass_1_gray(h: int, w: int, gr_ch: npt.NDArray[np.uint8], a_ch: npt.ND
     """ 
     Stage 1: O(N) Shard Profiling for Grayscale (Sequential Raster). 
     ----------------------------------------------------------
-    [v8.3.1] Caching: Now fills 2D residual buffers and ctx_map to enable a pure 
+    [v8.3.2] Caching: Now fills 2D residual buffers and ctx_map to enable a pure 
     gather operation in Pass 2.
     """
     num_chunks = int(min(16, h)) if h > 0 else 1
@@ -487,7 +484,7 @@ def shard_pass_2_gray(h: int, w: int, ctx_map: npt.NDArray[np.uint8],
     """ 
     Stage 2: O(N) Encoding Payload Construction. 
     -------------------------------------------
-    [v8.3.1] Gather-only: Uses pre-calculated Context IDs and residuals from Pass 1 
+    [v8.3.2] Gather-only: Uses pre-calculated Context IDs and residuals from Pass 1 
     to fill the shard-partitioned buffers. This scan is now purely a data-gathering 
     operation with zero-redundancy.
     """
@@ -860,7 +857,7 @@ def execute_sharding(h: int, w: int, gr_ch: npt.NDArray[np.uint8], rd_ch: npt.ND
     -------------------------------------------
     Orchestrates the 2-pass sharding pipeline:
     1. Pass 1 (Profiling): Calculates shard histograms and row offsets.
-       [v8.3.1] Also generates 2D residual and context maps for caching.
+       [v8.3.2] Also generates 2D residual and context maps for caching.
     2. Pass 2 (Payload): Fills shard buffers using gathered residuals.
     
     If `p1_cached` is provided, it skips Pass 1 and uses the cached results, 

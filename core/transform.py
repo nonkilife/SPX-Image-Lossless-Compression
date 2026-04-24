@@ -1,9 +1,9 @@
 """
-SPX [RCT Architecture]
+SPX v8.3.2 [RCT Architecture]
 Module: transform
 Role: Pillar 3 - Spatial Transforms.
-Description: High-level image transformations and reconstruction kernels.
-Architecture: RGB/RGBA Channel management and G-sub Recursive Color Transform.
+Description: High-speed G-sub RCT (Green-Subtract) and reconstruction kernels.
+Architecture: Pillar-based modular spatial decorrelation layer.
 Engineering Rationale:
 1. Channel Dominance: Green (G) is used as the predictive lead because it usually 
    contains the highest structural information and correlates strongly with RD/BD 
@@ -40,17 +40,17 @@ def extract_channels(rgb: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8],
     is largely eliminated from R and B, making these newly created RD and BD color-difference 
     channels highly compressible. Also outputs per-row intensity histograms for profile logic.
 
-    [v8.1.1] Optimized histogram memory footprint.
+    [v8.3.2] Optimized histogram memory footprint.
     """
     if rgb.ndim == 2:
-        # Grayscale fast-path [v8.1.1] Parallelized histogram
+        # Grayscale fast-path [v8.3.2] Parallelized histogram
         h, w = rgb.shape
         gr_map = rgb.copy()
         rd_map = np.empty((0, 0), dtype=np.uint8)
         bd_map = np.empty((0, 0), dtype=np.uint8)
         a_map = np.empty((0, 0), dtype=np.uint8)
         
-        # [v8.1.1] Parallel Accumulation
+        # [v8.3.2] Parallel Accumulation
         global_hists = np.zeros((3, 256), dtype=np.uint32)
         for i in prange(h):
             local_hist = np.zeros(256, dtype=np.uint32)
@@ -67,7 +67,7 @@ def extract_channels(rgb: npt.NDArray[np.uint8]) -> Tuple[npt.NDArray[np.uint8],
     bd_map = np.empty((h, w), dtype=np.uint8)
     a_map = np.empty((h, w), dtype=np.uint8) if c == 4 else np.empty((0, 0), dtype=np.uint8)
     
-    # [v8.1.1] Reduced memory: Each thread maintains its own local histogram set to avoid collisions
+    # [v8.3.2] Reduced memory: Each thread maintains its own local histogram set to avoid collisions
     global_hists = np.zeros((3, 256), dtype=np.uint32)
     
     for i in prange(h):

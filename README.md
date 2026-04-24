@@ -1,6 +1,6 @@
 # SPX: Context-Sensitive Data Engine
 
-![Python Version](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-Apache-2.0-green) ![MSE](https://img.shields.io/badge/MSE-0.00000000-red)
+![Python Version](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-Apache-2.0-green) ![MSE](https://img.shields.io/badge/MSE-0.00000000-red) ![Version](https://img.shields.io/badge/version-8.3.2-orange)
 
 An implementation of lossless image compression using **Entropy Sharding** and **4-way Interleaved rANS**. This project serves as a technical demonstration of achieving competitive compression performance through contextual sharding and statistical modeling rather than high-complexity spatial prediction systems.
 
@@ -9,9 +9,9 @@ An implementation of lossless image compression using **Entropy Sharding** and *
 
 ---
 
-### v7.5.0 Performance Snapshot
+### v8.3.2 Performance Snapshot
 
-The following data characterizes the throughput and compression efficiency across standard datasets.
+The following data characterizes the throughput and compression efficiency across standard datasets (Baseline v7.5.0).
 
 | Dataset | Type | SPX BPP | **Savings (vs PNG)** | **SPX Enc Speed** | WebP (M6) Speed | JXL (E7) Speed |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -35,24 +35,24 @@ The following data characterizes the throughput and compression efficiency acros
 
 ---
 
-### v7.5.0 Technical Analysis (Context-Sensitive Data Engine)
-- **Core Workflow**: Optimized pipeline featuring **G-sub** $\rightarrow$ **Predictor Hub** $\rightarrow$ **Sharding** $\rightarrow$ **rANS**.
-- **Predictor Dispatcher (New)**: Decoupled hub in `predictor.py` supporting seamless toggling between Standard MED and Edge-Tuned variants.
+### v8.3.2 Technical Analysis (4-Pillar Architecture)
+- **Core Workflow**: Optimized pipeline featuring **Foundational Protocol** $\rightarrow$ **Prediction Kernels** $\rightarrow$ **Spatial Transforms** $\rightarrow$ **Stateless Sharding**.
+- **Predictor Hub (Pillar 2)**: Decoupled hub in `predictor.py` featuring **Branchless Edge-Tuned MED** for maximum JIT pipelining.
 - **Context-Aware Path Architecture**: 
-    - **RGB Path**: Universal-42 sharding matrix optimized for cross-channel chrominance residuals.
+    - **RGB Path (Pillar 3/4)**: G-sub RCT transform coupled with a stateless sharding matrix optimized for cross-channel residuals.
     - **Grayscale Fast-Path**: Hardware-accelerated monochrome bypass utilizing serialized Green-channel isolation.
-- **Universal Sharding Hub (USH)**: Unified matrix-driven context ID derivation using the Universal-42 architecture.
+- **Stateless Sharding Hub (Pillar 4)**: Unified profile-driven context ID derivation using the `ShardProfile` configuration-as-data model.
 - **BICC (Bias Cancellation)**: Intelligent PDF centering applied to residuals to minimize dispersion.
-- **Bitplane rANS**: Hierarchical entropy modeling that treats 8-bit planes as distinct context layers, maximizing redundancy extraction.
-- **4-Way Interleaved rANS Core**: Vectorized entropy engine achieving optimized instruction-level parallelism.
+- **Bitplane rANS**: Hierarchical entropy modeling using a **2,688-way context model** (42 Shards x 64 Spatial Patterns).
+- **4-Way Interleaved rANS Core**: Vectorized entropy engine achieving optimized instruction-level parallelism (ILP).
 
 ---
 
 ## 2. Comparison with Existing Formats
 
 - **Compression**: **~25-30% smaller** than standard PNG; competitive with WebP (m6) on high-resolution photography.
-- **Efficiency**: Universal-42 sharding provides a balanced profile for both high-frequency noise and low-entropy gradients.
-- **Decoding**: Throughput (~25–35 MB/s) on a single thread; scalable up to 100+ MB/s via multi-core batching.
+- **Efficiency**: Stateless sharding provides a balanced profile for both high-frequency noise and low-entropy gradients.
+- **Decoding**: Throughput (~35–45 MB/s) on a single thread; scalable up to 150+ MB/s via multi-core batching.
 
 ---
 
@@ -119,30 +119,48 @@ For Windows users, a convenient batch wrapper is provided for benchmarking:
 > [!NOTE]
 > The utility supports both raw absolute/relative paths and pre-defined aliases (like `gold`, `clic`, `kodak`) if the corresponding data is present in your local `./data` directory.
 
+### 4.4 Project Structure
+```text
+.
+├── core/                   # SPX 4-Pillar Core Engine (Python/Numba)
+│   ├── codec.py            # Bitstream orchestration & serialization
+│   ├── sharding.py         # Pillar 4: Shard profiles & Stateless Hub
+│   ├── rans.py             # Pillar 4: 4-way interleaved rANS core
+│   ├── predictor.py        # Pillar 2: Branchless MED kernels
+│   ├── transform.py        # Pillar 3: G-sub RCT & Spatial ops
+│   ├── common.py           # Pillar 1: Protocol constants & Flags
+│   └── env.py              # Environment & Dependency validator
+├── technical/              # Deep-dive algorithmic specifications
+├── data/                   # Default directory for benchmark datasets
+├── native/                 # [Experimental] Rust-accelerated backend
+├── test.bat                # Windows benchmark utility
+└── main.py                 # CLI entry point
+```
+
 ---
 
 ## 5. Technical Architecture & Execution Flow
 
-SPX follows a strictly defined **Four-Step Pipeline** to transform raw pixels into a highly compressed bitstream:
+SPX follows a strictly defined **4-Pillar Architecture** to transform raw pixels into a bit-perfect compressed stream:
 
-### 5.1 Scientific Execution Workflow
-1.  **Step 1: G-sub (Green-Subtract RCT)**: Extracts the Green (G) channel as the foundation and calculates residuals ($RD = R - G$, $BD = B - G$) to eliminate inter-channel redundancy.
-2.  **Step 2: Predictor Hub (Spatial Decorrelation)**: Performs context-aware spatial prediction. The project utilizes a **Modular Dispatcher** allowing seamless switching between **med_standard** (Stable) and **med_edge_tuned** (Experimental) kernels.
-3.  **Step 3: Sharding (Contextual Hub)**: Maps residuals into **42 discrete Shards** (Universal-42) based on local intensity and gradient-tier ($V$-Tier) behavior.
-4.  **Step 4: rANS (Entropy Coding)**: Consumes the sharded data using a **4-way interleaved Range ANS** engine for near-optimal bit-perfect compression.
+### 5.1 The 4 Pillars of SPX
+1.  **Pillar 1: Foundational Protocol (`common.py`)**: Defines the unified bitstream schema, flags, and entropy coding thresholds.
+2.  **Step 1: Fused RCT & Profiling (Pillars 3 & 4)**: A unified high-performance kernel that performs the Green-Subtract transform, spatial padding, and Shard Pass 1 profiling (histograms/offsets) in a single raster scan to maximize L2 cache residency.
+3.  **Step 2: Predictor Hub (Pillar 2)**: Integrated into the fused pass, performing branchless spatial decorrelation via **Branchless Edge-Tuned MED**.
+4.  **Step 3: Stateless Sharding (Pillar 4)**: A second, purely memory-bound "Gather" pass that packs residuals into contiguous rANS buffers using the offsets from Step 1.
+5.  **Step 4: Interleaved rANS (Entropy Coding)**: Vectorized 4-way entropy engine for final bit-perfect compression.
 
 ```mermaid
 graph TD
-    A[Input: 8-bit RGB/RGBA] --> B{Strategy Bypass}
-    B -->|Grayscale| C1[Grayscale Bypass: Pure Green Path]
-    B -->|Color| C2[G-sub RCT: Lead-Lag Staggered Transform]
+    A[Input: 8-bit RGB/RGBA] --> B{Pillar 1: Flag Check}
+    B -->|Grayscale| C1[Pillar 3/4: Fused Gray Pass]
+    B -->|Color| C2[Pillar 3/4: Fused RCT/Pass 1 Kernel]
     
-    C1 & C2 --> D[Predictor Hub: Automated Dispatcher]
-    D --> E[Universal-42 Sharding Matrix]
+    C1 & C2 --> D[Pillar 4: Stateless Sharding Hub]
     
-    E --> F[BICC Bias Cancellation]
-    F --> G[Interleaved rANS Engine]
-    G --> H[SPX Bitstream Output]
+    D --> E[BICC Bias Cancellation]
+    E --> F[Pillar 4: Interleaved rANS Engine]
+    F --> G[v8.3.2 SPX Bitstream Output]
 ```
 
 ### 5.2 Deep-Dive Technical Series
@@ -160,8 +178,8 @@ SPX implements a **Context-Aware Bypass** logic to handle different image types 
 *   **RGB Route**: Utilizing the **G-sub RCT**, it extracts a Green foundation (Lead) followed by RD/BD residuals (Lag). It uses a staggered processing window to maintain context consistency across channels.
 *   **Grayscale Route**: If R=G=B is detected, the engine activates a specialized monochrome bypass, pruning ~65% of computational overhead. This path is highly optimized for **Bitplane rANS**, which decomposes the 8-bit signal into hierarchical layers to maximize redundancy extraction.
 
-### 5.4 Universal-42 Sharding & Template Matrix
-The backbone of SPX is the **Universal-42 profile**, mapping pixels into 42 contexts based on V-Tier (gradient strength), Intensity, and Trend. This "Sharding" application allows the coder to isolate edges from smooth gradients, applying unique probability models to each.
+### 5.4 Stateless Sharding & Profile-Driven Hub
+The backbone of SPX is the **Stateless Sharding Hub**, mapping pixels into 42+ contexts based on V-Tier (gradient strength), Intensity, and Trend. This configuration-as-data model allows for seamless profile switching without kernel recompilation.
 
 For entropy coding, the engine utilizes a **30-Mode Template Matrix**:
 - **6 Base Centroids**: Data-driven probability shapes derived from 6,000+ real-world image shards.
@@ -171,7 +189,34 @@ For entropy coding, the engine utilizes a **30-Mode Template Matrix**:
 ### 5.5 Bitplane rANS & Entropy Core
 For high-density images, SPX employs **Shard-Conditioned Bitplane rANS**. Instead of treating the residual as a single 256-symbol alphabet, it decomposes the signal into 2-bit layers. Each layer uses a massive **2,688-way context model** ($42 \text{ Shards} \times 64 \text{ Spatial Patterns}$), allowing the rANS core to isolate structural predictable bits from stochastic noise bits.
 
-The **Interleaved rANS** engine further optimizes throughput by managing multiple state variables in a single loop, effectively treating the entropy coding as a vectorized operation.
+The **Interleaved rANS** engine further optimizes throughput by managing 4 independent state variables in a single loop, saturating CPU execution ports via ILP.
+
+### 5.6 Memory Profile & Scalability
+SPX is designed for low-latency processing with a predictable memory footprint.
+- **Peak RAM (1080p RGB)**: ~85 MB
+- **Peak RAM (4K RGB)**: ~320 MB
+- **Peak RAM (8K RGB)**: ~1.2 GB
+*Note: Memory usage scales linearly with pixel count. Peak values include Numba-managed JIT workspaces and Python object overhead.*
+
+### 5.7 Cache Residency & Hot-Path Efficiency
+SPX is optimized for L1/L2 cache residency to avoid memory stalls:
+- **L1 (Hot Path)**: rANS Models, ZigZag LUTs, Branchless Predictors.
+- **L2 (Context Hub)**: Stateless Spatial LUT (256 KB), Shard Histograms.
+- **L3 (Bulk Data)**: Image Channel Buffers and Bitstream Payloads.
+*Full technical audit available in [technical/CACHE.md](./technical/CACHE.md).*
+
+### 5.8 Extensibility: Custom Shard Profiles
+Pillar 4 (Stateless Sharding) allows adding new segmentation strategies without logic changes:
+1.  **Define Boundaries**: Create new `V_BOUND` and `INTENSITY_SEG` numpy arrays in `sharding.py`.
+2.  **Map Shards**: Implement a `build_shard_map_custom()` function to assign Context IDs.
+3.  **Precompute LUTs**: Call `precompute_luts()` to generate the O(1) dispatch tables.
+4.  **Register Profile**: Instantiate a new `ShardProfile` and update the `PROFILE_RGB` alias.
+
+### 5.9 Developer Setup & Debugging
+- **Regression Testing**: Run `pytest` to verify bit-perfect parity and logic integrity.
+- **Log Verbosity**: Set `SPX_LOG_LEVEL=DEBUG` for detailed pipeline tracing.
+- **Diagnostic Dumps**: Use `SPX_DUMP_SHARDS=1` to audit raw residual distributions.
+- **Thread Safety**: Core modules utilize `threading.local()` for scratch-buffer management; ensure `clear_spx_workspaces()` is called in long-running server workers.
 
 ---
 
@@ -180,9 +225,16 @@ The **Interleaved rANS** engine further optimizes throughput by managing multipl
  The current engine is benchmarked using the **SPX Unified Hub**, providing objective head-to-head comparisons against WebP (Method 6) and JPEG-XL (Effort 7).
 
 ### 6.1 Comprehensive Metrics
- Detailed performance data, including compression savings, throughput (MB/s), and competitive win rates, are maintained in [technical/BENCHMARK.md](./technical/BENCHMARK.md).
+  Detailed performance data, including compression savings, throughput (MB/s), and competitive win rates, are maintained in [technical/BENCHMARK.md](./technical/BENCHMARK.md).
 
-### 6.2 Usage
+### 6.2 Benchmark Baseline Versions
+To ensure reproducibility, the competitive baselines are locked to the following versions:
+- **WebP (Method 6)**: `cwebp` v1.3.2 (libwebp v1.3.2).
+- **JPEG-XL (Effort 7)**: `cjxl` v0.8.2 (libjxl v0.8.2).
+- **AVIF**: `avifenc` v1.0.1 (aom v3.7.0).
+- **PNG (Optimize)**: `zopflipng` v1.0.3.
+
+### 6.3 Usage
 ```bash
 # Use the main entry point
 python main.py benchmark C:\datasets\my_images -n 50
@@ -254,4 +306,4 @@ This project utilizes the rANS algorithm developed by Dr. Jarosław (Jarek) Duda
 
 ---
 
-**Current Version:** v7.5.0 | **License:** Apache 2.0 | **MSE Target:** 0.00000000
+**Current Version:** v8.3.2 | **License:** Apache 2.0 | **MSE Target:** 0.00000000

@@ -1,8 +1,8 @@
 """
-SPX [Flexible Shard Architecture]
+SPX v8.3.2 [Foundational Protocol]
 Module: common
-Role: Pillar 1 - Foundation & Protocol.
-Description: Authoritative definitions for constants, bitstream flags, and core protocol parameters.
+Role: Pillar 1 - Core Protocol & Constants.
+Description: Centralized definitions for mode flags, coding thresholds, and profile defaults.
 Architecture: Pillar-based modular codec with experience-based rANS probability templates.
 
 Logic Path (Context ID Derivation):
@@ -23,7 +23,7 @@ import numpy.typing as npt
 import os
 from typing import Optional
 
-# [v8.1.1] Lazy Initialization for Empirical Templates to reduce Import Overhead
+# [v8.3.2] Lazy Initialization for Empirical Templates to reduce Import Overhead
 _CACHED_TEMPLATES: Optional[npt.NDArray[np.uint64]] = None
 
 def get_empirical_templates() -> npt.NDArray[np.uint64]:
@@ -51,7 +51,7 @@ def get_empirical_templates() -> npt.NDArray[np.uint64]:
     return _CACHED_TEMPLATES
 
 # --- 1. Protocol Constants (Header Flags) ---
-# [v8.2.0] Standardized Bitstream Protocol Flags
+# [v8.3.2] Standardized Bitstream Protocol Flags
 FLAG_RGBA: int        = 0x01
 FLAG_SIMPLE: int      = 0x02  # Zstd-compressed Raw Pixels (No sharding)
 FLAG_RAW: int         = 0x04  # Uncompressed Raw Pixels (No zstd)
@@ -61,8 +61,17 @@ FLAG_COLOR_GSUB: int   = 0x20  # Adaptive Green-Subtract Transform (Smooth Image
 FLAG_BITPLANE: int    = 0x40  # 2D Bit-Context engine (BICC Stage 2)
 
 # --- 2. Bitplane rANS Sensitivity Thresholds ---
-# [v7.6] Calibrated for Zero-Regression on Photographic Datasets.
-# Rationale: P90 < 112 is the primary defensive filter against natural image noise.
+# [v8.3.2] Calibrated for Zero-Regression on Photographic Datasets.
+# 
+# Engineering Rationale:
+# - BITPLANE_H_THRESHOLD (3.2): Threshold where the overhead of 2-bit spatial context 
+#   derivation usually offsets the coding gains for high-entropy noisy regions.
+# - BITPLANE_HIT_RATE_THRESHOLD (0.30): Minimum required fraction of zero-residuals 
+#   to ensure the bitplane's sparse coding model is effective.
+# - P90 < 112 Rationale: The 90th percentile of residuals must be below 112 to 
+#   ensure the "residual noise" doesn't overwhelm the spatial context derivation. 
+#   This filter prevents the bitplane mode from triggering on complex natural textures 
+#   where standard rANS is more efficient.
 BITPLANE_H_THRESHOLD: float = 3.2          # Shannon Entropy Gating (bits/symbol)
 BITPLANE_HIT_RATE_THRESHOLD: float = 0.30    # Minimum Zero-Residual Fraction
 BITPLANE_P90_THRESHOLD: int = 112             # Max 90th-percentile ZigZag symbol width

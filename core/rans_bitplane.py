@@ -1,5 +1,5 @@
 """
-SPX [Stable Parallel Architecture]
+SPX v8.3.2 [Stable Parallel Architecture]
 Module: rans_bitplane
 Role: Entropy coding combining N-shard gradient context with
       2-bit spatial bitplane context.

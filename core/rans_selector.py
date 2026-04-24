@@ -1,5 +1,5 @@
 """
-SPX PDF Template Selector (rans_selector)
+SPX v8.3.2 PDF Template Selector (rans_selector)
 Module: rans_selector
 Role: Pillar 0 - Meta-Decision Engine.
 Description: Heuristic selector for optimal entropy modeling per shard.

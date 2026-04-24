@@ -1,4 +1,4 @@
-# SPX Cache Consumption Audit (v8.2.1)
+# SPX Cache Consumption Audit (v8.3.2)
 
 This document outlines the memory footprint and CPU cache residency of the SPX codec's core components. Understanding this hierarchy is critical for optimizing throughput and avoiding cache thrashing.
 
@@ -55,10 +55,10 @@ Current performance is limited by the number of lookup steps (3 steps for contex
 ### Negative Optimization: 3D Predictor LUT
 A $256^3$ 3D LUT would consume **16.7 MB**.
 *   **Warning**: This would displace the primary image buffers from L3 cache, leading to severe cache pollution and potentially *slower* execution despite fewer arithmetic instructions.
-*   **Decision**: Rejected in favor of arithmetic branchless optimizations and small 2D LUTs.
+*   **Decision**: Rejected in favor of the **Branchless Edge-Tuned MED** (v8.3.2), which achieves ~30% gain via arithmetic clamping without any additional memory overhead.
 
 ---
 
 ## 4. Current Bottleneck
-The system is **Instruction-Bound** rather than **Memory-Bound**. 
-The primary bottleneck is the branch-heavy logic in the scalar prediction kernels (`selected_predictor`) which limits the effectiveness of Numba's auto-vectorization.
+The system has transitioned from being **Instruction-Bound** (due to branches) to being **Dependency-Bound**. 
+The primary bottleneck in v8.3.2 is the serial dependency chain of rANS state updates. While 4-way interleaving mitigates this, the throughput is ultimately capped by the CPU's ability to resolve the state-to-state recurrence within the entropy core.

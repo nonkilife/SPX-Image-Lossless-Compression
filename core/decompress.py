@@ -1,9 +1,9 @@
 """
-SPX v7.5 [Stable Parallel Architecture]
+SPX v8.3.2 [Stable Parallel Architecture]
 Module: spx_decompress
 Role: Decompressor Orchestrator.
 Description: Bit-perfect reconstruction engine utilizing the 4-pillar modular core.
-Architecture: Dispatcher layer connecting bitstream parsing to the BICC/RCT recovery via Flexible Sharding Hub.
+Architecture: Dispatcher layer connecting bitstream parsing to the BICC/RCT recovery (Pillars 2 & 3) via Parallel Shard Recombination.
 
 Technical Flowchart:
 ```mermaid
@@ -49,7 +49,7 @@ env.verify_environment()
 # --- Logging: Core Framework ---
 logger: logging.Logger = logging.getLogger("spx.decompress")
 
-# [v5.1] Thread-Local Decompressor Cache to prevent redundant object creation
+# [v8.3.2] Thread-Local Decompressor Cache to prevent redundant object creation
 thread_local_decomp = threading.local()
 
 def zstandard_decompress(data: bytes) -> bytes:
@@ -60,13 +60,13 @@ def zstandard_decompress(data: bytes) -> bytes:
 
 def set_parallel_threads(n: int):
     """
-    [v5.2.4] Configures the number of CPU threads used by the Numba parallel engine.
+    [v8.3.2] Configures the number of CPU threads used by the Numba parallel engine.
     """
     numba.set_num_threads(n)
     logger.info(f"Numba Parallel Engine (Decompress) set to {n} thread(s).")
 
 def clear_spx_workspaces():
-    """ [v5.2.3] Forces release of Thread-Local decompressors to prevent memory retention in server workers. """
+    """ [v8.3.2] Forces release of Thread-Local decompressors to prevent memory retention in server workers. """
     if hasattr(thread_local_decomp, 'decomp'):
         del thread_local_decomp.decomp
     import gc
@@ -139,7 +139,7 @@ def inject_png_metadata(filepath: str, metadata_bytes: bytes) -> None:
 
 def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = None, optimize_png: bool = False) -> Tuple[npt.NDArray[np.uint8], float]:
     """
-    Main SPX Decompression Entry Point (v7.5 Stable).
+    Main SPX Decompression Entry Point (v8.3.2 Stable).
 
     Bit-perfect reverse orchestrator:
     1. BICC Shard Recovery (Pillar 2): Staggered reconstruction of G-Lead then RD/BD-Lag.
@@ -171,7 +171,7 @@ def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = No
             profile = PROFILE_RGB
             nsid = profile.noise_shard_id
 
-            # [v7.3] Universal Payload Handling
+            # [v8.3.2] Universal Payload Handling
             compressed_data: bytes = unpacked.payload
             
             rgb: npt.NDArray[np.uint8]
@@ -190,7 +190,7 @@ def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = No
             else:
                 if flag & FLAG_BITPLANE:
                     if is_grayscale:
-                        # [v8.2.1] Grayscale bitplane now decoded here for protocol symmetry
+                        # [v8.3.2] Grayscale bitplane now decoded here for protocol symmetry
                         res_gr_raw, ptr_bp = decompress_bitplane_gray_sharded(compressed_data, h, w, profile)
                         gr_rec = reconstruct_2d_channels(h, w, res_gr_raw.reshape((h, w)))
                         rd_rec = np.zeros((h, w), dtype=np.uint8)

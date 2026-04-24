@@ -1,8 +1,8 @@
 """
-SPX v8.2.1 [Flexible-Shard Architecture]
+SPX v8.3.2 [Flexible-Shard Architecture]
 Module: spx_predictor
 Role: Pillar 2 - Prediction Kernels.
-Description: Core spatial prediction algorithms (MED) and residual mapping (ZigZag).
+Description: Core spatial prediction algorithms (MED) optimized via branchless arithmetic.
 Architecture: Pure Numba-JIT accelerated kernels for low-level spatial restoration.
 
 Technical Flowchart:
@@ -43,11 +43,29 @@ def from_zigzag(z: np.uint8) -> int:
 def selected_predictor(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     """ 
     Unified Predictor Dispatcher. 
-    Current Active: med_edge_tuned (v7.3.1 Robust)
+    Current Active: med_edge_tuned (v8.3.2 Robust)
     """
     return med_edge_tuned(a, b, c)
 
-""" [DEPRECATED] Standard Median Edge Detector (MED)
+"""    Engineering Rationale (Branchless MED):
+    Standard MED (Median Edge Detector) requires conditional branching:
+        if c >= max(a, b): pred = min(a, b)
+        elif c <= min(a, b): pred = max(a, b)
+        else: pred = a + b - c
+    
+    This is expensive in SIMD/JIT contexts. The branchless implementation uses:
+        max_ab = max(a, b); min_ab = min(a, b)
+        pred = (max_ab + min_ab - c)
+        pred = max(min_ab, min(max_ab, pred))
+    
+    Mathematical Derivation:
+    - If c >= max_ab, then (max_ab + min_ab - c) <= min_ab. 
+      The clamping max(min_ab, ...) forces the result to min_ab. Correct.
+    - If c <= min_ab, then (max_ab + min_ab - c) >= max_ab. 
+      The clamping min(max_ab, ...) forces the result to max_ab. Correct.
+    - If min_ab < c < max_ab, then min_ab < (max_ab + min_ab - c) < max_ab.
+      The clamping has no effect, returning a + b - c. Correct.
+"""
 @njit(error_model='numpy', inline='always', cache=True)
 def med_standard(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     mx: np.uint8 = max(a, b)
@@ -55,7 +73,6 @@ def med_standard(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     gap: int = int(a) + int(b) - int(c)
     p: int = min(int(mx), max(int(mn), gap))
     return np.uint8(p)
-"""
 
 @njit(error_model='numpy', inline='always', cache=True)
 def med_edge_tuned(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
@@ -89,7 +106,7 @@ def med_edge_tuned(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     return np.uint8(res)
 
 # --- Static ZigZag Mapping LUTs ---
-# [v8.2.0] Moved to predictor.py to break Pillar 1/4 circular dependency.
+# [v8.3.2] Moved to predictor.py to break Pillar 1/4 circular dependency.
 
 # Maps 8-bit residuals to ZigZag symbols.
 ZIGZAG_LUT = np.array([to_zigzag(i) for i in range(256)], dtype=np.uint8)

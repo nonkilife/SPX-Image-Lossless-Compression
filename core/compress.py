@@ -1,16 +1,15 @@
 """
-SPX v8.3.1-stable [Flexible-Shard Architecture]
+SPX v8.3.2-stable [4-Pillar Orchestrator]
 Module: spx_compress
 Role: Compressor Orchestrator.
 Description: High-throughput lossless image encoder utilizing the 4-pillar modular core.
-Architecture: Dispatcher layer connecting RGB input to the BICC/rANS pipeline via Flexible Sharding Hub.
+Architecture: Dispatcher layer connecting RGB input to the BICC/rANS pipeline via Fused RCT/Pass 1 kernels.
 
 Technical Flowchart:
 ```mermaid
 graph TD
-    Ar[Input RGB/RGBA] --> GSUB[G-sub RCT: Extract G, RD, BD]
-    GSUB --> Pass1[Pass 1: Universal-42 Profiling]
-    Pass1 --> CodecSel{p90_width < Threshold?}
+    Ar[Input RGB/RGBA] --> Fused[Fused RCT/Pass 1: Decorrelation & Profiling]
+    Fused --> CodecSel{p90_width < Threshold?}
     CodecSel -->|No| Standard[Standard rANS: 8 Modes: 0/3/4-9]
     CodecSel -->|Yes| Bitplane[Bitplane rANS: 2688 Contexts]
     Standard & Bitplane --> Pack[Codec: Pack Bitstream]
@@ -44,7 +43,7 @@ from .codec import pack_bitstream
 from .rans_bitplane import compress_bitplane_gray_sharded, compress_bitplane_rgb_sharded
 from . import env
 
-# [v8.3.1] Internal Math Helpers
+# [v8.3.2] Internal Math Helpers
 @numba.njit(cache=True, inline='always')
 def _calculate_alpha_metrics(res_a: npt.NDArray[np.uint8]) -> Tuple[np.uint32, np.uint64]:
     """ Calculates hits and abs_sums for Alpha channel diagnostic parity. """
@@ -64,7 +63,7 @@ def _evaluate_coder_selection(shard_counts: npt.NDArray[np.uint32],
                               normalized_stats: npt.NDArray[np.uint32],
                               hits_total_p1: npt.NDArray[np.uint32]) -> bool:
     """
-    [v7.6] Encapsulated Coder Selection Gate.
+    [v8.3.2] Encapsulated Coder Selection Gate.
     Determines if Bitplane rANS should be used based on entropy and hit rate.
     """
     active_mask = shard_counts > 0
@@ -102,7 +101,7 @@ env.verify_environment()
 logger: logging.Logger = logging.getLogger("spx.compress")
 
 
-# [v2.25] Module-level Thread-Local for compressor object reuse
+# [v8.3.2] Module-level Thread-Local for compressor object reuse
 thread_local_comp: threading.local = threading.local()
 
 
@@ -129,7 +128,7 @@ def zstandard_compress(data: bytes) -> bytes:
 
 def set_parallel_threads(n: int):
     """
-    [v5.2.4] Configures the number of CPU threads used by the Numba parallel engine.
+    [v8.3.2] Configures the number of CPU threads used by the Numba parallel engine.
     """
     numba.set_num_threads(n)
     logger.info(f"Numba Parallel Engine set to {n} thread(s).")
@@ -183,7 +182,7 @@ def extract_png_metadata(filepath: str) -> bytes:
 
 def check_grayscale_robust(arr: npt.NDArray[np.uint8], img_mode: Optional[str] = None) -> bool:
     """ 
-    [v6.6] Hybrid Grayscale Detection: Metadata -> Sampling -> Full Verify.
+    [v8.3.2] Hybrid Grayscale Detection: Metadata -> Sampling -> Full Verify.
     Designed for 100% Correctness with High Performance.
     """
     # Phase 0: Dimension Check
@@ -225,7 +224,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
                   force_mode: Optional[int] = None,
                   use_bitplane: Optional[bool] = None) -> SpxResult:
     """ 
-    Main SPX Compression Entry Point (V6.6 Stable).
+    Main SPX Compression Entry Point (v8.3.2 Stable).
     
     Orchestrates the massive parallel encoding pipeline:
     1. G-Sub RCT Transform -> 2. Pass 1 Shard Histograms -> 3. Median-Normalization
@@ -312,7 +311,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
         shard_widths: npt.NDArray[np.uint16]
         shard_widths = extract_srb_metadata(normalized_stats)
 
-        # [v7.6] Per-Image Coder Selection: auto-detect bitplane vs standard rANS.
+        # [v8.3.2] Per-Image Coder Selection: auto-detect bitplane vs standard rANS.
         # Gate: H < 3.2 AND hit_rate > 0.30 AND p90 < 112 (Tightened for stability)
         # H = mean Shannon entropy across 3 channels; hit_rate = zero-residual fraction.
         # The caller can override by passing use_bitplane=True/False explicitly.
@@ -322,7 +321,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
             else:
                 use_bitplane = _evaluate_coder_selection(shard_counts, shard_widths, normalized_stats, hits_total_p1)
 
-        # [v8.2.0] Standard Path: Execute Full Sharding Hub
+        # [v8.3.2] Standard Path: Execute Full Sharding Hub
         if not use_bitplane:
             sbuffer = execute_sharding(h, w, gr_map_p, rd_map_p, bd_map_p, a_map, is_rgba, is_grayscale, profile, p1_cached=p1_cached)
             
