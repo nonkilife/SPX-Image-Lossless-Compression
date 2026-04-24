@@ -182,7 +182,15 @@ def _decide_shard_mode_core(counts: npt.NDArray[np.uint64], width: int,
     dense_total_bits = dense_bits + penalty
     
     if min_emp_bits < dense_total_bits:
-        return best_emp_mode, templates[int(best_emp_mode) - 4]
+        tid = int(best_emp_mode) - 4
+        tpl = templates[tid]
+        # Guard: template must cover every symbol present in this shard.
+        # A zero-probability entry for a present symbol causes an infinite
+        # normalization loop in the rANS encoder.
+        for i in range(256):
+            if counts[i] > uint64(0) and tpl[i] == uint64(0):
+                return uint8(0), dense_pdf.astype(np.uint64)
+        return best_emp_mode, tpl
     else:
         return uint8(0), dense_pdf.astype(np.uint64)
 
