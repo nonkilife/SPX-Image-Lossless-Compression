@@ -27,7 +27,7 @@ import numpy as np
 import numpy.typing as npt
 import logging
 import os, time
-from typing import Optional, Tuple
+from typing import Optional
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 import zstandard as zstd
@@ -151,7 +151,9 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
             # Grayscale: Single-channel profiling path
             gray_raw = arr if arr.ndim == 2 else arr[:, :, 0]
             p1_raw = fused_rct_p1_gray(h, w, gray_raw, a_map, is_rgba, n_shards, s_lut, i_lut, d_lut)
-            p1 = Pass1Result(p1_raw[0], np.empty((0,0), np.uint8), np.empty((0,0), np.uint8), a_map, p1_raw[1], p1_raw[2], p1_raw[3], p1_raw[4], p1_raw[5], p1_raw[6], np.zeros((3, 256), np.uint32), p1_raw[7], p1_raw[8])
+            _gray_ch_hists = np.zeros((3, 256), dtype=np.uint32)
+            _gray_ch_hists[0] = p1_raw[2][0].sum(axis=0)  # shard_stats[gray_ch, :, :] → (n_shards,256) → (256,)
+            p1 = Pass1Result(p1_raw[0], np.empty((0,0), np.uint8), np.empty((0,0), np.uint8), a_map, p1_raw[1], p1_raw[2], p1_raw[3], p1_raw[4], p1_raw[5], p1_raw[6], _gray_ch_hists, p1_raw[7], p1_raw[8])
         else:
             # RGB: Fused RCT + 3-channel profiling path
             p1_raw = fused_rct_p1_rgb(h, w, arr, a_map, is_rgba, n_shards, s_lut, i_lut, d_lut)

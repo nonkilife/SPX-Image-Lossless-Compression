@@ -47,10 +47,10 @@ __version__ = "8.3.2"
 import numpy as np
 import numpy.typing as npt
 from numba import njit, prange, uint8, uint64, get_num_threads, get_thread_id
-from typing import Tuple, Optional
+from typing import Tuple
 import concurrent.futures
 
-from .predictor import selected_predictor, from_zigzag, IZIGZAG_LUT
+from .predictor import selected_predictor, from_zigzag
 from .sharding import get_context_id_fast, ShardProfile
 from .transform import reconstruct_2d_channels
 from .rans import mul_hi as _mul_hi, _MAGIC_LUT

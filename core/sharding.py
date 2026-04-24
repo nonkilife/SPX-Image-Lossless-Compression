@@ -26,7 +26,7 @@ import numpy as np
 import numpy.typing as npt
 from numba import njit, uint8, prange, uint32, uint16, uint64
 from dataclasses import dataclass, field
-from typing import List, Tuple, Optional
+from typing import Tuple, Optional
 from .predictor import (ZIGZAG_LUT, IZIGZAG_LUT, selected_predictor)
 
 

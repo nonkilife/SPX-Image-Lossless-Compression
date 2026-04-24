@@ -158,7 +158,7 @@ def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = No
             if flag & FLAG_BITPLANE:
                 if is_grayscale:
                     res_gr_raw, ptr_bp = decompress_bitplane_gray_sharded(compressed_data, h, w, profile)
-                    gr_rec = reconstruct_2d_channels(h, w, res_gr_raw.reshape((h, w)))
+                    gr_rec = reconstruct_2d_channels(h, w, res_gr_raw)
                     rd_rec = np.zeros((h, w), dtype=np.uint8)
                     bd_rec = np.zeros((h, w), dtype=np.uint8)
 

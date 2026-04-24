@@ -56,7 +56,7 @@ import numpy.typing as npt
 import zstandard as zstd
 import concurrent.futures
 import threading
-from typing import Tuple, List, Optional, Union, BinaryIO, NamedTuple
+from typing import Tuple, Optional, Union, BinaryIO, NamedTuple
 from .common import (
     FLAG_RGBA, FLAG_GRAYSCALE, FLAG_COLOR_GSUB, FLAG_BITPLANE
 )

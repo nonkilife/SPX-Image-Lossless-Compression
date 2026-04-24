@@ -24,7 +24,6 @@ __version__ = "8.3.2"
 import numpy as np
 import numpy.typing as npt
 from numba import njit, prange, uint8
-from typing import Tuple, Optional
 from .predictor import (ZIGZAG_LUT, IZIGZAG_LUT, selected_predictor)
 
 

@@ -8,14 +8,12 @@ Architecture: Pure Numba-JIT accelerated kernels for low-level spatial restorati
 Technical Flowchart:
 ```mermaid
 graph TD
-    Neighbors[Neighbors: A, B, C] --> MED{MED Logic}
-    MED -->|Standard| SP[Standard Prediction]
-    MED -->|Edge-Tuned| ET[Edge-Tuned Prediction]
-    
+    Neighbors[Neighbors: A, B, C] --> ET[Edge-Tuned MED Prediction]
     Val[Actual Pixel Value] --> Diff[Residual = Value - Prediction]
+    ET --> Diff
     Diff --> ZZ[ZigZag Mapping]
     ZZ --> Symbol[8-bit Entropy Symbol]
-    
+
     Symbol --> IZZ[Inverse ZigZag]
     IZZ --> IDiff[Restore Residual]
     IDiff --> Rec[Prediction + Residual]

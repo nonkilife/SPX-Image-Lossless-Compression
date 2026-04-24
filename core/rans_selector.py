@@ -53,7 +53,7 @@ __version__ = "8.3.2"
 
 import numpy as np
 import numpy.typing as npt
-from numba import njit, uint8, uint16, uint32, uint64
+from numba import njit, uint8, uint16, uint64
 import os
 
 from .common import get_empirical_templates
