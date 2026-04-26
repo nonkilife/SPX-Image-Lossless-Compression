@@ -108,29 +108,33 @@ SPX 的核心設計原則：
 ## 3. 系統需求與安裝
 
 - **Python 版本**：3.10+ (建議 3.11+)
-- **Python 套件**：
-  - `numpy>=1.22.0`, `zstandard>=0.19.0`, `Pillow>=9.0.0`, `pytest>=7.0.0`
-- **原生擴充**：
-  - `spx_rans` (原生 Rust 後端)
-- **開發依賴**：
-  - `maturin>=1.0.0` (用於銜接 Rust 與 Python)
-  - **Rust 工具鏈**：`cargo`, `rustc` (從源碼構建時需要)
-- **系統核心 (Linux)**：
-  - 需要 `zlib` 與 `libpng` 標頭檔以供 **Pillow** 與 **Zstd** 使用 (`sudo apt install build-essential zlib1g-dev libpng-dev`)。
-- **Windows**：自我包含 (從源碼構建時需要 Visual Studio C++ Build Tools)。
+- **支援平台**：Windows x64、Linux x64/aarch64、macOS x86_64/arm64（預編譯二進位套件）
+
+**安裝**：
+```bash
+pip install spx-codec
+```
+
+所有依賴套件（`numpy`、`zstandard`、`Pillow`）及 Rust 後端均自動安裝。
 
 > [!TIP]
-> **原生加速**：SPX v1.0.0 使用預編譯的 Rust 後端。與舊版本不同，第一次執行時 **零 JIT 延遲**。
-> **多執行緒**：並行處理在 Rust 後端內部使用 Rayon 庫自動處理。
+> **原生加速**：SPX 使用預編譯的 Rust 後端，第一次執行時**零 JIT 延遲**。
+> **多執行緒**：並行處理由 Rayon 庫在 Rust 後端內部自動處理。
 
-**安裝步驟**：
+<details>
+<summary><b>從源碼構建</b>（貢獻者 / 不支援平台）</summary>
+
+需要 **Rust 工具鏈**（`cargo`、`rustc`）及 **maturin**：
+
 ```bash
-# 1. 安裝 Python 依賴
-pip install numpy>=1.22.0 zstandard>=0.19.0 Pillow>=9.0.0 pytest>=7.0.0
-
-# 2. 構建/安裝原生擴充
-cd native && maturin develop --release
+git clone https://github.com/nonkilife/SPX-Image-Lossless-Compression.git
+cd SPX-Image-Lossless-Compression
+pip install maturin
+maturin develop --release
 ```
+
+Linux 另需：`sudo apt install build-essential zlib1g-dev libpng-dev`
+</details>
 
 ---
 
@@ -139,21 +143,21 @@ cd native && maturin develop --release
 ### 4.1 命令列介面 (CLI)
 ```bash
 # 壓縮
-python main.py compress input.png --optimize
+spx compress input.png --optimize
 
 # 解壓
-python main.py decompress input.spx --output restored.png
+spx decompress input.spx --output restored.png
 
 # 基準測試 (僅限 SPX)
-python main.py benchmark ./path/to/images -n 20 -w 8
+spx benchmark ./path/to/images -n 20 -w 8
 
 # 基準測試 (對比 SPX vs WebP vs JXL)
-python main.py benchmark ./path/to/images --codec bench -n 20
+spx benchmark ./path/to/images --codec bench -n 20
 ```
 
 ### 4.2 Python API
 ```python
-from core import compress_spx, decompress_spx
+from spx import compress_spx, decompress_spx
 
 # 1. 壓縮影像 (RGB/RGBA)
 result = compress_spx("input.png", "output.spx", use_bitplane=False)
