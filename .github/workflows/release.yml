@@ -24,15 +24,15 @@ jobs:
         uses: messense/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
-          working-directory: native
+          # 關鍵：從根目錄執行，並用 -m 指定 Cargo.toml 位置
+          args: --release --out dist --find-interpreter -m native/Cargo.toml
           sccache: 'true'
           manylinux: auto
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: wheels-linux-${{ matrix.target }}
-          path: native/dist
+          path: dist
 
   windows:
     runs-on: windows-latest
@@ -48,14 +48,13 @@ jobs:
         uses: messense/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
-          working-directory: native
+          args: --release --out dist --find-interpreter -m native/Cargo.toml
           sccache: 'true'
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: wheels-windows-${{ matrix.target }}
-          path: native/dist
+          path: dist
 
   macos:
     runs-on: macos-latest
@@ -71,14 +70,13 @@ jobs:
         uses: messense/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
-          working-directory: native
+          args: --release --out dist --find-interpreter -m native/Cargo.toml
           sccache: 'true'
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: wheels-macos-${{ matrix.target }}
-          path: native/dist
+          path: dist
 
   sdist:
     runs-on: ubuntu-latest
@@ -88,13 +86,12 @@ jobs:
         uses: messense/maturin-action@v1
         with:
           command: sdist
-          args: --out dist
-          working-directory: native
+          args: --out dist -m native/Cargo.toml
       - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
           name: wheels-sdist
-          path: native/dist
+          path: dist
 
   release:
     name: Release
