@@ -73,12 +73,12 @@ The following data characterizes the throughput and compression efficiency acros
 > - **OS**: Windows 11 (64-bit, x64)
 
 #### **Technical Comparison**
-- **Encoding Speed**: SPX exhibits **25x–150x higher throughput** than WebP (Method 6) and **5x–7x higher throughput** than JPEG-XL (Effort 7) on the tested hardware.
+- **Encoding Speed**: SPX exhibits **25x–150x higher throughput** than WebP (Method 6) and **5x–7x higher throughput** than JPEG-XL (Effort 7) on the tested hardware in most cases.
 - **Quality Assurance**: Bit-perfect reconstruction across all 1,500+ test images (**MSE = 0.00000000**).
 - **Core Efficiency**: Rust-native backend utilizes **Rayon** for internal data parallelism and **4-way interleaved rANS** for instruction-level parallelism (ILP).
 - **Hybrid Performance**: Critical hot-paths (RCT, MED, Sharding, rANS) are implemented in Rust, while orchestration remains in Python.
 
-*Full comparative analysis vs. standard formats is available in [Official Benchmarks](./technical/BENCHMARK.md).*
+*Full comparative analysis vs. standard formats is available in [Comparative Benchmarks](./technical/BENCHMARK.md).*
 
 ---
 
@@ -167,18 +167,18 @@ print(f"Dec Time: {dec_time:.2f}s")
 For Windows users, a convenient batch wrapper is provided for benchmarking:
 ```powershell
 # Run comparative benchmark (SPX vs WebP vs JXL)
-.\test bench ./data/kodak
-.\test webp ./data/local_test
-.\test jxl ./data/local_test
+.\test bench ./data/local_test_folder
+.\test webp ./data/local_test_folder
+.\test jxl ./data/local_test_folder
 
 # Run solo tests for specific codecs
-.\test spx ./data/local_test
+.\test spx ./data/local_test_folder
 
 # Pass additional arguments (e.g., limit to 10 images)
-.\test bench ./my_images -n 10
+.\test spx ./my_images -n 10
 ```
 > [!NOTE]
-> The `data/` directory and benchmark datasets are **not included** in this repository. To run benchmarks, you must create a `data/` folder and populate it with your own images (e.g., Kodak, DIV2K). The utility supports both raw absolute/relative paths and pre-defined aliases if the corresponding data is present.
+> The `data/` directory and benchmark datasets are **not included** in this repository. To run benchmarks, you can manually create a `data/` folder and populate it with your own images (e.g., Kodak, DIV2K) or simply reference the path to your image folder. The utility supports both raw absolute/relative paths and pre-defined aliases (e.g., `clic`, `kodak`, `trgb`) which are managed in **`core/test_suite.py`**.
 
 ### 4.4 Project Structure
 ```text
