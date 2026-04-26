@@ -12,6 +12,7 @@
 
 # Whitelist files
 !README.md
+!README_zh-TW.md
 !main.py
 !LICENSE
 !test.bat

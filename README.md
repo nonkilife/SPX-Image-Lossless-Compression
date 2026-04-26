@@ -4,6 +4,9 @@
 
 SPX (Space Express) is a lossless image compression engine using a **Hybrid Python/Rust Architecture**, featuring **Entropy Sharding** and **Rayon-accelerated 4-way Interleaved rANS** to achieve balance between compression ratio and speed. This project exhibits comparable compression ratios through contextual sharding and native computational kernels, bridging Python's flexibility with Rust's native performance.
 
+[繁體中文版本 (Traditional Chinese)](./README_zh-TW.md)
+
+
 ---
 
 ## Table of Contents
