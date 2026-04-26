@@ -66,8 +66,8 @@ The following data characterizes the throughput and compression efficiency acros
 | **DIV2K Train**| 2K | **9.35** | **-26.22 %** | **-61.04 %** | **66.97 MB/s** | 1.38 MB/s | 6.15 MB/s |
 | **Tecnick** | RGB | **5.18** | **-25.90 %** | **-78.42 %** | **25.12 MB/s** | 0.68 MB/s | 4.75 MB/s |
 | **Tecnick** | Gray | **1.68** | **-27.63 %** | **-79.01 %** | **14.20 MB/s** | 0.29 MB/s | 5.53 MB/s |
-| **Waterloo** | RGB | **10.51** | **n/a** | **-56.19 %** | **150.81 MB/s** | 2.16 MB/s | 10.84 MB/s |
-| **Waterloo** | Gray | **3.44** | **n/a** | **-56.99 %** | **53.06 MB/s** | 0.58 MB/s | 12.16 MB/s |
+| **Standard (ICI)** | RGB | **10.51** | **n/a** | **-56.19 %** | **150.81 MB/s** | 2.16 MB/s | 10.84 MB/s |
+| **Standard (ICI)** | Gray | **3.44** | **n/a** | **-56.99 %** | **53.06 MB/s** | 0.58 MB/s | 12.16 MB/s |
 
 > [!NOTE]
 > **Hardware Benchmark Environment**:
@@ -77,7 +77,7 @@ The following data characterizes the throughput and compression efficiency acros
 
 #### **Technical Comparison**
 - **Encoding Speed**: SPX exhibits **25x–150x higher throughput** than WebP (Method 6) and **3x–14x higher throughput** than JPEG-XL (Effort 7) on the tested hardware across datasets.
-- **Quality Assurance**: Bit-perfect reconstruction across all 1,500+ test images (**MSE = 0.00000000**).
+- **Loseless Assurance**: Bit-perfect reconstruction across all 1,500+ test images (**MSE = 0.00000000**).
 - **Core Efficiency**: Rust-native backend utilizes **Rayon** for internal data parallelism and **4-way interleaved rANS** for instruction-level parallelism (ILP).
 - **Hybrid Performance**: Critical hot-paths (RCT, MED, Sharding, rANS) are implemented in Rust, while orchestration remains in Python.
 
@@ -357,6 +357,7 @@ Detailed performance metrics and comparative benchmarks comparing SPX against We
 - **Alpha Channel**: While RGBA is supported, the Alpha channel currently utilizes traditional Zstd compression (Level 1) rather than the high-performance rANS sharding engine used for RGB. Optimization for constant alpha (solidity detection) is a planned future improvement.
 - **Threading**: The Python orchestration layer is single-threaded; however, the Rust-native backend utilizes internal data-parallelism via **Rayon** for hot-path kernels (RCT, Sharding, rANS).
 - **Performance Ceiling**: Current throughput is achieved via branchless algorithmic design and LLVM auto-vectorization. There is no manual SIMD (AVX2/NEON) implementation. This project serves as a high-performance baseline; downstream forks seeking extreme optimizations may consider manual intrinsics or a pure-native C++/Rust port to eliminate Python orchestration overhead entirely.
+- **Content Bias**: Benchmarks currently focus on **Natural Photographic** images. Validation on **Synthetic Content** (e.g., screenshots, UI elements, or computer graphics) is limited due to the lack of specialized testing datasets in the current pipeline. Performance on high-frequency artificial edges may vary.
 
 ## 9. Dataset Sources
 
@@ -370,7 +371,7 @@ To verify the benchmarks or test the engine with standard datasets, you can down
 
 - **Tecnick Data Set**: [SourceForge - TestImages](https://sourceforge.net/projects/testimages/files/SAMPLING/)
 
-- **Waterloo Data Set**: [Image Compression Info](https://imagecompression.info/test_images/)
+- **Standard Test Images (ICI)**: [Image Compression Info](https://imagecompression.info/test_images/)
 
 ---
 

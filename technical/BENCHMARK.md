@@ -23,8 +23,8 @@ To accurately measure the compression and throughput capabilities of SPX, we use
 | DIV2K TRAIN | 6381.30 | 2486.43 | **61.04 %** |
 | TECNICK RGB | 659.18 | 142.26 | **78.42 %** |
 | TECNICK GRAY | 219.73 | 46.12 | **79.01 %** |
-| WATERLOO RGB | 448.81 | 196.63 | **56.19 %** |
-| WATERLOO GRAY | 155.33 | 66.80 | **56.99 %** |
+| Standard (ICI) RGB | 448.81 | 196.63 | **56.19 %** |
+| Standard (ICI) GRAY | 155.33 | 66.80 | **56.99 %** |
 | KODAK | 28.13 | 11.48 | **59.19 %** |
 
 ### SPX Performance Re-evaluation (PNM Raw Throughput)
@@ -37,8 +37,8 @@ To accurately measure the compression and throughput capabilities of SPX, we use
 | DIV2K TRAIN | 6381.30 | 100.34 | **126.81** | **127.57** |
 | TECNICK RGB | 659.18 | 13.85 | **86.28** | **106.15** |
 | TECNICK GRAY | 219.73 | 7.72 | **48.94** | **67.82** |
-| WATERLOO RGB | 448.81 | 6.44 | **150.61** | **129.71** |
-| WATERLOO GRAY | 155.33 | 5.40 | **53.01** | **62.63** |
+| Standard (ICI) RGB | 448.81 | 6.44 | **150.61** | **129.71** |
+| Standard (ICI) GRAY | 155.33 | 5.40 | **53.01** | **62.63** |
 | KODAK | 28.13 | 0.60 | **76.03** | **122.30** |
 
 ---
@@ -250,7 +250,7 @@ Test Date: 2026/04/26
 
 <br>
 
-| WATERLOO RGB              |        SPX         |      WebP(M6)      |      JXL(E7)       |
+| Standard (ICI) RGB          |        SPX         |      WebP(M6)      |      JXL(E7)       |
 |---------------------------|--------------------|--------------------|--------------------|
 | PNM Size                  |     448.81 MB      |     448.81 MB      |     448.81 MB      |
 | Dataset Size (14 imgs)    |     448.81 MB      |     448.81 MB      |     448.81 MB      |
@@ -284,7 +284,7 @@ Test Date: 2026/04/26
 
 <br>
 
-| WATERLOO GRAY             |        SPX         |      WebP(M6)      |      JXL(E7)       |
+| Standard (ICI) GRAY         |        SPX         |      WebP(M6)      |      JXL(E7)       |
 |---------------------------|--------------------|--------------------|--------------------|
 | PNM Size                  |     155.33 MB      |     155.33 MB      |     155.33 MB      |
 | Dataset Size (15 imgs)    |     155.33 MB      |     155.33 MB      |     155.33 MB      |
@@ -354,9 +354,9 @@ Test Date: 2026/04/26
 
 ### 2. Technical Observations
 
-- **Encoding Performance**: SPX v8.3.2 exhibits a **103x parallel encoding lead** over WebP (m=6) in RGB and a **63x lead** in Grayscale (Waterloo). It remains **6x–8x faster** than JXL (Effort 7) across industrial datasets.
-- **Industrial Stability**: Validated on 2,000+ images (CLIC, DIV2K, Waterloo), SPX maintains a stable **25-30% saving vs PNG** with bit-perfect reconstruction (MSE = 0.000000).
-- **Core Efficiency**: The architecture achieving **62.63 MB/s decompression** in Rust-native environments (Waterloo Gray), suitable for real-time archival and high-speed delivery pipelines.
+- **Encoding Performance**: SPX v8.3.2 exhibits a **103x parallel encoding lead** over WebP (m=6) in RGB and a **63x lead** in Grayscale (ICI). It remains **6x–8x faster** than JXL (Effort 7) across industrial datasets.
+- **Industrial Stability**: Validated on 2,000+ images (CLIC, DIV2K, ICI), SPX maintains a stable **25-30% saving vs PNG** with bit-perfect reconstruction (MSE = 0.000000).
+- **Core Efficiency**: The architecture achieving **62.63 MB/s decompression** in Rust-native environments (ICI Gray), suitable for real-time archival and high-speed delivery pipelines.
 
 
 ## 3. Dataset Sources
@@ -371,4 +371,4 @@ To verify the benchmarks or test the engine with standard datasets, you can down
 
 - **Tecnick Data Set**: [SourceForge - TestImages](https://sourceforge.net/projects/testimages/files/SAMPLING/)
 
-- **Waterloo Data Set**: [Image Compression Info](https://imagecompression.info/test_images/)
+- **Standard Test Images (ICI)**: [Image Compression Info](https://imagecompression.info/test_images/)
