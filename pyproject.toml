@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "spx-codec"
-version = "1.0.0"
+version = "1.0.1"
 description = "SPX: High Throughput Lossless Image Compression Engine"
 readme = "README.md"
 license = { text = "Apache-2.0" }
