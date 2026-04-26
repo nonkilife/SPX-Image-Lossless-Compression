@@ -44,7 +44,10 @@ env.verify_environment()
 logger: logging.Logger = logging.getLogger("spx.decompress")
 
 def set_parallel_threads(n: int):
-    """ Configures the number of CPU threads used by Rayon (via spx_rans). """
+    """ 
+    Configures the number of CPU threads used by the Rayon pool in the Rust backend.
+    Affects the parallel decoding throughput of the rANS engine.
+    """
     logger.info(f"Parallel threads set to {n} (Rayon-controlled).")
 
 def clear_spx_workspaces():
@@ -57,6 +60,11 @@ def inject_png_metadata(filepath: str, metadata_bytes: bytes) -> None:
     """
     Carefully injects metadata chunks into a PNG file, ensuring correct ordering 
     and avoiding duplicate singleton chunks (pHYs, iCCP, etc.) that Pillow might have added.
+    
+    Logic:
+    1. Scan injected metadata for 'singleton' chunks (chunks that can only appear once).
+    2. Parse the newly saved PNG and remove any Pillow-generated duplicates of these chunks.
+    3. Insert the original original metadata chunks before the first PLTE or IDAT chunk.
     """
     if not metadata_bytes: return
     try:
@@ -123,10 +131,11 @@ def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = No
     Main SPX Decompression Entry Point (v8.3.2 Stable).
 
     Bit-perfect reverse orchestrator:
-    1. BICC Shard Recovery (Pillar 2): Staggered reconstruction of G-Lead then RD/BD-Lag.
-    2. Inverse GSUB (Pillar 1): Cross-channel restoration using Green as the spatial reference.
-
-    NOTE: Operates with Rayon (Rust) parallelism via spx_rans to achieve 25.0+ MB/s decompression throughput.
+    1. Bitstream Unpack: Extracts headers, shard metadata, and rANS payloads.
+    2. Parallel Decode (Rust): Decodes all shards into flat residual buffers using internal Rayon pool.
+    3. Shard Recovery (Pillar 4): Scatters residuals back to their 2D spatial context.
+    4. Inverse GSUB (Pillar 1): Reverses the G-Subtract transform to restore R/B channels.
+    5. Bit-Perfect Check: Guaranteed MSE 0.0 against original source.
     """
     t0: float = time.time()
     try:

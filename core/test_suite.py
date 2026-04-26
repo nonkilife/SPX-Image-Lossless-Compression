@@ -1,10 +1,29 @@
-"""
+r"""
 SPX v8.3.2 Unified Benchmark Suite (test_suite)
 Module: test_suite
 Role: QA & Performance Validation.
-Description: Cross-codec comparative benchmarking and bit-perfect verification (MSE).
 
-Architecture Flowchart:
+Description: 
+Cross-codec comparative benchmarking and bit-perfect verification (MSE). This 
+module serves as the authoritative validation hub for SPX performance against 
+industry standards like WebP and JPEG-XL.
+
+Architecture & Engineering Rationale:
+1. Throughput-Weighted Timing: Reporting aggregate core-seconds often misleads 
+   on many-core systems. This suite distributes the measured wall-clock time 
+   proportionally based on core-load fractions to provide an accurate "Per-Image" 
+   latency that reflects real-world system throughput.
+2. Warmup Phase: To eliminate JIT compilation spikes (Numba/Rust) and library 
+   initialization overhead from the final metrics, a dedicated single-threaded 
+   warmup pass is executed before the main benchmark.
+3. Win Counting: Beyond aggregate averages, the suite tracks "Wins" at the 
+   individual image level, identifying which codec provides the best 
+   compression or speed for specific image characteristics.
+4. Dataset Curation: Includes a 'Reclassification' system that segments 
+   large datasets (like DIV2K) into Easy, Hard, and Hell categories based on 
+   observed compression ratios, facilitating targeted optimization.
+
+Technical Flowchart:
 ```mermaid
 graph TD
     Input[Dataset Directory] --> Glob[File Discovery: PNG, BMP, PNM]

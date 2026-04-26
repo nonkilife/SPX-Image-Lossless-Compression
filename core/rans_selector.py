@@ -2,10 +2,10 @@
 SPX v8.3.2 PDF Template Selector (rans_selector)
 Module: rans_selector
 Role: Pillar 0 - Meta-Decision Engine.
-Description: Thin Python shim over the spx_rans Rust native backend.
 
-All decision logic (cross-entropy, PDF normalization, template evaluation)
-is implemented in native/src/rans_core.rs (decide_shard_mode).
+Description: 
+Thin Python shim over the spx_rans Rust native backend. This module implements 
+the logic for selecting the optimal entropy coding model for each shard.
 
 Technical Flowchart:
 ```mermaid
@@ -21,6 +21,22 @@ graph TD
     SubMode -->|Sparse| SM1[Sub-Mode 1: Index-Value Pairs]
     ModeT --> Header[Header: 1-byte Mode Marker]
 ```
+
+Architecture & Engineering Rationale:
+1. Decision Logic (Cross-Entropy vs Penalty): The selector evaluates the 
+   theoretical bit-cost (cross-entropy) of encoding the data using the perfectly 
+   fitted Custom PDF, versus the "best-fit" Static Template. Since the Custom PDF 
+   is perfectly fitted, it will ALWAYS yield the lowest mathematical bit-cost. 
+   However, it applies a 'penalty' to the Custom PDF's cost to simulate the 
+   physical file size required to save the table into the header. If the penalty 
+   makes the Custom PDF more expensive than the "slightly ill-fitting but free" 
+   Static Template, the Template is chosen.
+2. Mode 3 Prioritization: Mode 3 (Zero-Entropy) is automatically selected for 
+   shards containing only a single symbol (usually zero). This eliminates the 
+   need for any rANS state transitions or bitstream payloads for that shard.
+3. Sub-Mode Decision: For Mode 0 (Custom PDF), the engine chooses between 
+   'Dense' (full array) and 'Sparse' (index-value pairs) based on which 
+   representation minimizes the header overhead.
 
 Mode Design & Composition:
 -------------------------
@@ -39,17 +55,12 @@ Mode Design & Composition:
     - Physical Shape: [ModeID:1] (Single byte).
     - Design Goal: Zero-tax modeling for standard natural image gradients.
 
-Decision Logic (Cross-Entropy vs Penalty):
-The selector evaluates the theoretical bit-cost (cross-entropy) of encoding the data using the perfectly
-fitted Custom PDF, versus the "best-fit" Static Template. Since the Custom PDF is perfectly fitted, it will
-ALWAYS yield the lowest mathematical bit-cost. However, it applies a 'penalty' to the Custom PDF's cost to
-simulate the physical file size required to save the table into the header. If the penalty makes the Custom
-PDF more expensive than the "slightly ill-fitting but free" Static Template, the Template is chosen.
-
 Conceptual Architecture:
 -------------------------
 - Sub-mode decision (Dense vs Sparse) is finalized during serialization in rans.py.
 - Mode 3 is prioritized for mono-symbol (zero-entropy) payloads.
+
+All decision logic is implemented in native/src/rans_core.rs (decide_shard_mode).
 """
 
 __version__ = "8.3.2"
@@ -69,7 +80,15 @@ def decide_shard_mode(
 ) -> tuple[int, npt.NDArray[np.uint64]]:
     """
     Heuristic decision engine delegating to the Rust native backend.
-    Default header penalty (120 bits) represents a 15-byte serialization cost.
+    
+    Args:
+        counts: Histogram of residuals in the shard.
+        width: ZigZag spread of the residuals.
+        header_penalty_bits: Virtual bit-cost of a Custom PDF header. 
+                             Default (120 bits) ~ 15 bytes.
+    
+    Returns:
+        (mode_id, normalized_pdf)
     """
     templates = get_empirical_templates()
     disable = os.environ.get("SPX_DISABLE_TEMPLATES") == "1"

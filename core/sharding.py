@@ -20,14 +20,13 @@ graph TD
 ```
 """
 
-__version__ = "8.3.2"
-
 import numpy as np
 import numpy.typing as npt
 import spx_rans as _rs
 from dataclasses import dataclass, field
 from typing import Tuple, Optional
 
+__version__ = "8.3.2"
 
 # --- 1. Data Structures ---
 
@@ -63,7 +62,11 @@ class SpxResult:
         return self.h * self.w
 
 def extract_srb_metadata(shard_stats: npt.NDArray[np.uint32]) -> npt.NDArray[np.uint16]:
-    """ Determines the observed ZigZag symbol width per shard for PDF compaction. """
+    """ 
+    Determines the observed ZigZag symbol width per shard for PDF compaction. 
+    This identifies the highest used symbol in each shard to prune the tail of 
+    frequency tables during serialization.
+    """
     n_channels, n_shards = shard_stats.shape[0], shard_stats.shape[1]
     widths = np.ones((n_channels, n_shards), dtype=np.uint16)
     for c in range(n_channels):
@@ -134,34 +137,49 @@ def precompute_luts(v_bounds: npt.NDArray[np.uint8],
                     i_segs: npt.NDArray[np.uint8],
                     shard_map: npt.NDArray[np.uint8],
                     nsid: int) -> Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint8]]:
-    """ Generates profile-specific LUTs for context features. """
+    """ 
+    Generates profile-specific LUTs for context features.
+    These LUTs allow the Rust kernels to derive context IDs in O(1) time.
+    
+    1. intensity_lut: Maps pixel intensity [0-255] to a coarse segment (Dark, Mid, Light).
+    2. spatial_lut: Maps local gradient pairs (da, db) to (V-Tier, Trend, Noise) features.
+    3. dispatch_lut: Maps the packed features to a final Shard ID.
+    """
+    # [Intensity LUT]
     i_lut = np.zeros(256, dtype=np.uint8)
     i_arr = np.arange(256, dtype=np.uint8)
     for thr in i_segs[1:-1]:
         i_lut += (i_arr > int(thr)).astype(np.uint8)
 
+    # [Spatial LUT] - 511x511 grid covering all possible (A-C, B-C) differences.
     s_lut = np.zeros((511, 511), dtype=np.uint8)
     d = np.arange(-255, 256, dtype=np.int16)
     DA, DB = np.meshgrid(d, d, indexing='ij')
 
+    # V-Tier: Represents the maximum absolute gradient magnitude.
     v_mag = np.maximum(np.abs(DA), np.abs(DB))
     v_tier = (v_mag > 0).astype(np.uint8)
     for i in range(1, len(v_bounds) - 1):
         v_tier += (v_mag > int(v_bounds[i])).astype(np.uint8)
 
+    # Trend: Detects directionality (Rising, Falling, or Flat/Complex).
     rising  = ((DA > 0) & (DB > 0)).astype(np.uint8)
     falling = ((DA < 0) & (DB < 0)).astype(np.uint8)
     t_idx   = (falling + 2 * (1 - rising - falling)).astype(np.uint8)
 
+    # Noise: Identifies high-energy outliers where both neighbors deviate significantly.
     ns_hit = ((np.abs(DA) > 12) & (np.abs(DB) > 12)).astype(np.uint8)
+    
+    # Pack into a single byte for the Dispatch LUT.
     s_lut[:] = ((v_tier << 3) | (t_idx << 1) | ns_hit).astype(np.uint8)
 
+    # [Dispatch LUT] - Final mapping to Shard IDs.
     d_lut = np.zeros((256, 4), dtype=np.uint8)
     n_v, n_t = shard_map.shape[0], shard_map.shape[2]
 
     for pk in range(256):
         vt, ti, ns = pk >> 3, (pk >> 1) & 0x03, pk & 0x01
-        for ii in range(3):
+        for ii in range(3): # For each intensity segment
             if ns != 0 and nsid >= 0: d_lut[pk, ii] = np.uint8(nsid)
             elif vt < n_v and ti < n_t: d_lut[pk, ii] = shard_map[vt, ii, ti]
             else: d_lut[pk, ii] = np.uint8(nsid if nsid >= 0 else 0)
@@ -170,11 +188,20 @@ def precompute_luts(v_bounds: npt.NDArray[np.uint8],
 
 
 # --- 3. Universal-42 Profile ---
+# The "Universal-42" is the standard profile for photographic content.
+# It segments the image into 42 statistical buckets (shards) based on 
+# edge strength (8 tiers), intensity (3 segments), and trend (3 types).
 
 V_BOUND_RGB = np.array([0, 1, 2, 4, 8, 16, 32, 255], dtype=np.uint8)
 INTENSITY_SEG_RGB = np.array([0, 60, 190, 255], dtype=np.uint8)
 
 def build_shard_map_universal_42() -> npt.NDArray[np.uint8]:
+    """
+    Defines the logical mapping from (V-Tier, Intensity, Trend) to Shard ID.
+    - Shards 0-2: Ultra-flat (Intensity only)
+    - Shards 3-29: Low-Mid complexity (V-Tiers 1-3, full Intensity x Trend grid)
+    - Shards 30-41: High complexity (V-Tiers 4-7, Trend only to reduce sparsity)
+    """
     s_map = np.zeros((8, 3, 3), dtype=np.uint8)
     for i in range(3): s_map[0, i, :] = i
     for v in range(1, 4):
@@ -203,12 +230,16 @@ PROFILE_RGB = ShardProfile(
 )
 
 # --- 4. Rust-backed Sharding Kernels ---
+# The following functions are Python shims that delegate to high-performance 
+# Rust kernels. Note the use of np.ascontiguousarray() to ensure memory safety 
+# when crossing the FFI boundary.
 
 def shard_pass_2_rgb_stateless(h: int, w: int,
                                 gr_ch: npt.NDArray[np.uint8], rd_ch: npt.NDArray[np.uint8], bd_ch: npt.NDArray[np.uint8],
                                 row_global_offsets: npt.NDArray[np.uint32],
                                 shard_gr: npt.NDArray[np.uint8], shard_rd: npt.NDArray[np.uint8], shard_bd: npt.NDArray[np.uint8],
                                 s_lut: npt.NDArray[np.uint8], i_lut: npt.NDArray[np.uint8], d_lut: npt.NDArray[np.uint8]) -> None:
+    """ Rust implementation of the RGB residual gathering pass. """
     _rs.p2_rgb(h, w,
                np.ascontiguousarray(gr_ch, dtype=np.uint8),
                np.ascontiguousarray(rd_ch, dtype=np.uint8),
@@ -226,6 +257,7 @@ def shard_pass_2_gray_stateless(h: int, w: int,
                                  row_global_offsets: npt.NDArray[np.uint32],
                                  shard_gr: npt.NDArray[np.uint8],
                                  s_lut: npt.NDArray[np.uint8], i_lut: npt.NDArray[np.uint8], d_lut: npt.NDArray[np.uint8]) -> None:
+    """ Rust implementation of the Grayscale residual gathering pass. """
     _rs.p2_gray(h, w,
                 np.ascontiguousarray(gr_ch, dtype=np.uint8),
                 np.ascontiguousarray(row_global_offsets, dtype=np.uint32),
@@ -239,6 +271,7 @@ def reconstruct_shards_rgb(h: int, w: int, res_gr: npt.NDArray[np.uint8], res_rd
                            off_rd: npt.NDArray[np.uint32], off_bd: npt.NDArray[np.uint32],
                            s_lut: npt.NDArray[np.uint8],
                            i_lut: npt.NDArray[np.uint8], d_lut: npt.NDArray[np.uint8]):
+    """ Rust implementation of the inverse sharding pass (scatter residuals back to image). """
     return _rs.reconstruct_shards_rgb(
         h, w,
         np.ascontiguousarray(res_gr, dtype=np.uint8),

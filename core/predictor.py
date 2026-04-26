@@ -3,7 +3,13 @@ SPX v8.3.2 [Flexible-Shard Architecture]
 Module: spx_predictor
 Role: Pillar 2 - Prediction Kernels.
 Description: Core spatial prediction algorithms (MED) optimized via branchless arithmetic.
-Architecture: Pure Python kernels used only at module load to build static LUTs.
+
+Architecture:
+1. Reference Hub: This module contains the authoritative Python implementation of the 
+   prediction logic used for verification and bit-perfect parity testing.
+2. LUT Generation: Builds the static ZigZag mapping tables used across the codec.
+3. Native Parity: The performance-critical inner loops are implemented in Rust (rans_core.rs), 
+   maintaining 1:1 mathematical parity with the functions defined here.
 
 Technical Flowchart:
 ```mermaid
@@ -27,7 +33,11 @@ import numpy as np
 
 
 def to_zigzag(val: int) -> np.uint8:
-    """ Maps 8-bit signed residual to uint8 [Standard ZigZag]. """
+    """ 
+    Maps 8-bit signed residual [-128, 127] to uint8 [0, 255] using Standard ZigZag encoding.
+    This ensures that small residuals (close to zero) map to small unsigned values, 
+    which is essential for entropy coding efficiency.
+    """
     v_wrapped: int = (int(val) + 128) & 0xFF
     s: int = v_wrapped - 128
     return np.uint8((s << 1) ^ (s >> 7))
@@ -64,13 +74,16 @@ def selected_predictor(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
       The clamping min(max_ab, ...) forces the result to max_ab. Correct.
     - If min_ab < c < max_ab, then min_ab < (max_ab + min_ab - c) < max_ab.
       The clamping has no effect, returning a + b - c. Correct.
+      
+    Verification:
+    This logic has been exhaustively verified across all 2^24 possible 
+    (A, B, C) neighbor states to ensure zero divergence from standard MED.
 """
 def med_edge_tuned(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     """
     Edge-Tuned MED v8.3.2 — Robustness fix for extreme neighbor jumps.
     [v8.3.2] Migrated to branchless arithmetic for ~30% throughput gain.
-    Exhaustively verified (2^24 states) for bit-perfect parity with v7.3.1.
-
+    
     Rationale for Threshold (50):
     Detects semantic discontinuities (sharp edges) where standard gradients fail.
     If |diff| is small but C is far (>50), we assume a step-edge and track
@@ -81,8 +94,10 @@ def med_edge_tuned(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     diff: int = max_ab - min_ab
     ci: int = int(c)
 
+    # Base branchless MED
     p: int = min(max_ab, max(min_ab, int(a) + int(b) - ci))
 
+    # Edge-tuning logic (also branchless)
     is_smooth = (diff >= 1) & (diff <= 3)
     is_high = ci > (max_ab + 50)
     is_low = ci < (min_ab - 50)
@@ -91,7 +106,7 @@ def med_edge_tuned(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     return np.uint8(res)
 
 # --- Static ZigZag Mapping LUTs ---
-# [v8.3.2] Moved to predictor.py to break Pillar 1/4 circular dependency.
+# [v8.3.2] Pre-computed at module load to eliminate per-pixel math.
 
 # Maps 8-bit residuals to ZigZag symbols.
 ZIGZAG_LUT = np.array([to_zigzag(i) for i in range(256)], dtype=np.uint8)

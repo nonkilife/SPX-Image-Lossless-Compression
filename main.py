@@ -1,5 +1,5 @@
 """
-SPX v7.5.0 [Central Entry Point]
+SPX v8.3.2 [Central Entry Point]
 Unified CLI for compression, decompression, and benchmarking.
 Usage:
     python main.py compress [path] [--optimize]

@@ -2,14 +2,30 @@
 SPX v8.3.2 [System Suite]
 Module: spx_env
 Role: Environment Validator.
-Description: Dependency verification for the SPX 4-pillar engine.
+
+Description: 
+Dependency verification and configuration hub for the SPX 4-pillar engine. 
+Ensures system stability by validating library versions and providing 
+diagnostic hooks via environment variables.
+
+Architecture & Engineering Rationale:
+1. Native Extension: SPX requires the 'spx_rans' shared library (compiled via 
+   Rust/Maturin) for all high-performance operations. This module checks 
+   for core Python dependencies that bridge the native layer.
+2. Diagnostic Hooks: Environment variables allow for deep auditing of the 
+   codec's internal state (e.g., dumping shards) without modifying source code.
 
 Supported Environment Variables:
 ------------------------------
-- SPX_DUMP_SHARDS: [0|1] Dumps raw shard residuals to binary files for diagnostic auditing.
-- SPX_DISABLE_TEMPLATES: [0|1] Forces Mode 0 (Custom PDF) for all shards, bypassing empirical templates.
-- SPX_FORCE_BITPLANE: [0|1] Forces the Bitplane rANS engine regardless of entropy gating.
-- SPX_LOG_LEVEL: [DEBUG|INFO|WARNING|ERROR] Sets the internal logger verbosity.
+- SPX_DUMP_SHARDS: [0|1] 
+    Dumps raw shard residuals to binary files for diagnostic auditing.
+- SPX_DISABLE_TEMPLATES: [0|1] 
+    Forces Mode 0 (Custom PDF) for all shards, bypassing empirical templates. 
+    Useful for testing the mathematical limit of the rANS engine.
+- SPX_FORCE_BITPLANE: [0|1] 
+    Forces the Bitplane rANS engine regardless of entropy gating.
+- SPX_LOG_LEVEL: [DEBUG|INFO|WARNING|ERROR] 
+    Sets the internal logger verbosity.
 """
 
 __version__ = "8.3.2"

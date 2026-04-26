@@ -52,11 +52,17 @@ logger: logging.Logger = logging.getLogger("spx.compress")
 # [v8.3.2] Module-level Thread-Local for compressor object reuse
 
 def set_parallel_threads(n: int):
-    """ Configures the number of CPU threads used by Rayon (via spx_rans). """
+    """ 
+    Configures the number of CPU threads used by the Rayon pool in the Rust backend.
+    Setting this affects all subsequent native calls (Pass 1, Pass 2, and rANS).
+    """
     logger.info(f"Parallel threads set to {n} (Rayon-controlled).")
 
 def extract_png_metadata(filepath: str) -> bytes:
-    """ Extracts raw PNG metadata chunks. """
+    """ 
+    Extracts all non-critical PNG metadata chunks (text, time, phys, etc.)
+    to preserve original image properties after SPX reconstruction.
+    """
     if filepath is None or not os.path.exists(filepath): return b''
     try:
         with open(filepath, 'rb') as f:
@@ -67,9 +73,10 @@ def extract_png_metadata(filepath: str) -> bytes:
                 if not len_bytes or len(len_bytes) < 4: break
                 length = int.from_bytes(len_bytes, 'big')
                 ctype = f.read(4)
+                # Skip critical chunks that are reconstructed from the pixel data
                 if ctype in [b'IHDR', b'IDAT', b'IEND']:
                     f.seek(length + 4, 1)
-                elif length > 10 * 1024 * 1024:
+                elif length > 10 * 1024 * 1024: # Safety limit: skip massive chunks
                     f.seek(length + 4, 1)
                 else:
                     data = f.read(length); crc = f.read(4)
@@ -79,7 +86,10 @@ def extract_png_metadata(filepath: str) -> bytes:
     except Exception: return b''
 
 def check_grayscale_robust(arr: npt.NDArray[np.uint8], img_mode: Optional[str] = None) -> bool:
-    """ [v8.3.2] Optimized Grayscale Detection. """
+    """ 
+    [v8.3.2] Optimized Grayscale Detection. 
+    Performs a fast sample-check before a full-array scan to minimize latency for RGB images.
+    """
     if arr.ndim == 2 or img_mode in ('L', 'LA'): return True
     h, w = arr.shape[0], arr.shape[1]
     if h > 10 and w > 10:
@@ -95,8 +105,15 @@ def _evaluate_coder_selection(shard_counts: npt.NDArray[np.uint32],
                                hits_total_p1: npt.NDArray[np.uint32]) -> bool:
     """ 
     Heuristic Gate for Entropy Coder Selection.
-    Evaluates Global Entropy (H), Prediction Hit-Rate, and Symbol Distribution
-    to decide if Bitplane rANS (optimized for high-entropy/noise) should be used.
+    Decides if the image should use Sharded rANS (better for clean images)
+    or Bitplane rANS (better for noisy/high-entropy images).
+    
+    1. Shannon Entropy (H): Average entropy across channels. 
+       If H > 3.2, standard context sharding begins to struggle.
+    2. Hit-Rate: Fraction of residuals that are exactly zero. 
+       High hit-rates favor standard context sharding.
+    3. P90 Width: The spread of residuals. 
+       If residuals are too wide (>112), bitplane context derivation is too expensive.
     """
     active_mask = shard_counts > 0
     p90_width = float(np.percentile(shard_widths[active_mask], 90)) if active_mask.any() else 256.0
@@ -117,7 +134,16 @@ def _evaluate_coder_selection(shard_counts: npt.NDArray[np.uint32],
 def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
                   preloaded_arr: Optional[npt.NDArray[np.uint8]] = None,
                   use_bitplane: Optional[bool] = None) -> SpxResult:
-    """ Main SPX Compression Entry Point (v8.3.2 Stable). """
+    """ 
+    Main SPX Compression Entry Point (v8.3.2 Stable). 
+    
+    Workflow:
+    1. Load/Normalize Input: Ensure RGB/RGBA 8-bit format.
+    2. Fused Pass 1 (Rust): Perform RCT, MED Prediction, and Shard Profiling in a single pass.
+    3. Coder Selection: Evaluate if the Bitplane engine should be triggered.
+    4. Pass 2 (Gather): Direct residuals into shard payloads (if not in bitplane mode).
+    5. Bitstream Pack: Final rANS entropy coding and container serialization.
+    """
     t0: float = time.time()
     try:
         arr: npt.NDArray[np.uint8]

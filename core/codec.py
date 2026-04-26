@@ -4,13 +4,16 @@ Module: codec
 Role: Bitstream Orchestration.
 Description: Logic for packing and unpacking the SPX tiered bitstream container (v8.3.2).
 Architecture: Structured serialization layer bridging the Model and rANS pillars.
+
 Engineering Rationale:
-1. Deterministic Block Order: The header and SRB (Metadata) must appear first
-   to define shard widths and medians, which are required for the decoder to
+1. Deterministic Block Order: The header and SRB (Metadata) must appear first 
+   to define shard widths and medians, which are required for the decoder to 
    pre-allocate the rANS state buffers.
-2. Zero-Copy Parallelism: Shard payloads are stored with explicit byte-lengths
-   preceding the content, allowing the decompressor to spawn independent threads
+2. Zero-Copy Parallelism: Shard payloads are stored with explicit byte-lengths 
+   preceding the content, allowing the decompressor to spawn independent threads 
    that jump directly to their target payload without sequential bit-scanning.
+3. Protocol Symmetry: The packing and unpacking logic are mirrored to ensure 
+   that any change in the bitstream format is reflected on both sides of the codec.
 
 Bitstream Specification (SPX_CORE v8.3.2):
 ------------------------------------------
@@ -54,7 +57,6 @@ __version__ = "8.3.2"
 import numpy as np
 import numpy.typing as npt
 import zstandard as zstd
-import concurrent.futures
 import threading
 from typing import Tuple, Optional, Union, BinaryIO, NamedTuple
 from .common import (
@@ -67,11 +69,12 @@ from .rans import (
     rans_encode_shards_parallel,
     build_pdf_tables_from_shards, L_LOWER,
     compact_pdf_tables, pack_shard_payloads,
-    rans_decode_4way_core, build_all_lookups,
+    rans_decode_shards_parallel, build_all_lookups,
     expand_pdf_tables
 )
  
-# [v8.3.2] Thread-Local for compressor/decompressor reuse
+# [v8.3.2] Thread-Local for compressor/decompressor reuse.
+# Zstd objects are expensive to create; we cache them per thread to avoid overhead.
 thread_local_codec = threading.local()
 
 def get_zstd_comp(level: int = 3) -> zstd.ZstdCompressor:
@@ -124,6 +127,12 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
     """
     Serializes compressed data into the final SPX file block.
     [v8.3.2] Optimized ShardBuffer Serialization.
+    
+    Processing Steps:
+    1. Resolve Flags: Combine user intent into bitstream flags.
+    2. Build PDF Tables: Calls Rust to generate statistical models for all shards.
+    3. rANS Encode: Calls Rust for parallel entropy coding.
+    4. Concatenate: Assembles all blocks into a single contiguous byte stream.
     """
     flag: int = FLAG_RGBA if is_rgba else 0
     if is_grayscale: flag |= FLAG_GRAYSCALE
@@ -137,6 +146,7 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
     shard_widths = extract_srb_metadata(sbuffer.stats)
 
     # 1. SRB Block: Widths and Modes (Unified)
+    # Width 0 maps to 256 to fit in a uint8.
     header_widths = (shard_widths[:n_channels, :n_shards] % 256).astype(np.uint8).tobytes()
     
     # 2. Build res_flat + shard offset arrays (reused by both histogram and rANS encode)
@@ -151,15 +161,16 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
         shard_offsets_ans[1:] = np.cumsum(shard_lengths_ans[:-1])
 
     # 3. Build PDF tables (parallel histogram collection + parallel per-shard PDF building)
+    # This identifies the best Empirical Template for each shard or builds a Custom PDF.
     c_cums, c_syms, c_modes = build_pdf_tables_from_shards(
         res_flat, shard_offsets_ans, shard_lengths_ans, shard_widths[:n_channels].ravel()
     )
 
-    # 4. Compact and Compress PDF Block
+    # 4. Compact and Compress PDF Block (Custom PDFs only)
     pdf_compact = compact_pdf_tables(c_syms, shard_widths[:n_channels, :n_shards].ravel(), c_modes)
     c_pdf = get_zstd_comp(level=3).compress(pdf_compact.tobytes())
 
-    # 5. Assemble Header
+    # 5. Assemble Header Parts
     payload_parts = []
     payload_parts.append(np.uint32(len(c_pdf)).tobytes())
     payload_parts.append(c_pdf)
@@ -168,22 +179,24 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
     payload_parts.append(np.uint32(len(sc_out)).tobytes())
     payload_parts.append(sc_out)
 
-    # 6. Parallel rANS Encoding
+    # 6. Parallel rANS Encoding (Rust native)
     final_states, bitstreams_flat, bs_offsets, bs_lengths = rans_encode_shards_parallel(
         res_flat, shard_offsets_ans, shard_lengths_ans, c_cums, c_syms, L_LOWER
     )
 
     # 7. Serialize shard payloads into a single pre-allocated buffer (eliminates Python loop)
+    # Each shard payload = [InitialState:8B x 4 | Length:4B | Bitstream:NB]
     num_shards_total = len(shard_lengths_ans)
     shard_payload_sizes = bs_lengths + np.uint32(36)
     shard_write_offsets = np.zeros(num_shards_total, dtype=np.uint32)
     if num_shards_total > 0:
         shard_write_offsets[1:] = np.cumsum(shard_payload_sizes[:-1])
+    
     shard_buf = np.empty(int(np.sum(shard_payload_sizes)), dtype=np.uint8)
     pack_shard_payloads(final_states, bs_lengths, bs_offsets, bitstreams_flat, shard_buf, shard_write_offsets)
     payload_parts.append(shard_buf.tobytes())
 
-    # 6. Optional Alpha Layer
+    # 8. Optional Alpha Layer (Zstd-only)
     if is_rgba:
         c_alpha = get_zstd_comp(level=1).compress(sbuffer.a_payload.tobytes())
         payload_parts.append(np.uint32(len(c_alpha)).tobytes())
@@ -202,6 +215,9 @@ def unpack_bitstream(compressed_data: Union[bytes, BinaryIO], profile: ShardProf
     """
     Deserializes the SPX bitstream format.
     [v8.3.2] Unified Transport Layer (Protocol Symmetry).
+    
+    This function performs a single, large-scale parallel decode call to the Rust backend, 
+    maximizing core utilization during image loading.
     """
     if not isinstance(compressed_data, bytes) and not hasattr(compressed_data, 'seek'):
         compressed_data = compressed_data.read()
@@ -229,6 +245,7 @@ def unpack_bitstream(compressed_data: Union[bytes, BinaryIO], profile: ShardProf
     metadata, _ = _read_bytes(src_mv, m_len, meta_start)
     
     if flag & FLAG_BITPLANE:
+        # Bitplane payloads are handled by the specialized bitplane orchestrator.
         payload_for_bp, _ = _read_bytes(src_mv, meta_start - p, p)
         return SpxUnpackResult(h, w, flag, np.empty(0, np.uint8), np.empty(0, np.uint8), np.empty(0, np.uint8), 
                                np.zeros(n_shards, np.uint32), np.zeros(n_shards, np.uint32), np.zeros(n_shards, np.uint32), 
@@ -244,6 +261,7 @@ def unpack_bitstream(compressed_data: Union[bytes, BinaryIO], profile: ShardProf
     shard_modes = np.frombuffer(modes_raw, dtype=np.uint8).reshape((n_channels, n_shards))
 
     # 2. PDF Block Reconstruction
+    # Expand either from Empirical Templates (0 overhead) or Custom PDF Tables.
     pdf_c_bytes, p = _read_block_meta(src_mv, p)
     pdf_raw = get_zstd_decomp().decompress(pdf_c_bytes)
     all_sym_freqs_flat = expand_pdf_tables(np.frombuffer(pdf_raw, np.uint8), shard_widths.ravel(), shard_modes.ravel())
@@ -258,51 +276,40 @@ def unpack_bitstream(compressed_data: Union[bytes, BinaryIO], profile: ShardProf
     shard_counts = np.zeros((3, n_shards), dtype=np.uint32)
     shard_counts[:n_channels] = np.frombuffer(sc_raw, dtype='<u4').reshape((n_channels, n_shards))
 
-    # 4. Parallel rANS Decoding Dispatch
+    # 4. Batched rANS Decoding (single Rust call — internal Rayon parallelism)
+    # Pre-calculating lookups on the Python side (calling Rust) to keep FFI simple.
     all_lookups = build_all_lookups(all_cum_freqs)
-    counts_stack = shard_counts[:n_channels].ravel()
-    cum_stack = all_cum_freqs[:n_channels].reshape((-1, 257))
-    sym_stack = all_sym_freqs[:n_channels].reshape((-1, 256))
-    lookups_stack = all_lookups[:n_channels].reshape((-1, 4096))
-    
-    total_res = int(np.sum(counts_stack))
-    all_res_flat = np.empty(total_res, dtype=np.uint8)
-    out_offsets = np.zeros(len(counts_stack), dtype=np.uint32)
-    if len(counts_stack) > 0: out_offsets[1:] = np.cumsum(counts_stack[:-1])
+    counts_stack = shard_counts[:n_channels].ravel().astype(np.uint32)
+    cum_stack = np.ascontiguousarray(all_cum_freqs[:n_channels].reshape((-1, 257)), dtype=np.uint64)
+    sym_stack = np.ascontiguousarray(all_sym_freqs[:n_channels].reshape((-1, 256)), dtype=np.uint64)
+    lookups_stack = np.ascontiguousarray(all_lookups[:n_channels].reshape((-1, 4096)), dtype=np.uint8)
 
-    futures = []
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        for idx in range(len(counts_stack)):
-            h_raw, p = _read_bytes(src_mv, 36, p)
-            meta = np.frombuffer(h_raw, dtype='<u4')
-            s0 = np.uint64(meta[0]) | (np.uint64(meta[1]) << 32)
-            s1 = np.uint64(meta[2]) | (np.uint64(meta[3]) << 32)
-            s2 = np.uint64(meta[4]) | (np.uint64(meta[5]) << 32)
-            s3 = np.uint64(meta[6]) | (np.uint64(meta[7]) << 32)
-            b_len, b_stream_raw = int(meta[8]), None
-            b_stream_raw, p = _read_bytes(src_mv, b_len, p)
-            if counts_stack[idx] > 0:
-                out_view = all_res_flat[out_offsets[idx] : out_offsets[idx] + counts_stack[idx]]
-                futures.append(executor.submit(rans_decode_4way_core, s0, s1, s2, s3, 
-                                            np.frombuffer(b_stream_raw, np.uint8), 
-                                            cum_stack[idx], sym_stack[idx], lookups_stack[idx], out_view))
-        for f in concurrent.futures.as_completed(futures): f.result()
+    shard_section, _ = _read_bytes(src_mv, meta_start - p, p)
+    all_res_flat, shard_bytes = rans_decode_shards_parallel(
+        np.frombuffer(shard_section, dtype=np.uint8),
+        counts_stack, cum_stack, sym_stack, lookups_stack,
+    )
+    p += shard_bytes
 
-    # 5. Recombine Channels
+    # 5. Recombine Channels from the flat decoded buffer.
     ch_lens = [int(np.sum(shard_counts[i])) for i in range(3)]
     ch_cum_lens = np.cumsum([0] + ch_lens)
     res_split = [all_res_flat[ch_cum_lens[i] : ch_cum_lens[i+1]] for i in range(3)]
-    
-    all_offs_flat = out_offsets.reshape((n_channels, n_shards))
+
     ch_offs = []
     for i in range(3):
         if i < n_channels:
-            ch_offs.append((all_offs_flat[i] - ch_cum_lens[i]).astype(np.uint32))
+            per_ch = shard_counts[i].astype(np.uint32)
+            offs = np.zeros(n_shards, dtype=np.uint32)
+            if n_shards > 1:
+                offs[1:] = np.cumsum(per_ch[:-1]).astype(np.uint32)
+            ch_offs.append(offs)
         else:
-            ch_offs.append(np.zeros(n_shards, np.uint32))
+            ch_offs.append(np.zeros(n_shards, dtype=np.uint32))
 
     res_a = None
     if is_rgba:
+        # Alpha is handled as a standard Zstd block at the end of the stream.
         a_c, p = _read_block_meta(src_mv, p)
         res_a = np.frombuffer(get_zstd_decomp().decompress(a_c), dtype=np.uint8)
         

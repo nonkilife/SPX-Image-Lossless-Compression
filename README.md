@@ -1,11 +1,8 @@
 # SPX: Context-Sensitive Data Engine
 
-![Python Version](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-Apache-2.0-green) ![MSE](https://img.shields.io/badge/MSE-0.00000000-red) ![Version](https://img.shields.io/badge/version-8.3.2-orange) ![Speed](https://img.shields.io/badge/Speed-100_MB/s-brightgreen) ![Savings](https://img.shields.io/badge/Savings-28%25-blueviolet)
+![Python Version](https://img.shields.io/badge/python-3.10%2B-blue) [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE) ![MSE](https://img.shields.io/badge/MSE-0.00000000-red) ![Version](https://img.shields.io/badge/version-8.3.2-orange) ![Speed](https://img.shields.io/badge/Speed-100_MB/s-brightgreen) ![Savings](https://img.shields.io/badge/Savings-28%25-blueviolet)
 
-An implementation of lossless image compression using **Entropy Sharding** and **4-way Interleaved rANS**. This project serves as a technical demonstration of achieving competitive compression performance through contextual sharding and statistical modeling rather than high-complexity spatial prediction systems.
-
-![SPX G-sub Visualization](./spx_layers.png)
-*Visualizing the G-sub Pipeline: Source -> Green Foundation (Grn) -> Modular G-sub Residuals (RD/BD)*
+An implementation of lossless image compression using a **Hybrid Python/Rust Architecture**, featuring **Entropy Sharding** and **Rayon-accelerated 4-way Interleaved rANS**. This project achieves competitive compression performance through contextual sharding and high-performance native kernels, bridging Python's flexibility with Rust's execution speed.
 
 ---
 
@@ -34,22 +31,23 @@ The following data characterizes the throughput and compression efficiency acros
 #### **Technical Comparison**
 - **Encoding Speed**: SPX is consistently **25x–150x faster** than WebP (Method 6) and **5x–7x faster** than JPEG-XL (Effort 7).
 - **Quality Assurance**: Bit-perfect reconstruction across all 1,500+ test images (**MSE = 0.00000000**).
-- **Core Efficiency**: High instruction-level parallelism (ILP) via 4-way interleaved rANS.
+- **Core Efficiency**: Rust-native backend utilizes **Rayon** for internal data parallelism and **4-way interleaved rANS** for instruction-level parallelism (ILP).
+- **Hybrid Performance**: Critical hot-paths (RCT, MED, Sharding, rANS) are implemented in Rust, while orchestration remains in Python.
 
 *Full comparative analysis vs. standard formats is available in [Official Benchmarks](./technical/BENCHMARK.md).*
 
 ---
 
-### v8.3.2 Technical Analysis (4-Pillar Architecture)
-- **Core Workflow**: Optimized pipeline featuring **Foundational Protocol** $\rightarrow$ **Prediction Kernels** $\rightarrow$ **Spatial Transforms** $\rightarrow$ **Stateless Sharding**.
-- **Predictor Hub (Pillar 2)**: Decoupled hub in `predictor.py` featuring **Branchless Edge-Tuned MED** for maximum JIT pipelining.
+### v8.3.2 Technical Analysis (Hybrid Rust Architecture)
+- **Core Workflow**: Optimized pipeline featuring **Foundational Protocol** $\rightarrow$ **Rust Prediction Kernels** $\rightarrow$ **Rust Spatial Transforms** $\rightarrow$ **Rust Stateless Sharding**.
+- **Predictor Hub (Pillar 2)**: Decoupled hub in `predictor.py` (orchestration) and `rans_core.rs` (execution) featuring **Branchless Edge-Tuned MED** for maximum CPU throughput.
 - **Context-Aware Path Architecture**: 
-    - **RGB Path (Pillar 3/4)**: G-sub RCT transform coupled with a stateless sharding matrix optimized for cross-channel residuals.
-    - **Grayscale Fast-Path**: Hardware-accelerated monochrome bypass utilizing serialized Green-channel isolation.
-- **Stateless Sharding Hub (Pillar 4)**: Unified profile-driven context ID derivation using the `ShardProfile` configuration-as-data model.
+    - **RGB Path (Pillar 3/4)**: Rust-native G-sub RCT transform coupled with a stateless sharding matrix.
+    - **Grayscale Fast-Path**: Specialized monochrome bypass utilizing serialized Green-channel isolation.
+- **Stateless Sharding Hub (Pillar 4)**: Unified profile-driven context ID derivation using the `ShardProfile` configuration-as-data model, executed via high-speed Rust "Gather" kernels.
 - **BICC (Bias Cancellation)**: Intelligent PDF centering applied to residuals to minimize dispersion.
-- **Bitplane rANS**: Hierarchical entropy modeling using a **2,688-way context model** (42 Shards x 64 Spatial Patterns).
-- **4-Way Interleaved rANS Core**: Vectorized entropy engine achieving optimized instruction-level parallelism (ILP).
+- **Bitplane rANS**: Hierarchical entropy modeling using a **2,688-way context model** (42 Shards x 64 Spatial Patterns), fully implemented in Rust.
+- **4-Way Interleaved rANS Core**: Vectorized native entropy engine achieving optimized instruction-level parallelism (ILP).
 
 ---
 
@@ -57,7 +55,7 @@ The following data characterizes the throughput and compression efficiency acros
 
 - **Compression**: **~25-30% smaller** than standard PNG; competitive with WebP (m6) on high-resolution photography.
 - **Efficiency**: Stateless sharding provides a balanced profile for both high-frequency noise and low-entropy gradients.
-- **Decoding**: Throughput (~55–100 MB/s) on a single thread; scalable up to 250+ MB/s via multi-core batching.
+- **Decoding**: High-speed Rust-native decompression (~60–130 MB/s). Scalable via multi-core batching.
 
 ---
 
@@ -65,18 +63,26 @@ The following data characterizes the throughput and compression efficiency acros
 
 - **Python Version**: 3.10+ (3.11+ recommended)
 - **Python Packages**:
-  - `numpy>=1.22.0`, `numba>=0.57.0`, `zstandard>=0.19.0`, `Pillow>=9.0.0`, `pytest>=7.0.0`
+  - `numpy>=1.22.0`, `zstandard>=0.19.0`, `Pillow>=9.0.0`, `pytest>=7.0.0`
+- **Native Extension**:
+  - `spx_rans` (Rust-native backend)
+- **Development Dependencies**:
+  - `maturin>=1.0.0` (for building the native extension)
 - **System Core (Linux)**:
   - Requires `zlib` and `libpng` headers for **Pillow** and **Zstd** I/O (`sudo apt install build-essential zlib1g-dev libpng-dev`).
 - **Windows**: Self-contained.
 
-> [!WARNING]
-> **JIT Latency**: Initial execution involves a ~30s JIT compilation delay (Numba). Subsequent runs are near-instant.
-> **Pro Tip**: Set the environment variable `NUMBA_CACHE_DIR` to a local directory to persist compiled kernels across sessions.
+> [!TIP]
+> **Native Acceleration**: SPX v8.3.2 utilizes a pre-compiled Rust backend. Unlike previous versions, there is **zero JIT latency** during the first run.
+> **Multithreading**: Parallelism is handled internally by the Rust backend using the Rayon library.
 
 **Installation**:
 ```bash
-pip install numpy>=1.22.0 numba>=0.57.0 zstandard>=0.19.0 Pillow>=9.0.0 pytest>=7.0.0
+# 1. Install Python dependencies
+pip install numpy>=1.22.0 zstandard>=0.19.0 Pillow>=9.0.0 pytest>=7.0.0
+
+# 2. Build/Install native extension
+cd native && maturin develop --release
 ```
 
 ---
@@ -151,21 +157,28 @@ SPX follows a strictly defined **4-Pillar Architecture** to transform raw pixels
 ### 5.1 The 4 Pillars of SPX
 1.  **Pillar 1: Foundational Protocol (`common.py`)**: Defines the unified bitstream schema, flags, and entropy coding thresholds.
 2.  **Step 1: Fused RCT & Profiling (Pillars 3 & 4)**: A unified high-performance kernel that performs the Green-Subtract transform, spatial padding, and Shard Pass 1 profiling (histograms/offsets) in a single raster scan to maximize L2 cache residency.
-3.  **Step 2: Predictor Hub (Pillar 2)**: Integrated into the fused pass, performing branchless spatial decorrelation via **Branchless Edge-Tuned MED**.
+3.  **Step 2: Predictor Hub (Pillar 2)**: Integrated into the fused pass, performing branchless spatial decorrelation via **Branchless Edge-Tuned MED (based on the LOCO-I/JPEG-LS standard)**.
 4.  **Step 3: Stateless Sharding (Pillar 4)**: A second, purely memory-bound "Gather" pass that packs residuals into contiguous rANS buffers using the offsets from Step 1.
 5.  **Step 4: Interleaved rANS (Entropy Coding)**: Vectorized 4-way entropy engine for final bit-perfect compression.
 
 ```mermaid
 graph TD
     A[Input: 8-bit RGB/RGBA] --> B{Pillar 1: Flag Check}
-    B -->|Grayscale| C1[Pillar 3/4: Fused Gray Pass]
-    B -->|Color| C2[Pillar 3/4: Fused RCT/Pass 1 Kernel]
+    B -->|Grayscale| C1[Rust: Fused Gray Pass]
+    B -->|Color| C2[Rust: Fused RCT/Pass 1 Kernel]
     
-    C1 & C2 --> D[Pillar 4: Stateless Sharding Hub]
+    C1 & C2 --> D[Rust: Stateless Sharding Hub]
     
     D --> E[BICC Bias Cancellation]
-    E --> F[Pillar 4: Interleaved rANS Engine]
+    E --> F[Rust: Interleaved rANS Engine]
     F --> G[v8.3.2 SPX Bitstream Output]
+    
+    subgraph Rust Extension (spx_rans)
+        C1
+        C2
+        D
+        F
+    end
 ```
 
 ### 5.2 Deep-Dive Technical Series
@@ -312,10 +325,11 @@ To verify the benchmarks or test the engine with standard datasets, you can down
 
 ## 10. Project Background
 
-The SPX project is a lossless image compression framework developed through an extensive research cycle. The project utilized the agentic AI **Antigravity** to architect technical components, including the **Four-Pillar Architecture**, Universal-42 Sharding, and a 4-way interleaved rANS entropy engine. This initiative serves as a technical proof-of-concept for AI-augmented engineering, demonstrating that autonomous agents can assist in algorithmic optimization, resulting in a bit-perfect codec that maintains competitive compression ratios against established standards like WebP and JPEG-XL.
+The SPX project is a lossless image compression framework developed through an extensive research cycle. The project utilized the agentic AI **Antigravity** to architect technical components, including the **Four-Pillar Architecture**, Universal-42 Sharding, and a 4-way interleaved rANS entropy engine. In v8.3.2, the core computational kernels were migrated from Python/Numba to a **Rust-native backend**, achieving significantly higher throughput and eliminating runtime JIT overhead. This initiative serves as a technical proof-of-concept for AI-augmented engineering, demonstrating that autonomous agents can assist in complex algorithmic optimization and multi-language systems integration.
 
 ## 11. Acknowledgments
-This project utilizes the rANS algorithm developed by Dr. Jarosław (Jarek) Duda. His work on Asymmetric Numeral Systems (ANS) provided the mathematical foundation for the entropy core.
+- **Entropy Coding**: This project utilizes the rANS algorithm developed by Dr. Jarosław (Jarek) Duda. His work on Asymmetric Numeral Systems (ANS) provided the mathematical foundation for the entropy core.
+- **Spatial Prediction**: The spatial decorrelation engine utilizes the Median Edge Detector (MED) algorithm, originally introduced in the LOCO-I (JPEG-LS) standard.
 
 ---
 

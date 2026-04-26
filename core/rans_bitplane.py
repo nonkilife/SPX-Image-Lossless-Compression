@@ -1,8 +1,25 @@
 """
 SPX v8.3.2 [Stable Parallel Architecture]
 Module: rans_bitplane
-Role: Entropy coding combining N-shard gradient context with
-      2-bit spatial bitplane context.
+Role: Entropy coding combining N-shard gradient context with 2-bit spatial bitplane context.
+
+Description:
+This module implements the high-entropy coding path for SPX. It utilizes a 
+hierarchical context model that combines local spatial information with 
+global gradient trends.
+
+Architecture & Engineering Rationale:
+1. 2-Bit Spatial Context: For each pixel, the coder evaluates the magnitude 
+   of the Left and Top neighbors. This 2-bit context (Low/High for each neighbor) 
+   helps the rANS engine adapt to local edge discontinuities that sharding alone 
+   might miss.
+2. Green-Reference (Anchor): In RGB mode, the Green channel is encoded first 
+   using self-referential spatial context. The reconstructed Green channel then 
+   serves as a high-fidelity spatial anchor for the Red and Blue channels, 
+   allowing for extremely precise residual modeling.
+3. Parallelization: All hot-path kernels are implemented in Rust. Encoding 
+   of the three channels (G, R, B) is performed concurrently using a 
+   ThreadPoolExecutor that releases the Python GIL during the native call.
 
 Phase 2 Rust migration: all hot-path kernels replaced by spx_rans Rust extension.
 Public API and bitstream format are unchanged.
@@ -25,6 +42,7 @@ import spx_rans as _rs
 # ---------------------------------------------------------------------------
 # Constants (kept for any external references)
 # ---------------------------------------------------------------------------
+# N_SPATIAL: 64 context slots per shard.
 N_SPATIAL: int = 64
 BITPLANE_MAGIC: int = 0xFF
 
@@ -50,14 +68,21 @@ def compress_bitplane_gray_sharded(h: int, w: int,
                                    gray_ch_p:  npt.NDArray[np.uint8],
                                    resid_2d_p: npt.NDArray[np.uint8],
                                    profile:    ShardProfile) -> bytes:
+    """
+    Encodes a grayscale image using bitplane-contextual rANS.
+    Calls Rust for fused PDF building and encoding.
+    """
     n_ctx = profile.total_shards * N_SPATIAL
     sl, il, dl = _luts(profile)
     rf = np.ascontiguousarray(resid_2d_p.ravel(), dtype=np.uint8)
     gf = np.ascontiguousarray(gray_ch_p.ravel(), dtype=np.uint8)
 
+    # 1. Build PDF: Rust collects histograms and normalizes them to 12-bit frequencies.
     f, cf = _rs.bp_build_pdf_sharded(rf, gf, sl, il, dl, h, w, n_ctx, False)
+    # 2. Encode: Rust performs 4-way interleaved rANS encoding.
     states, bitstream = _rs.bp_encode_sharded(rf, gf, cf, f, sl, il, dl, h, w, n_ctx, False)
 
+    # 3. Serialize: Package the PDF tables (Zstd compressed) and the bitstream.
     tables_zstd = get_zstd_comp(level=3).compress(f.tobytes())
     out = bytearray()
     out.append(BITPLANE_MAGIC)
@@ -72,6 +97,10 @@ def compress_bitplane_gray_sharded(h: int, w: int,
 def decompress_bitplane_gray_sharded(payload:   bytes,
                                      h: int, w: int,
                                      profile:   ShardProfile) -> Tuple[npt.NDArray[np.uint8], int]:
+    """
+    Decodes a grayscale image using bitplane-contextual rANS.
+    Reverses the process of compress_bitplane_gray_sharded.
+    """
     n_ctx = profile.total_shards * N_SPATIAL
     sl, il, dl = _luts(profile)
 
@@ -81,6 +110,7 @@ def decompress_bitplane_gray_sharded(payload:   bytes,
         raise ValueError("Not a sharded bitplane payload")
     ptr += 1
 
+    # 1. Unpack PDF
     tables_len = int(np.frombuffer(raw[ptr:ptr+4], dtype=np.uint32)[0])
     ptr += 4
     tables_raw = get_zstd_decomp().decompress(raw[ptr:ptr+tables_len].tobytes())
@@ -90,6 +120,7 @@ def decompress_bitplane_gray_sharded(payload:   bytes,
     cf = np.zeros((4, n_ctx, 5), dtype=np.uint16)
     cf[:, :, 1:] = np.cumsum(f, axis=2)
 
+    # 2. Unpack rANS States and Bitstream
     states = np.frombuffer(raw[ptr:ptr+32], dtype=np.uint64)
     ptr += 32
     bs_len = int(np.frombuffer(raw[ptr:ptr+4], dtype=np.uint32)[0])
@@ -97,6 +128,7 @@ def decompress_bitplane_gray_sharded(payload:   bytes,
     bitstream = np.ascontiguousarray(raw[ptr:ptr+bs_len], dtype=np.uint8)
     ptr += bs_len
 
+    # 3. Decode: Rust performs parallel bitplane-contextual rANS decoding.
     resid = _rs.bp_decode_sharded(
         bitstream, int(states[0]), int(states[1]), int(states[2]), int(states[3]),
         h, w, cf, f, sl, il, dl
@@ -110,6 +142,10 @@ def compress_bitplane_rgb_sharded(h: int, w: int,
                                    rd_p:     npt.NDArray[np.uint8],
                                    bd_p:     npt.NDArray[np.uint8],
                                    profile:  ShardProfile) -> bytes:
+    """
+    Encodes an RGB image using bitplane-contextual rANS.
+    Uses concurrent channel encoding to maximize throughput.
+    """
     n_ctx = profile.total_shards * N_SPATIAL
     sl, il, dl = _luts(profile)
     grf = np.ascontiguousarray(gr_p.ravel(), dtype=np.uint8)
@@ -117,12 +153,12 @@ def compress_bitplane_rgb_sharded(h: int, w: int,
     bdf = np.ascontiguousarray(bd_p.ravel(), dtype=np.uint8)
     grrf = np.ascontiguousarray(gr_ref_p.ravel(), dtype=np.uint8)
 
-    # Phase 1: fused 3-channel histogram
+    # Phase 1: Fused 3-channel histogram collection in Rust.
     f_gr, cf_gr, f_rd, cf_rd, f_bd, cf_bd = _rs.bp_build_pdf_sharded_rgb(
         grf, rdf, bdf, grrf, sl, il, dl, h, w, n_ctx
     )
 
-    # Phase 2: encode three channels concurrently (Rust releases GIL)
+    # Phase 2: Encode three channels concurrently (Rust releases GIL during FFI).
     def _encode(resid_f, gray_f, cf, f, is_chroma):
         return _rs.bp_encode_sharded(resid_f, gray_f, cf, f, sl, il, dl, h, w, n_ctx, is_chroma)
 
@@ -155,6 +191,10 @@ def compress_bitplane_rgb_sharded(h: int, w: int,
 def decompress_bitplane_rgb_sharded(payload:   bytes,
                                      h: int, w: int,
                                      profile:   ShardProfile) -> Tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8], npt.NDArray[np.uint8], int]:
+    """
+    Decodes an RGB image using bitplane-contextual rANS.
+    Implements the Green-Lead hierarchical decoding sequence.
+    """
     n_ctx = profile.total_shards * N_SPATIAL
     sl, il, dl = _luts(profile)
 
@@ -177,11 +217,13 @@ def decompress_bitplane_rgb_sharded(payload:   bytes,
         bs = np.ascontiguousarray(raw[ptr:ptr+bs_len], dtype=np.uint8); ptr += bs_len
         return f, cf, states, bs, ptr
 
+    # 1. Unpack all channel payloads.
     f_gr, cf_gr, st_gr, bs_gr, ptr = _unpack_channel(ptr)
     f_rd, cf_rd, st_rd, bs_rd, ptr = _unpack_channel(ptr)
     f_bd, cf_bd, st_bd, bs_bd, ptr = _unpack_channel(ptr)
 
-    # Green must be decoded first (self-referential shard context)
+    # 2. Green-Lead Decoding: Green must be decoded first to provide 
+    # the spatial reference for R and B.
     gr_resid = _rs.bp_decode_sharded(
         bs_gr, int(st_gr[0]), int(st_gr[1]), int(st_gr[2]), int(st_gr[3]),
         h, w, cf_gr, f_gr, sl, il, dl
@@ -190,7 +232,7 @@ def decompress_bitplane_rgb_sharded(payload:   bytes,
     gr_rec_p = np.pad(gr_rec, 1, constant_values=0)
     gr_ref_f = np.ascontiguousarray(gr_rec_p.ravel(), dtype=np.uint8)
 
-    # Rd and Bd both read gr_rec_p — parallel decode
+    # 3. Concurrent Chroma Decoding: Rd and Bd both read gr_rec_p as the anchor.
     def _decode_rd():
         resid = _rs.bp_decode_sharded_with_ref(
             bs_rd, int(st_rd[0]), int(st_rd[1]), int(st_rd[2]), int(st_rd[3]),
