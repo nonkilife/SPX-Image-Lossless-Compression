@@ -1,8 +1,8 @@
-# SPX: Context-Sensitive Data Engine
+# SPX (Space Express): High Throughput Lossless Image Compression Engine
 
 ![Python Version](https://img.shields.io/badge/python-3.10%2B-blue) [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE) ![MSE](https://img.shields.io/badge/MSE-0.00000000-red) ![Version](https://img.shields.io/badge/version-8.3.2-orange) ![Speed](https://img.shields.io/badge/Speed-150_MB/s-brightgreen) ![Savings](https://img.shields.io/badge/Savings-28%25-blueviolet)
 
-An implementation of lossless image compression using a **Hybrid Python/Rust Architecture**, featuring **Entropy Sharding** and **Rayon-accelerated 4-way Interleaved rANS**. This project exhibits comparable compression ratios through contextual sharding and native computational kernels, bridging Python's flexibility with Rust's native performance.
+SPX (Space Express) is a lossless image compression engine using a **Hybrid Python/Rust Architecture**, featuring **Entropy Sharding** and **Rayon-accelerated 4-way Interleaved rANS** to achieve balance between compression ratio and speed. This project exhibits comparable compression ratios through contextual sharding and native computational kernels, bridging Python's flexibility with Rust's native performance.
 
 ---
 
@@ -29,7 +29,7 @@ Instead of pursuing absolute compression ratio at any cost, SPX focuses on:
 - **Predictable Performance**: Constant-time complexity relative to input resolution.
 - **Single-Pass Encoding**: Non-iterative execution without brute-force search.
 - **Minimal Modeling Complexity**: Stateless single-model pipeline.
-- **High Throughput**: SIMD-accelerated native computational kernels.
+- **High Throughput**: ILP-optimized native computational kernels.
 
 ### Trade-off Philosophy
 | Dimension | SPX Approach |
@@ -300,7 +300,6 @@ Pillar 4 (Stateless Sharding) allows adding new segmentation strategies without 
 To ensure reproducibility, the competitive baselines are locked to the following versions:
 - **WebP (Method 6)**: `cwebp` v1.3.2 (libwebp v1.3.2).
 - **JPEG-XL (Effort 7)**: `cjxl` v0.8.2 (libjxl v0.8.2).
-- **PNG (Optimize)**: `zopflipng` v1.0.3.
 
 ### 6.3 Usage
 ```bash
@@ -374,7 +373,9 @@ To verify the benchmarks or test the engine with standard datasets, you can down
 
 ## 10. Project Background
 
-The SPX project is a lossless image compression framework developed through a multi-phase research cycle. The project utilized the agentic AI **Claude Code** and **Antigravity** to architect technical components, including the **Four-Pillar Architecture**, Universal-42 Sharding, and a 4-way interleaved rANS entropy engine. In v8.3.2, the core computational kernels were migrated from Python/Numba to a **Rust-native backend**, achieving significantly higher throughput and reducing runtime JIT overhead. This initiative serves as a technical proof-of-concept for AI-assisted engineering, demonstrating that autonomous agents can assist in complex algorithmic optimization and multi-language systems integration.
+The SPX project is a lossless image compression framework developed through a multi-phase research cycle. The project utilized the agentic AI **Claude Code** and **Antigravity** to architect technical components, including the **Four-Pillar Architecture**, Universal-42 Sharding, and a 4-way interleaved rANS entropy engine. In v8.3.2, the core computational kernels were migrated from Python/Numba to a **Rust-native backend**, achieving significantly higher throughput and reducing runtime JIT overhead. 
+
+This initiative serves as a technical proof-of-concept for AI-assisted engineering, demonstrating that autonomous agents can assist in complex algorithmic optimization and multi-language systems integration.
 
 ## 11. Acknowledgments
 - **Entropy Coding**: This project utilizes the rANS algorithm developed by Dr. Jarosław (Jarek) Duda. His work on Asymmetric Numeral Systems (ANS) provided the mathematical foundation for the entropy core.
