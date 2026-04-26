@@ -354,6 +354,7 @@ Detailed performance metrics and comparative benchmarks comparing SPX against We
 - **Color Spaces**: Optimized for **RGB**. No support for CMYK or YCbCr subsampling (G-sub transform is native to RGB).
 - **Alpha Channel**: While RGBA is supported, the Alpha channel currently utilizes traditional Zstd compression (Level 1) rather than the high-performance rANS sharding engine used for RGB. Optimization for constant alpha (solidity detection) is a planned future improvement.
 - **Threading**: The Python orchestration layer is single-threaded; however, the Rust-native backend utilizes internal data-parallelism via **Rayon** for hot-path kernels (RCT, Sharding, rANS).
+- **Performance Ceiling**: Current throughput is achieved via branchless algorithmic design and LLVM auto-vectorization. There is no manual SIMD (AVX2/NEON) implementation. This project serves as a high-performance baseline; downstream forks seeking extreme optimizations may consider manual intrinsics or a pure-native C++/Rust port to eliminate Python orchestration overhead entirely.
 
 ## 9. Dataset Sources
 
@@ -373,7 +374,7 @@ To verify the benchmarks or test the engine with standard datasets, you can down
 
 ## 10. Project Background
 
-The SPX project is a lossless image compression framework developed through a multi-phase research cycle. The project utilized the agentic AI **Antigravity** to architect technical components, including the **Four-Pillar Architecture**, Universal-42 Sharding, and a 4-way interleaved rANS entropy engine. In v8.3.2, the core computational kernels were migrated from Python/Numba to a **Rust-native backend**, achieving significantly higher throughput and reducing runtime JIT overhead. This initiative serves as a technical proof-of-concept for AI-assisted engineering, demonstrating that autonomous agents can assist in complex algorithmic optimization and multi-language systems integration.
+The SPX project is a lossless image compression framework developed through a multi-phase research cycle. The project utilized the agentic AI **Claude Code** and **Antigravity** to architect technical components, including the **Four-Pillar Architecture**, Universal-42 Sharding, and a 4-way interleaved rANS entropy engine. In v8.3.2, the core computational kernels were migrated from Python/Numba to a **Rust-native backend**, achieving significantly higher throughput and reducing runtime JIT overhead. This initiative serves as a technical proof-of-concept for AI-assisted engineering, demonstrating that autonomous agents can assist in complex algorithmic optimization and multi-language systems integration.
 
 ## 11. Acknowledgments
 - **Entropy Coding**: This project utilizes the rANS algorithm developed by Dr. Jarosław (Jarek) Duda. His work on Asymmetric Numeral Systems (ANS) provided the mathematical foundation for the entropy core.
