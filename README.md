@@ -53,7 +53,7 @@ Instead of pursuing absolute compression ratio at any cost, SPX focuses on:
 
 ---
 
-### v8.3.2 Performance Snapshot
+### v1.0.0 Performance Snapshot
 
 The following data characterizes the throughput and compression efficiency across standard datasets.
 
@@ -76,7 +76,7 @@ The following data characterizes the throughput and compression efficiency acros
 > - **OS**: Windows 11 (64-bit, x64)
 
 #### **Technical Comparison**
-- **Encoding Speed**: SPX exhibits **25x–150x higher throughput** than WebP (Method 6) and **3x–14x higher throughput** than JPEG-XL (Effort 7) on the tested hardware across datasets.
+- **Encoding Performance**: SPX v1.0.0 exhibits a **103x parallel encoding lead** over WebP (m=6) in RGB and a **63x lead** in Grayscale (ICI). It remains **6x–8x faster** than JXL (Effort 7) across industrial datasets.ted hardware across datasets.
 - **Loseless Assurance**: Bit-perfect reconstruction across all 1,500+ test images (**MSE = 0.00000000**).
 - **Core Efficiency**: Rust-native backend utilizes **Rayon** for internal data parallelism and **4-way interleaved rANS** for instruction-level parallelism (ILP).
 - **Hybrid Performance**: Critical hot-paths (RCT, MED, Sharding, rANS) are implemented in Rust, while orchestration remains in Python.
@@ -85,7 +85,7 @@ The following data characterizes the throughput and compression efficiency acros
 
 ---
 
-### v8.3.2 Technical Analysis (Hybrid Rust Architecture)
+### v1.0.0 Technical Analysis (Hybrid Rust Architecture)
 - **Core Workflow**: Unified pipeline featuring **Foundational Protocol** $\rightarrow$ **Rust Prediction Kernels** $\rightarrow$ **Rust Spatial Transforms** $\rightarrow$ **Rust Stateless Sharding**.
 - **Predictor Hub (Pillar 2)**: Decoupled hub in `predictor.py` (orchestration) and `rans_core.rs` (execution) featuring **Branchless Edge-Tuned MED** for increased execution efficiency.
 - **Context-Aware Path Architecture**: 

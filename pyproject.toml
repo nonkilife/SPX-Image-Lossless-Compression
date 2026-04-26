@@ -1,0 +1,42 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "spx-codec"
+version = "1.0.0"
+description = "SPX: High Throughput Lossless Image Compression Engine"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+keywords = ["image", "compression", "lossless", "rANS", "codec"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: System :: Archiving :: Compression",
+]
+dependencies = [
+    "numpy>=1.22.0",
+    "zstandard>=0.19.0",
+    "Pillow>=9.0.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0.0"]
+
+[project.scripts]
+spx = "spx.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/nonkilife/spx-codec"
+Repository = "https://github.com/nonkilife/spx-codec"
+
+[tool.maturin]
+python-packages = ["spx"]
+module-name = "spx.spx_rans"
+manifest-path = "native/Cargo.toml"
+features = ["pyo3/extension-module"]

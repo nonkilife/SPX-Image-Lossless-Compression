@@ -43,7 +43,7 @@ import numpy as np
 import numpy.typing as npt
 from typing import Tuple
 
-import spx_rans as _rs
+from . import spx_rans as _rs
 from .common import get_empirical_templates
 
 # ---------------------------------------------------------------------------

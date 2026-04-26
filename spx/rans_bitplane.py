@@ -45,7 +45,7 @@ from .sharding import ShardProfile
 from .transform import reconstruct_2d_channels
 from .codec import get_zstd_comp, get_zstd_decomp
 
-import spx_rans as _rs
+from . import spx_rans as _rs
 
 # ---------------------------------------------------------------------------
 # Constants (kept for any external references)

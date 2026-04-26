@@ -34,7 +34,7 @@ __all__ = ['restore_channels', 'reconstruct_2d_channels']
 import numpy as np
 import numpy.typing as npt
 from typing import Optional
-import spx_rans as _rs
+from . import spx_rans as _rs
 
 
 def restore_channels(gr_rec: npt.NDArray[np.uint8], rd_rec: npt.NDArray[np.uint8],

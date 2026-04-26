@@ -1,8 +1,8 @@
 """
-SPX v8.3.2 [Stable Parallel Architecture]
+SPX v1.0.0 [Stable Parallel Architecture]
 Module: codec
 Role: Bitstream Orchestration.
-Description: Logic for packing and unpacking the SPX tiered bitstream container (v8.3.2).
+Description: Logic for packing and unpacking the SPX tiered bitstream container (v1.0.0).
 Architecture: Structured serialization layer bridging the Model and rANS pillars.
 
 Engineering Rationale:
@@ -52,7 +52,7 @@ graph TD
 ```
 """
 
-__version__ = "8.3.2"
+__version__ = "1.0.0"
 
 __all__ = [
     'pack_bitstream',

@@ -3,8 +3,10 @@
 *
 
 # Whitelist directories
-!core/
-!core/**
+!.github/
+!.github/**
+!spx/
+!spx/**
 !technical/
 !technical/**
 !native/
@@ -17,16 +19,16 @@
 !LICENSE
 !test.bat
 !.gitignore
+!pyproject.toml
+!native/Cargo.lock
 
-# Re-exclude Python junk
+# Re-exclude junk
 __pycache__/
 *.py[cod]
-*$py.class
-.ipynb_checkpoints/
 .pytest_cache/
 .claude/
 .venv/
-.env
-
-# Re-exclude Rust junk (except what's needed for build)
 native/target/
+spx/*.pyd
+spx/*.so
+spx/*.pdb

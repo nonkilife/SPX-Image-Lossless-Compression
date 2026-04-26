@@ -46,7 +46,7 @@ from .sharding import (
     PROFILE_RGB, Pass1Result, execute_sharding_stateless,
     SpxResult, extract_srb_metadata
 )
-import spx_rans as _rs
+from . import spx_rans as _rs
 from .codec import pack_bitstream
 from .rans_bitplane import compress_bitplane_gray_sharded, compress_bitplane_rgb_sharded
 from . import env

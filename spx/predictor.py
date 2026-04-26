@@ -1,5 +1,5 @@
 """
-SPX v8.3.2 [Flexible-Shard Architecture]
+SPX v1.0.0 [Flexible-Shard Architecture]
 Module: spx_predictor
 Role: Pillar 2 - Prediction Kernels.
 Description: Core spatial prediction algorithms (MED) optimized via branchless arithmetic.
@@ -27,7 +27,7 @@ graph TD
 ```
 """
 
-__version__ = "8.3.2"
+__version__ = "1.0.0"
 
 __all__ = ['to_zigzag', 'from_zigzag', 'selected_predictor', 'med_edge_tuned']
 
@@ -83,8 +83,8 @@ def selected_predictor(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
 """
 def med_edge_tuned(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     """
-    Edge-Tuned MED v8.3.2 — Robustness fix for extreme neighbor jumps.
-    [v8.3.2] Migrated to branchless arithmetic for ~30% throughput gain.
+    Edge-Tuned MED v1.0.0 — Robustness fix for extreme neighbor jumps.
+    [v1.0.0] Migrated to branchless arithmetic for ~30% throughput gain.
     
     Rationale for Threshold (50):
     Detects semantic discontinuities (sharp edges) where standard gradients fail.

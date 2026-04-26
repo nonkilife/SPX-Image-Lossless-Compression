@@ -1,5 +1,5 @@
 """
-SPX v8.3.2-stable [Stateless Sharding Hub]
+SPX v1.0.0-stable [Stateless Sharding Hub]
 Module: sharding
 Role: Pillar 4 - Strategic Partitioning (BICC Integration).
 
@@ -22,11 +22,11 @@ graph TD
 
 import numpy as np
 import numpy.typing as npt
-import spx_rans as _rs
+from . import spx_rans as _rs
 from dataclasses import dataclass, field
 from typing import Tuple, Optional
 
-__version__ = "8.3.2"
+__version__ = "1.0.0"
 
 __all__ = [
     'SpxResult',

@@ -11,4 +11,4 @@ dependencies = []
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
-module-name = "spx_rans"
+module-name = "spx.spx_rans"

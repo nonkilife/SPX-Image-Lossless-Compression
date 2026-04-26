@@ -354,7 +354,7 @@ Test Date: 2026/04/26
 
 ### 2. Technical Observations
 
-- **Encoding Performance**: SPX v8.3.2 exhibits a **~70x parallel encoding lead** over WebP (m=6) in RGB and a **~92x lead** in Grayscale (ICI). It remains **3x–14x faster** than JXL (Effort 7) across industrial datasets.
+- **Encoding Performance**: SPX v1.0.0 exhibits a **103x parallel encoding lead** over WebP (m=6) in RGB and a **63x lead** in Grayscale (ICI). It remains **6x–8x faster** than JXL (Effort 7) across industrial datasets.
 - **Industrial Stability**: Validated on 2,000+ images (CLIC, DIV2K, ICI), SPX maintains a stable **25-30% saving vs PNG** with bit-perfect reconstruction (MSE = 0.000000).
 - **Core Efficiency**: The architecture achieving **62.63 MB/s decompression** in Rust-native environments (ICI Gray), suitable for real-time archival and high-speed delivery pipelines.
 

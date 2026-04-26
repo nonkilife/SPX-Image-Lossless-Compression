@@ -22,4 +22,4 @@ echo Error: Unknown command "%CMD%". Valid: spx, webp, jxl, bench.
 exit /b 1
 
 :run
-python -m core.test_suite %CMD% %DATASET% %3 %4 %5 %6 %7 %8 %9
+python -m spx.test_suite %CMD% %DATASET% %3 %4 %5 %6 %7 %8 %9
