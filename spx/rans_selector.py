@@ -1,5 +1,5 @@
 """
-SPX v8.3.2 PDF Template Selector (rans_selector)
+SPX v1.0.0 PDF Template Selector (rans_selector)
 Module: rans_selector
 Role: Pillar 0 - Meta-Decision Engine.
 
@@ -63,7 +63,7 @@ Conceptual Architecture:
 All decision logic is implemented in native/src/rans_core.rs (decide_shard_mode).
 """
 
-__version__ = "8.3.2"
+__version__ = "1.0.0"
 
 import os
 import numpy as np

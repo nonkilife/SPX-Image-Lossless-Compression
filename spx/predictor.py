@@ -54,7 +54,7 @@ def from_zigzag(z: np.uint8) -> int:
 def selected_predictor(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     """
     Unified Predictor Dispatcher.
-    Current Active: med_edge_tuned (v8.3.2 Robust)
+    Current Active: med_edge_tuned (v1.0.0 Robust)
     """
     return med_edge_tuned(a, b, c)
 
@@ -108,7 +108,7 @@ def med_edge_tuned(a: np.uint8, b: np.uint8, c: np.uint8) -> np.uint8:
     return np.uint8(res)
 
 # --- Static ZigZag Mapping LUTs ---
-# [v8.3.2] Pre-computed at module load to eliminate per-pixel math.
+# [v1.0.0] Pre-computed at module load to eliminate per-pixel math.
 
 # Maps 8-bit residuals to ZigZag symbols.
 ZIGZAG_LUT = np.array([to_zigzag(i) for i in range(256)], dtype=np.uint8)

@@ -1,5 +1,5 @@
 """
-SPX v8.3.2 [Foundational Protocol]
+SPX v1.0.0 [Foundational Protocol]
 Module: common
 Role: Pillar 1 - Core Protocol & Constants.
 Description: Centralized definitions for mode flags, coding thresholds, and profile defaults.
@@ -23,7 +23,7 @@ import numpy.typing as npt
 import os
 from typing import Optional
 
-__version__ = "8.3.2"
+__version__ = "1.0.0"
 
 __all__ = [
     'get_empirical_templates',
@@ -31,7 +31,7 @@ __all__ = [
     'BITPLANE_H_THRESHOLD', 'BITPLANE_HIT_RATE_THRESHOLD', 'BITPLANE_P90_THRESHOLD',
 ]
 
-# [v8.3.2] Lazy Initialization for Empirical Templates to reduce Import Overhead
+# [v1.0.0] Lazy Initialization for Empirical Templates to reduce Import Overhead
 # These templates represent the "statistical DNA" of natural images.
 _CACHED_TEMPLATES: Optional[npt.NDArray[np.uint64]] = None
 
@@ -71,7 +71,7 @@ def get_empirical_templates() -> npt.NDArray[np.uint64]:
     return _CACHED_TEMPLATES
 
 # --- 1. Protocol Constants (Header Flags) ---
-# [v8.3.2] Standardized Bitstream Protocol Flags.
+# [v1.0.0] Standardized Bitstream Protocol Flags.
 # These flags define the fundamental processing path for the entire image.
 
 # Image has an Alpha channel. Alpha is currently compressed using Zstd Level 1.
@@ -92,7 +92,7 @@ FLAG_COLOR_GSUB: int   = 0x20
 FLAG_BITPLANE: int     = 0x40
 
 # --- 2. Bitplane rANS Sensitivity Thresholds ---
-# [v8.3.2] Calibrated for Zero-Regression on Photographic Datasets.
+# [v1.0.0] Calibrated for Zero-Regression on Photographic Datasets.
 # 
 # Engineering Rationale:
 # - BITPLANE_H_THRESHOLD (3.2): Threshold where the overhead of 2-bit spatial context 

@@ -1,5 +1,5 @@
 """
-SPX v8.3.2 [System Suite]
+SPX v1.0.0 [System Suite]
 Module: spx_env
 Role: Environment Validator.
 
@@ -28,7 +28,7 @@ Supported Environment Variables:
     Sets the internal logger verbosity.
 """
 
-__version__ = "8.3.2"
+__version__ = "1.0.0"
 
 __all__ = ['verify_environment', 'REQUIRED_PACKAGES']
 

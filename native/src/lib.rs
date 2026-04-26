@@ -969,7 +969,7 @@ fn reconstruct_2d_channels<'py>(
 
 #[pyfunction]
 fn get_backend_info() -> PyResult<(String, String)> {
-    Ok(("v8.3.2-rans-rust".to_string(), env!("CARGO_PKG_VERSION").to_string()))
+    Ok(("v1.0.0-rans-rust".to_string(), env!("CARGO_PKG_VERSION").to_string()))
 }
 
 // ---------------------------------------------------------------------------

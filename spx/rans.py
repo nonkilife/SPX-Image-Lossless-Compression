@@ -1,5 +1,5 @@
 """
-SPX v8.3.2 [Stable Parallel Architecture]
+SPX v1.0.0 [Stable Parallel Architecture]
 Module: rans
 Role: Pillar 4 - Entropy Engine (Unified).
 
@@ -24,7 +24,7 @@ All heavy computation (PDF building, rANS encode/decode, serialization)
 is handled by the spx_rans Rust extension.
 """
 
-__version__ = "8.3.2"
+__version__ = "1.0.0"
 
 __all__ = [
     'L_LOWER',

@@ -1,5 +1,5 @@
 r"""
-SPX v8.3.2 [RCT Architecture]
+SPX v1.0.0 [RCT Architecture]
 Module: transform
 Role: Pillar 3 - Spatial Transforms.
 
@@ -27,7 +27,7 @@ graph TD
 ```
 """
 
-__version__ = "8.3.2"
+__version__ = "1.0.0"
 
 __all__ = ['restore_channels', 'reconstruct_2d_channels']
 

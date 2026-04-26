@@ -1,4 +1,4 @@
-# SPX Cache Consumption Audit (v8.3.2)
+# SPX Cache Consumption Audit (v1.0.0)
 
 This document outlines the memory footprint and CPU cache residency of the SPX codec's core components. Understanding this hierarchy is critical for optimizing throughput and avoiding cache thrashing.
 
@@ -13,7 +13,7 @@ The SPX architecture is designed to keep hot-path data within the L1 and L2 cach
 | **L3 (16 MB+)** | Image Channel Buffers (RGBA), Bitstream Payloads | 4 - 32 MB | **Stable** |
 
 > [!NOTE]
-> **Rust-Native Backend Impact**: The migration to a Rust-native backend in v8.3.2 eliminates Python VM overhead and JIT compilation spikes during the hot path. All memory operations within the core kernels are performed via direct pointer arithmetic on contiguous buffers, reducing memory-bound stalls.
+> **Rust-Native Backend Impact**: The migration to a Rust-native backend in v1.0.0 eliminates Python VM overhead and JIT compilation spikes during the hot path. All memory operations within the core kernels are performed via direct pointer arithmetic on contiguous buffers, reducing memory-bound stalls.
 
 ---
 
@@ -57,7 +57,7 @@ Current performance is limited by the number of lookup steps (3 steps for contex
 ### Negative Optimization: 3D Predictor LUT
 A $256^3$ 3D LUT would consume **16.7 MB**.
 *   **Warning**: This would displace the primary image buffers from L3 cache, leading to severe cache pollution and potentially *slower* execution despite fewer arithmetic instructions.
-*   **Decision**: Rejected in favor of the **Branchless Edge-Tuned MED** (v8.3.2), which achieves ~30% gain via arithmetic clamping without any additional memory overhead.
+*   **Decision**: Rejected in favor of the **Branchless Edge-Tuned MED** (v1.0.0), which achieves ~30% gain via arithmetic clamping without any additional memory overhead.
 
 ---
 

@@ -1,5 +1,5 @@
 """
-SPX v8.3.2 [Stable Parallel Architecture]
+SPX v1.0.0 [Stable Parallel Architecture]
 Module: rans_bitplane
 Role: Entropy coding combining N-shard gradient context with 2-bit spatial bitplane context.
 
@@ -24,7 +24,7 @@ Architecture & Engineering Rationale:
 Public API and bitstream format are unchanged.
 """
 
-__version__ = "8.3.2"
+__version__ = "1.0.0"
 
 __all__ = [
     'compress_bitplane_gray_sharded',

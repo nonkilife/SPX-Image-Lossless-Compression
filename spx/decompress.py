@@ -1,5 +1,5 @@
 """
-SPX v8.3.2 [Stable Parallel Architecture]
+SPX v1.0.0 [Stable Parallel Architecture]
 Module: spx_decompress
 Role: Decompressor Orchestrator.
 Description: Bit-perfect reconstruction engine utilizing the 4-pillar modular core.
@@ -17,7 +17,7 @@ graph TD
 ```
 """
 
-__version__ = "8.3.2"
+__version__ = "1.0.0"
 
 __all__ = [
     'decompress_spx',
@@ -58,7 +58,7 @@ def set_parallel_threads(n: int):
     logger.info(f"Parallel threads set to {n} (Rayon-controlled).")
 
 def clear_spx_workspaces():
-    """ [v8.3.2] Forces release of Thread-Local codec objects to prevent memory retention in server workers. """
+    """ [v1.0.0] Forces release of Thread-Local codec objects to prevent memory retention in server workers. """
     for attr in list(vars(thread_local_codec)):
         delattr(thread_local_codec, attr)
 
@@ -135,7 +135,7 @@ def inject_png_metadata(filepath: str, metadata_bytes: bytes) -> None:
 
 def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = None, optimize_png: bool = False) -> Tuple[npt.NDArray[np.uint8], float]:
     """
-    Main SPX Decompression Entry Point (v8.3.2 Stable).
+    Main SPX Decompression Entry Point (v1.0.0 Stable).
 
     Bit-perfect reverse orchestrator:
     1. Bitstream Unpack: Extracts headers, shard metadata, and rANS payloads.

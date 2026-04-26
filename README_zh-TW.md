@@ -1,6 +1,6 @@
 # SPX (Space Express)：高吞吐量無損影像壓縮引擎
 
-![Python Version](https://img.shields.io/badge/python-3.10%2B-blue) [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE) ![MSE](https://img.shields.io/badge/MSE-0.00000000-red) ![Version](https://img.shields.io/badge/version-8.3.2-orange) ![Speed](https://img.shields.io/badge/Speed-150_MB/s-brightgreen) ![Savings](https://img.shields.io/badge/Savings-28%25-blueviolet)
+![Python Version](https://img.shields.io/badge/python-3.10%2B-blue) [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE) ![MSE](https://img.shields.io/badge/MSE-0.00000000-red) ![Version](https://img.shields.io/badge/version-1.0.0-orange) ![Speed](https://img.shields.io/badge/Speed-150_MB/s-brightgreen) ![Savings](https://img.shields.io/badge/Savings-28%25-blueviolet)
 
 SPX (Space Express) 是一個採用 **Python/Rust 混合架構** 的無損影像壓縮引擎，具備 **熵分片 (Entropy Sharding)** 與 **Rayon 加速的 4 路交織 rANS (4-way Interleaved rANS)** 技術，旨在壓縮率與速度之間取得最佳平衡。本專案透過上下文分片與原生計算內核，實現了與現代標準相當的壓縮率，並將 Python 的靈活性與 Rust 的原生效能完美結合。
 
@@ -9,7 +9,7 @@ SPX (Space Express) 是一個採用 **Python/Rust 混合架構** 的無損影像
 ---
 
 ## 目錄
-1. [v8.3.2 效能快照](#v832-效能快照)
+1. [v1.0.0 效能快照](#v832-效能快照)
 2. [技術分析](#v832-技術分析-混合-rust-架構)
 3. [與既有格式比較](#2-與既有格式比較)
 4. [系統需求與安裝](#3-系統需求與安裝)
@@ -120,7 +120,7 @@ SPX 的核心設計原則：
 - **Windows**：自我包含 (從源碼構建時需要 Visual Studio C++ Build Tools)。
 
 > [!TIP]
-> **原生加速**：SPX v8.3.2 使用預編譯的 Rust 後端。與舊版本不同，第一次執行時 **零 JIT 延遲**。
+> **原生加速**：SPX v1.0.0 使用預編譯的 Rust 後端。與舊版本不同，第一次執行時 **零 JIT 延遲**。
 > **多執行緒**：並行處理在 Rust 後端內部使用 Rayon 庫自動處理。
 
 **安裝步驟**：
@@ -224,7 +224,7 @@ graph TD
     
     D --> E[BICC 偏差消除]
     E --> F[Rust: 支柱 4 rANS 引擎]
-    F --> G[v8.3.2 SPX 位元流輸出]
+    F --> G[v1.0.0 SPX 位元流輸出]
     
     subgraph "Rust 擴充 (spx_rans)"
         C1
@@ -324,7 +324,7 @@ python main.py benchmark C:\datasets\my_images -n 50
 
 ## 10. 專案背景
 
-SPX 專案是一個透過多階段研究週期開發的無損影像壓縮框架。本專案利用代理 AI **Claude Code** 與 **Antigravity** 來構建技術組件，包括 **四柱架構**、Universal-42 分片以及 4 路交織 rANS 熵編碼引擎。在 v8.3.2 中，核心計算內核從 Python/Numba 遷移到了 **原生 Rust 後端**，實現了顯著更高的吞吐量並減少了運行時 JIT 開銷。
+SPX 專案是一個透過多階段研究週期開發的無損影像壓縮框架。本專案利用代理 AI **Claude Code** 與 **Antigravity** 來構建技術組件，包括 **四柱架構**、Universal-42 分片以及 4 路交織 rANS 熵編碼引擎。在 v1.0.0 中，核心計算內核從 Python/Numba 遷移到了 **原生 Rust 後端**，實現了顯著更高的吞吐量並減少了運行時 JIT 開銷。
 
 此倡議作為 **AI 輔助工程 (AI-assisted engineering)** 的技術概念驗證，證明了自主代理能夠協助處理複雜的演算法優化與多語言系統整合。
 
@@ -334,4 +334,4 @@ SPX 專案是一個透過多階段研究週期開發的無損影像壓縮框架�
 
 ---
 
-**當前版本:** v8.3.2 | **授權:** Apache 2.0 | **MSE 目標:** 0.00000000
+**當前版本:** v1.0.0 | **授權:** Apache 2.0 | **MSE 目標:** 0.00000000

@@ -1,5 +1,5 @@
 """
-SPX v8.3.2-stable [4-Pillar Orchestrator]
+SPX v1.0.0-stable [4-Pillar Orchestrator]
 Module: compress
 Role: Compressor Orchestrator.
 
@@ -20,7 +20,7 @@ graph TD
 ```
 """
 
-__version__ = "8.3.2"
+__version__ = "1.0.0"
 
 __all__ = [
     'compress_spx',
@@ -57,7 +57,7 @@ env.verify_environment()
 # --- Logging: Core Framework ---
 logger: logging.Logger = logging.getLogger("spx.compress")
 
-# [v8.3.2] Module-level Thread-Local for compressor object reuse
+# [v1.0.0] Module-level Thread-Local for compressor object reuse
 
 def set_parallel_threads(n: int):
     """ 
@@ -95,7 +95,7 @@ def extract_png_metadata(filepath: str) -> bytes:
 
 def check_grayscale_robust(arr: npt.NDArray[np.uint8], img_mode: Optional[str] = None) -> bool:
     """ 
-    [v8.3.2] Optimized Grayscale Detection. 
+    [v1.0.0] Optimized Grayscale Detection. 
     Performs a fast sample-check before a full-array scan to minimize latency for RGB images.
     """
     if arr.ndim == 2 or img_mode in ('L', 'LA'): return True
@@ -143,7 +143,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
                   preloaded_arr: Optional[npt.NDArray[np.uint8]] = None,
                   use_bitplane: Optional[bool] = None) -> SpxResult:
     """ 
-    Main SPX Compression Entry Point (v8.3.2 Stable). 
+    Main SPX Compression Entry Point (v1.0.0 Stable). 
     
     Workflow:
     1. Load/Normalize Input: Ensure RGB/RGBA 8-bit format.

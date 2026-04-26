@@ -15,7 +15,7 @@ Engineering Rationale:
 3. Protocol Symmetry: The packing and unpacking logic are mirrored to ensure 
    that any change in the bitstream format is reflected on both sides of the codec.
 
-Bitstream Specification (SPX_CORE v8.3.2):
+Bitstream Specification (SPX_CORE v1.0.0):
 ------------------------------------------
 | Offset | Type   | Name           | Description                                  |
 |--------|--------|----------------|----------------------------------------------|
@@ -82,7 +82,7 @@ from .rans import (
     expand_pdf_tables
 )
  
-# [v8.3.2] Thread-Local for compressor/decompressor reuse.
+# [v1.0.0] Thread-Local for compressor/decompressor reuse.
 # Zstd objects are expensive to create; we cache them per thread to avoid overhead.
 thread_local_codec = threading.local()
 
@@ -135,7 +135,7 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
                      profile: ShardProfile = PROFILE_RGB) -> Tuple[bytes, npt.NDArray[np.uint8]]:
     """
     Serializes compressed data into the final SPX file block.
-    [v8.3.2] Optimized ShardBuffer Serialization.
+    [v1.0.0] Optimized ShardBuffer Serialization.
     
     Processing Steps:
     1. Resolve Flags: Combine user intent into bitstream flags.
@@ -151,7 +151,7 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
     n_channels = 1 if is_grayscale else 3
     
     shard_counts = sbuffer.counts
-    # [v8.3.2] Automatic Width Extraction from ShardBuffer Stats (Pre-normalized)
+    # [v1.0.0] Automatic Width Extraction from ShardBuffer Stats (Pre-normalized)
     shard_widths = extract_srb_metadata(sbuffer.stats)
 
     # 1. SRB Block: Widths and Modes (Unified)
@@ -223,7 +223,7 @@ def pack_bitstream(h: int, w: int, is_rgba: bool, is_grayscale: bool, use_gsub: 
 def unpack_bitstream(compressed_data: Union[bytes, BinaryIO], profile: ShardProfile = PROFILE_RGB) -> SpxUnpackResult:
     """
     Deserializes the SPX bitstream format.
-    [v8.3.2] Unified Transport Layer (Protocol Symmetry).
+    [v1.0.0] Unified Transport Layer (Protocol Symmetry).
     
     This function performs a single, large-scale parallel decode call to the Rust backend, 
     maximizing core utilization during image loading.
