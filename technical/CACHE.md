@@ -8,9 +8,12 @@ The SPX architecture is designed to keep hot-path data within the L1 and L2 cach
 
 | Cache Level | Primary Residents | Footprint (Est.) | Status |
 | :--- | :--- | :--- | :--- |
-| **L1 (32-64 KB)** | rANS Models, ZigZag LUTs, Stack Variables | ~10 KB | **Excellent** |
-| **L2 (512 KB - 1 MB)** | Spatial LUT (`s_lut`), Profiling Histograms, Row Pointers | ~600 KB | **Optimized** |
-| **L3 (16 MB+)** | Image Channel Buffers (RGBA), Bitstream Buffers | 4 - 12 MB | **Stable** |
+| **L1 (32-64 KB)** | rANS Models, Bitplane Contexts (2.6K), ZigZag LUTs | ~16 KB | **Excellent** |
+| **L2 (512 KB - 1 MB)** | Spatial LUT (`s_lut`), Profiling Histograms, Shard Offsets | ~600 KB | **Optimized** |
+| **L3 (16 MB+)** | Image Channel Buffers (RGBA), Bitstream Payloads | 4 - 32 MB | **Stable** |
+
+> [!NOTE]
+> **Rust-Native Backend Impact**: The migration to a Rust-native backend in v8.3.2 eliminates Python VM overhead and JIT compilation spikes during the hot path. All memory operations within the core kernels are performed via direct pointer arithmetic on contiguous buffers, reducing memory-bound stalls.
 
 ---
 
@@ -30,11 +33,10 @@ Static lookup tables used for residual normalization.
 *   **Residency**: L1 Cache.
 
 ### C. Entropy Coding (rANS)
-Models are swapped per shard but fit entirely in L1.
-*   **`slot_lookup`** (4096 entries): **4 KB**
-*   **`cum_freqs` + `symbol_freqs`**: **4 KB**
-*   **Total per Model**: **8 KB**
-*   **Residency**: L1 Cache (Core hot path).
+Models are swapped per shard but fit within L1.
+*   **Standard rANS**: `slot_lookup` (4096) + `symbol_freqs` = **8 KB**
+*   **Bitplane rANS**: 2,688-way spatial context model ($42 \times 64$) = **~10 KB**
+*   **Residency**: L1 Cache (Core execution loop).
 
 ### D. Intermediate Working Buffers
 Allocated dynamically during the encoding profiling pass.
@@ -59,6 +61,9 @@ A $256^3$ 3D LUT would consume **16.7 MB**.
 
 ---
 
-## 4. Current Bottleneck
-The system has transitioned from being **Instruction-Bound** (due to branches) to being **Dependency-Bound**. 
-The primary bottleneck in v8.3.2 is the serial dependency chain of rANS state updates. While 4-way interleaving mitigates this, the throughput is ultimately capped by the CPU's ability to resolve the state-to-state recurrence within the entropy core.
+## 4. Performance Constraints
+
+With the removal of JIT latency and branch-heavy logic, the system has transitioned from being **Instruction-Bound** to being **Dependency-Bound**.
+
+*   **Instruction-Level Parallelism (ILP)**: 4-way interleaved rANS mitigates the serial dependency of the rANS state update, but throughput remains limited by the CPU's ability to resolve the recurrence within the entropy core.
+*   **Memory Safety**: Rust-native execution ensures strict boundary checks with minimal performance penalty, providing a stable execution environment compared to dynamic Python/Numba environments.

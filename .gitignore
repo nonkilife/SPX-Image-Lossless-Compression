@@ -7,11 +7,13 @@
 !core/**
 !technical/
 !technical/**
+!native/
+!native/**
 
 # Whitelist files
 !README.md
 !main.py
-!LICENSE.txt
+!LICENSE
 !test.bat
 !.gitignore
 
@@ -24,3 +26,6 @@ __pycache__/
 .claude/
 .venv/
 .env
+
+# Re-exclude Rust junk (except what's needed for build)
+native/target/

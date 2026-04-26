@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "spx_rans"
+version = "0.1.0"
+description = "High-performance rANS entropy coding backend for SPX"
+requires-python = ">=3.7"
+dependencies = []
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+module-name = "spx_rans"
