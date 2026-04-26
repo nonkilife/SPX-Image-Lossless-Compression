@@ -317,16 +317,13 @@ To verify the benchmarks or test the engine with standard datasets, you can down
 
 - **DIV2K Data Set - Train & Validation**: [ETH Zurich CVL](https://data.vision.ee.ethz.ch/cvl/DIV2K/)
 
-- **Kodak Data Set**: [Kaggle - Kodak Dataset]
-(https://www.kaggle.com/datasets/sherylmehta/kodak-dataset/data)
+- **Kodak Data Set**: [Kaggle - Kodak Dataset](https://www.kaggle.com/datasets/sherylmehta/kodak-dataset/data)
 
-- **Clic Data Set**: [Kaggle - CLIC Dataset]
-(https://www.kaggle.com/datasets/mustafaalkhafaji95/clic-dataset?resource=download)
+- **Clic Data Set**: [Kaggle - CLIC Dataset](https://www.kaggle.com/datasets/mustafaalkhafaji95/clic-dataset?resource=download)
 
 - **Tecnick Data Set**: [SourceForge - TestImages](https://sourceforge.net/projects/testimages/files/SAMPLING/)
 
-- **Waterloo Data Set**: [Image Compression Info]
-(https://imagecompression.info/test_images/)
+- **Waterloo Data Set**: [Image Compression Info](https://imagecompression.info/test_images/)
 
 ---
 

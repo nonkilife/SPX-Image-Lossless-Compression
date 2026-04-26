@@ -352,11 +352,12 @@ Test Date: 2026/04/26
 
 ---
 
-## 2. Technical Observations
+### 2. Technical Observations
 
-- **Encoding Dominance**: SPX v8.2 exhibits a **103x parallel encoding lead** over WebP (m=6) in RGB and a **63x lead** in Grayscale (Waterloo). It remains **6x–8x faster** than JXL (Effort 7) across all industrial datasets.
-- **Industrial Stability**: Validated on 2,000+ images (CLIC, DIV2K, Waterloo), SPX maintains a stable **25-30% saving vs PNG** with guaranteed bit-perfect reconstruction (MSE = 0.000000).
-- **Core Efficiency**: The architecture provides high per-core density, achieving **54.67 MB/s decompression** in pure-Python/JIT environments (Waterloo Gray), positioning it as a top-tier contender for real-time archival and high-speed delivery pipelines.
+- **Encoding Performance**: SPX v8.3.2 exhibits a **103x parallel encoding lead** over WebP (m=6) in RGB and a **63x lead** in Grayscale (Waterloo). It remains **6x–8x faster** than JXL (Effort 7) across industrial datasets.
+- **Industrial Stability**: Validated on 2,000+ images (CLIC, DIV2K, Waterloo), SPX maintains a stable **25-30% saving vs PNG** with bit-perfect reconstruction (MSE = 0.000000).
+- **Core Efficiency**: The architecture achieving **62.63 MB/s decompression** in Rust-native environments (Waterloo Gray), suitable for real-time archival and high-speed delivery pipelines.
+
 
 ## 3. Dataset Sources
 
@@ -364,13 +365,10 @@ To verify the benchmarks or test the engine with standard datasets, you can down
 
 - **DIV2K Data Set - Train & Validation**: [ETH Zurich CVL](https://data.vision.ee.ethz.ch/cvl/DIV2K/)
 
-- **Kodak Data Set**: [Kaggle - Kodak Dataset]
-(https://www.kaggle.com/datasets/sherylmehta/kodak-dataset/data)
+- **Kodak Data Set**: [Kaggle - Kodak Dataset](https://www.kaggle.com/datasets/sherylmehta/kodak-dataset/data)
 
-- **Clic Data Set**: [Kaggle - CLIC Dataset]
-(https://www.kaggle.com/datasets/mustafaalkhafaji95/clic-dataset?resource=download)
+- **Clic Data Set**: [Kaggle - CLIC Dataset](https://www.kaggle.com/datasets/mustafaalkhafaji95/clic-dataset?resource=download)
 
 - **Tecnick Data Set**: [SourceForge - TestImages](https://sourceforge.net/projects/testimages/files/SAMPLING/)
 
-- **Waterloo Data Set**: [Image Compression Info]
-(https://imagecompression.info/test_images/)
+- **Waterloo Data Set**: [Image Compression Info](https://imagecompression.info/test_images/)
