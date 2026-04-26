@@ -109,29 +109,33 @@ The following data characterizes the throughput and compression efficiency acros
 ## 3. System Requirements & Installation
 
 - **Python Version**: 3.10+ (3.11+ recommended)
-- **Python Packages**:
-  - `numpy>=1.22.0`, `zstandard>=0.19.0`, `Pillow>=9.0.0`, `pytest>=7.0.0`
-- **Native Extension**:
-  - `spx_rans` (Rust-native backend)
-- **Development Dependencies**:
-  - `maturin>=1.0.0` (for bridging Rust and Python)
-  - **Rust Toolchain**: `cargo`, `rustc` (required to build the native extension from source)
-- **System Core (Linux)**:
-  - Requires `zlib` and `libpng` headers for **Pillow** and **Zstd** I/O (`sudo apt install build-essential zlib1g-dev libpng-dev`).
-- **Windows**: Self-contained (requires Visual Studio C++ Build Tools if building from source).
-
-> [!TIP]
-> **Native Acceleration**: SPX v1.0.0 utilizes a pre-compiled Rust backend. Unlike previous versions, there is **zero JIT latency** during the first run.
-> **Multithreading**: Parallelism is handled internally by the Rust backend using the Rayon library.
+- **Platforms**: Windows x64, Linux x64/aarch64, macOS x86_64/arm64 (pre-built wheels)
 
 **Installation**:
 ```bash
-# 1. Install Python dependencies
-pip install numpy>=1.22.0 zstandard>=0.19.0 Pillow>=9.0.0 pytest>=7.0.0
-
-# 2. Build/Install native extension
-cd native && maturin develop --release
+pip install spx-codec
 ```
+
+All dependencies (`numpy`, `zstandard`, `Pillow`) and the Rust backend are installed automatically.
+
+> [!TIP]
+> **Native Acceleration**: SPX utilizes a pre-compiled Rust backend — zero JIT latency on first run.
+> **Multithreading**: Parallelism is handled internally via the Rayon library.
+
+<details>
+<summary><b>Building from source</b> (contributors / unsupported platforms)</summary>
+
+Requires **Rust toolchain** (`cargo`, `rustc`) and **maturin**:
+
+```bash
+git clone https://github.com/nonkilife/SPX-Image-Lossless-Compression.git
+cd SPX-Image-Lossless-Compression
+pip install maturin
+maturin develop --release
+```
+
+Linux also requires: `sudo apt install build-essential zlib1g-dev libpng-dev`
+</details>
 
 ---
 
@@ -140,21 +144,21 @@ cd native && maturin develop --release
 ### 4.1 Command Line Interface (CLI)
 ```bash
 # Compress
-python main.py compress input.png --optimize
+spx compress input.png --optimize
 
 # Decompress
-python main.py decompress input.spx --output restored.png
+spx decompress input.spx --output restored.png
 
 # Benchmark (SPX only)
-python main.py benchmark ./path/to/images -n 20 -w 8
+spx benchmark ./path/to/images -n 20 -w 8
 
 # Benchmark (Compare SPX vs WebP vs JXL)
-python main.py benchmark ./path/to/images --codec bench -n 20
+spx benchmark ./path/to/images --codec bench -n 20
 ```
 
 ### 4.2 Python API
 ```python
-from core import compress_spx, decompress_spx
+from spx import compress_spx, decompress_spx
 
 # 1. Compress Image (RGB/RGBA)
 result = compress_spx("input.png", "output.spx", use_bitplane=False)
