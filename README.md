@@ -247,7 +247,7 @@ Pillar 4 (Stateless Sharding) allows adding new segmentation strategies without 
 
 ## 6. Performance Benchmarking (v8.x Unified Hub)
  
- The current engine is benchmarked using the **SPX Unified Hub**, providing objective head-to-head comparisons against WebP (Method 6) and JPEG-XL (Effort 7).
+ The current engine is benchmarked using the **SPX Unified Hub**, providing comparative analysis against WebP (Method 6) and JPEG-XL (Effort 7).
 
 ### 6.1 Comprehensive Metrics
   Detailed performance data, including compression savings, throughput (MB/s), and competitive win rates, are maintained in [technical/BENCHMARK.md](./technical/BENCHMARK.md).
@@ -256,7 +256,6 @@ Pillar 4 (Stateless Sharding) allows adding new segmentation strategies without 
 To ensure reproducibility, the competitive baselines are locked to the following versions:
 - **WebP (Method 6)**: `cwebp` v1.3.2 (libwebp v1.3.2).
 - **JPEG-XL (Effort 7)**: `cjxl` v0.8.2 (libjxl v0.8.2).
-- **AVIF**: `avifenc` v1.0.1 (aom v3.7.0).
 - **PNG (Optimize)**: `zopflipng` v1.0.3.
 
 ### 6.3 Usage
@@ -268,7 +267,7 @@ python main.py benchmark C:\datasets\my_images -n 50
 .\test bench ./local_folder -n 50
 ```
 
-### 6.3 Technical Control Arguments
+### 6.4 Technical Control Arguments
 Common arguments supported by the benchmarking suite:
 
 | Argument | Full Name | Description | Example |
@@ -278,6 +277,7 @@ Common arguments supported by the benchmarking suite:
 | **-w** | `--workers` | Manually sets the number of CPU cores. | `-w 8` |
 | **--codec** | `--codec` | Selects codec: `spx`, `webp`, `jxl`, `bench`. | `--codec bench` |
 | **--reclassify**| `--reclassify`| Categorize images into Easy/Hard/Hell folders. | `--reclassify` |
+| **--bitplane** | `--bitplane` | Force the Bitplane engine for the benchmark. | `--bitplane` |
 | **--build** | `--build` | Assemble dataset: `PATH E H HELL`. | `--build my_set 10 10 5` |
 
 #### **Advanced CLI Examples**
@@ -296,11 +296,11 @@ python main.py benchmark --build balanced_set 10 10 5
 
 ---
 
-## 7. Official Benchmarks (CLIC / DIV2K / TECNICK / KODAK)
+## 7. Comparative Benchmarks (CLIC / DIV2K / TECNICK / KODAK)
 
-Detailed performance metrics and official benchmarks comparing SPX against WebP and JPEG-XL across industrial datasets are available in the independent benchmark document:
+Detailed performance metrics and comparative benchmarks comparing SPX against WebP and JPEG-XL across industrial datasets are available in the independent benchmark document:
 
-👉 **[View Official Benchmarks (BENCHMARK.md)](./technical/BENCHMARK.md)**
+👉 **[View Comparative Benchmarks (BENCHMARK.md)](./technical/BENCHMARK.md)**
 
 ---
 
@@ -309,7 +309,7 @@ Detailed performance metrics and official benchmarks comparing SPX against WebP 
 - **Bit Depth**: Currently limited to **8-bit** per channel.
 - **Color Spaces**: Optimized for **RGB**. No support for CMYK or YCbCr subsampling (G-sub transform is native to RGB).
 - **Alpha Channel**: While RGBA is supported, the Alpha channel currently utilizes traditional Zstd compression (Level 1) rather than the high-performance rANS sharding engine used for RGB. Optimization for constant alpha (solidity detection) is a planned future improvement.
-- **Threading**: Single-threaded core; parallelization achieved via image-level batching.
+- **Threading**: The Python orchestration layer is single-threaded; however, the Rust-native backend utilizes internal data-parallelism via **Rayon** for hot-path kernels (RCT, Sharding, rANS).
 
 ## 9. Dataset Sources
 
