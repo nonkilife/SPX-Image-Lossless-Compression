@@ -2,7 +2,7 @@
 SPX v8.3.2 [System Suite]
 Module: spx_env
 Role: Environment Validator.
-Description: Dependency and JIT-status verification for the SPX 4-pillar engine.
+Description: Dependency verification for the SPX 4-pillar engine.
 
 Supported Environment Variables:
 ------------------------------
@@ -10,13 +10,6 @@ Supported Environment Variables:
 - SPX_DISABLE_TEMPLATES: [0|1] Forces Mode 0 (Custom PDF) for all shards, bypassing empirical templates.
 - SPX_FORCE_BITPLANE: [0|1] Forces the Bitplane rANS engine regardless of entropy gating.
 - SPX_LOG_LEVEL: [DEBUG|INFO|WARNING|ERROR] Sets the internal logger verbosity.
-
-JIT Caching Strategy:
---------------------
-SPX utilizes Numba's `cache=True` for all performance-critical kernels. 
-- Fast Onboarding: First-run compilation takes ~20s; subsequent runs are near-instant.
-- Cache Location: Typically `__pycache__` within the core folder.
-- Versioning: JIT cache is automatically invalidated if the source code changes.
 """
 
 __version__ = "8.3.2"
@@ -38,7 +31,6 @@ if not logger.handlers:
 # [(Package Name, Requirement Version, Description)]
 REQUIRED_PACKAGES: List[Tuple[str, str, str]] = [
     ("numpy", "1.22.0", "Numerical array processing"),
-    ("numba", "0.57.0", "JIT compilation and acceleration"),
     ("zstandard", "0.19.0", "Entropy coding and header compression"),
     ("Pillow", "9.0.0", "Image I/O support")
 ]
@@ -72,17 +64,8 @@ def verify_environment() -> bool:
             failed = True
             
     if failed:
-        logger.error("Environment verification failed. Please run: pip install -U numpy numba zstandard Pillow")
+        logger.error("Environment verification failed. Please run: pip install -U numpy zstandard Pillow")
         sys.exit(1)
-
-    try:
-        import numba
-        if not numba.config.DISABLE_JIT:
-            logger.debug("Numba JIT is enabled and functional.")
-        else:
-            logger.warning("Numba JIT is DISABLED. Performance will be severely impacted.")
-    except Exception as e:
-        logger.error(f"Numba configuration check failed: {e}")
 
     _verified = True
     return True

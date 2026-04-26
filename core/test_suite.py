@@ -36,7 +36,6 @@ import shutil
 import random
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
-import numba
 from io import BytesIO
 from typing import List, Dict, Tuple, Any, Optional
 
@@ -111,11 +110,6 @@ def calculate_mse(arr1: npt.NDArray, arr2: npt.NDArray) -> float:
 # =============================================================================
 
 def spx_worker(path: str, **kwargs) -> Dict[str, Any]:
-    # [v8.3.1] External Parallelism Optimization: 
-    # Force single-threaded internal execution to allow 1-image-per-core scalability
-    # when processing multiple images in parallel.
-    numba.set_num_threads(1)
-    
     filename = os.path.basename(path)
     try:
         if path == "__WARMUP__":
@@ -552,6 +546,10 @@ def main() -> None:
         "kodak": "./data/Kodak",
         "trgb": "./data/Tecnick_RGB",
         "tgray": "./data/Tecnick_Gray",
+        "wrgb": "./data/Waterloo_RGB",
+        "waterloo_rgb": "./data/Waterloo_RGB",
+        "wgray": "./data/Waterloo_Gray",
+        "waterloo_gray": "./data/Waterloo_Gray",
         "train": "./data/DIV2K_Train",
         "div2k_train": "./data/DIV2K_Train",
         "full": "./data/DIV2K_Train",

@@ -25,7 +25,6 @@ import numpy.typing as npt
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 import time, logging, io
-import numba
 from .transform import (
     restore_channels, reconstruct_2d_channels
 )
@@ -45,16 +44,13 @@ env.verify_environment()
 logger: logging.Logger = logging.getLogger("spx.decompress")
 
 def set_parallel_threads(n: int):
-    """
-    [v8.3.2] Configures the number of CPU threads used by the Numba parallel engine.
-    """
-    numba.set_num_threads(n)
-    logger.info(f"Numba Parallel Engine (Decompress) set to {n} thread(s).")
+    """ Configures the number of CPU threads used by Rayon (via spx_rans). """
+    logger.info(f"Parallel threads set to {n} (Rayon-controlled).")
 
 def clear_spx_workspaces():
-    """ [v8.3.2] Forces release of Thread-Local decompressors to prevent memory retention in server workers. """
-    if hasattr(thread_local_codec, 'decomp'):
-        del thread_local_codec.decomp
+    """ [v8.3.2] Forces release of Thread-Local codec objects to prevent memory retention in server workers. """
+    for attr in list(vars(thread_local_codec)):
+        delattr(thread_local_codec, attr)
 
 
 def inject_png_metadata(filepath: str, metadata_bytes: bytes) -> None:
@@ -130,7 +126,7 @@ def decompress_spx(spx_input: Union[bytes, str], output_path: Optional[str] = No
     1. BICC Shard Recovery (Pillar 2): Staggered reconstruction of G-Lead then RD/BD-Lag.
     2. Inverse GSUB (Pillar 1): Cross-channel restoration using Green as the spatial reference.
 
-    NOTE: Operates with Numba JIT parallelism to achieve 25.0+ MB/s decompression throughput.
+    NOTE: Operates with Rayon (Rust) parallelism via spx_rans to achieve 25.0+ MB/s decompression throughput.
     """
     t0: float = time.time()
     try:

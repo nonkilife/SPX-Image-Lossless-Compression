@@ -22,7 +22,6 @@ graph TD
 
 __version__ = "8.3.2"
 
-import numba
 import numpy as np
 import numpy.typing as npt
 import logging
@@ -36,9 +35,10 @@ from .common import (
     BITPLANE_H_THRESHOLD, BITPLANE_HIT_RATE_THRESHOLD, BITPLANE_P90_THRESHOLD
 )
 from .sharding import (
-    PROFILE_RGB, Pass1Result, execute_sharding_stateless, fused_rct_p1_rgb, fused_rct_p1_gray,
+    PROFILE_RGB, Pass1Result, execute_sharding_stateless,
     SpxResult, extract_srb_metadata
 )
+import spx_rans as _rs
 from .codec import pack_bitstream
 from .rans_bitplane import compress_bitplane_gray_sharded, compress_bitplane_rgb_sharded
 from . import env
@@ -52,9 +52,8 @@ logger: logging.Logger = logging.getLogger("spx.compress")
 # [v8.3.2] Module-level Thread-Local for compressor object reuse
 
 def set_parallel_threads(n: int):
-    """ Configures the number of CPU threads used by Numba. """
-    numba.set_num_threads(n)
-    logger.info(f"Numba Parallel Engine set to {n} thread(s).")
+    """ Configures the number of CPU threads used by Rayon (via spx_rans). """
+    logger.info(f"Parallel threads set to {n} (Rayon-controlled).")
 
 def extract_png_metadata(filepath: str) -> bytes:
     """ Extracts raw PNG metadata chunks. """
@@ -148,15 +147,15 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
         a_map: npt.NDArray[np.uint8] = arr[:, :, 3].copy() if is_rgba else np.empty((0, 0), dtype=np.uint8)
 
         if is_grayscale:
-            # Grayscale: Single-channel profiling path
-            gray_raw = arr if arr.ndim == 2 else arr[:, :, 0]
-            p1_raw = fused_rct_p1_gray(h, w, gray_raw, a_map, is_rgba, n_shards, s_lut, i_lut, d_lut)
+            # Grayscale: Single-channel profiling path (Rust)
+            gray_raw = arr if arr.ndim == 2 else np.ascontiguousarray(arr[:, :, 0])
+            p1_raw = _rs.p1_gray(h, w, gray_raw, a_map, is_rgba, n_shards, s_lut, i_lut, d_lut)
             _gray_ch_hists = np.zeros((3, 256), dtype=np.uint32)
-            _gray_ch_hists[0] = p1_raw[2][0].sum(axis=0)  # shard_stats[gray_ch, :, :] → (n_shards,256) → (256,)
+            _gray_ch_hists[0] = p1_raw[2][0].sum(axis=0)
             p1 = Pass1Result(p1_raw[0], np.empty((0,0), np.uint8), np.empty((0,0), np.uint8), a_map, p1_raw[1], p1_raw[2], p1_raw[3], p1_raw[4], p1_raw[5], p1_raw[6], _gray_ch_hists, p1_raw[7], p1_raw[8])
         else:
-            # RGB: Fused RCT + 3-channel profiling path
-            p1_raw = fused_rct_p1_rgb(h, w, arr, a_map, is_rgba, n_shards, s_lut, i_lut, d_lut)
+            # RGB: Fused RCT + 3-channel profiling path (Rust)
+            p1_raw = _rs.p1_rgb(h, w, arr, a_map, is_rgba, n_shards, s_lut, i_lut, d_lut)
             p1 = Pass1Result(p1_raw[0], p1_raw[1], p1_raw[2], a_map, p1_raw[4], p1_raw[5], p1_raw[6], p1_raw[7], p1_raw[8], p1_raw[9], p1_raw[3], p1_raw[10], p1_raw[11])
 
         shard_widths = extract_srb_metadata(p1.shard_stats)

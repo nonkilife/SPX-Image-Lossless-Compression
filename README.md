@@ -1,6 +1,6 @@
 # SPX: Context-Sensitive Data Engine
 
-![Python Version](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-Apache-2.0-green) ![MSE](https://img.shields.io/badge/MSE-0.00000000-red) ![Version](https://img.shields.io/badge/version-8.3.2-orange)
+![Python Version](https://img.shields.io/badge/python-3.10%2B-blue) ![License](https://img.shields.io/badge/license-Apache-2.0-green) ![MSE](https://img.shields.io/badge/MSE-0.00000000-red) ![Version](https://img.shields.io/badge/version-8.3.2-orange) ![Speed](https://img.shields.io/badge/Speed-100_MB/s-brightgreen) ![Savings](https://img.shields.io/badge/Savings-28%25-blueviolet)
 
 An implementation of lossless image compression using **Entropy Sharding** and **4-way Interleaved rANS**. This project serves as a technical demonstration of achieving competitive compression performance through contextual sharding and statistical modeling rather than high-complexity spatial prediction systems.
 
@@ -15,11 +15,15 @@ The following data characterizes the throughput and compression efficiency acros
 
 | Dataset | Type | SPX BPP | **Savings (vs PNG)** | **SPX Enc Speed** | WebP (M6) Speed | JXL (E7) Speed |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Kodak** | RGB | **9.83** | **-24.66 %** | **26.50 MB/s** | 0.35 MB/s | 6.51 MB/s |
-| **CLIC '25** | RGB | **8.03** | **-28.52 %** | **29.46 MB/s** | 1.10 MB/s | 5.35 MB/s |
-| **DIV2K Val**| 2K | **9.20** | **-27.46 %** | **42.36 MB/s** | 1.36 MB/s | 6.08 MB/s |
-| **Tecnick** | Gray | **1.68** | **-27.62 %** | **7.19 MB/s** | 0.28 MB/s | 2.19 MB/s |
-| **Waterloo** | Gray | **3.44** | **n/a** | **45.44 MB/s** | n/a | 12.10 MB/s |
+| **Kodak** | RGB | **9.79** | **-24.64 %** | **32.69 MB/s** | 0.32 MB/s | 5.40 MB/s |
+| **CLIC '25** | RGB | **8.06** | **-28.33 %** | **45.27 MB/s** | 1.15 MB/s | 5.27 MB/s |
+| **CLIC '21** | RGB | **8.46** | **-28.03 %** | **50.38 MB/s** | 0.97 MB/s | 5.62 MB/s |
+| **DIV2K Val**| 2K | **9.22** | **-27.32 %** | **49.02 MB/s** | 1.28 MB/s | 5.83 MB/s |
+| **DIV2K Train**| 2K | **9.35** | **-26.22 %** | **45.62 MB/s** | 1.38 MB/s | 6.15 MB/s |
+| **Tecnick** | RGB | **5.18** | **-25.90 %** | **23.34 MB/s** | 0.66 MB/s | 4.56 MB/s |
+| **Tecnick** | Gray | **1.68** | **-27.63 %** | **12.41 MB/s** | 0.27 MB/s | 5.05 MB/s |
+| **Waterloo** | RGB | **10.51** | **n/a** | **98.94 MB/s** | 2.17 MB/s | 10.79 MB/s |
+| **Waterloo** | Gray | **3.44** | **n/a** | **33.66 MB/s** | 0.53 MB/s | 11.82 MB/s |
 
 > [!NOTE]
 > **Hardware Benchmark Environment**:
@@ -53,7 +57,7 @@ The following data characterizes the throughput and compression efficiency acros
 
 - **Compression**: **~25-30% smaller** than standard PNG; competitive with WebP (m6) on high-resolution photography.
 - **Efficiency**: Stateless sharding provides a balanced profile for both high-frequency noise and low-entropy gradients.
-- **Decoding**: Throughput (~35–45 MB/s) on a single thread; scalable up to 150+ MB/s via multi-core batching.
+- **Decoding**: Throughput (~55–100 MB/s) on a single thread; scalable up to 250+ MB/s via multi-core batching.
 
 ---
 
