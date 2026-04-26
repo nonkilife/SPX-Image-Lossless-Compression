@@ -28,6 +28,17 @@ from typing import Tuple, Optional
 
 __version__ = "8.3.2"
 
+__all__ = [
+    'SpxResult',
+    'ShardProfile',
+    'Pass1Result',
+    'ShardBuffer',
+    'PROFILE_RGB',
+    'extract_srb_metadata',
+    'execute_sharding_stateless',
+    'reconstruct_shards_rgb',
+]
+
 # --- 1. Data Structures ---
 
 @dataclass

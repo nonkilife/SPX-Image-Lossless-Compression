@@ -13,7 +13,7 @@ Architecture & Engineering Rationale:
    on many-core systems. This suite distributes the measured wall-clock time 
    proportionally based on core-load fractions to provide an accurate "Per-Image" 
    latency that reflects real-world system throughput.
-2. Warmup Phase: To eliminate JIT compilation spikes (Numba/Rust) and library 
+2. Warmup Phase: To eliminate JIT compilation spikes (Rust) and library
    initialization overhead from the final metrics, a dedicated single-threaded 
    warmup pass is executed before the main benchmark.
 3. Win Counting: Beyond aggregate averages, the suite tracks "Wins" at the 
@@ -53,8 +53,7 @@ import csv
 import datetime
 import shutil
 import random
-import concurrent.futures
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 from typing import List, Dict, Tuple, Any, Optional
 
@@ -481,7 +480,7 @@ def run_codec_benchmark(codec_name: str, worker_fn: Any, files: List[str], worke
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {executor.submit(worker_fn, p, **kwargs): p for p in files}
             idx = 0
-            for f in concurrent.futures.as_completed(futures):
+            for f in as_completed(futures):
                 idx += 1
                 res = f.result()
                 reporter.record(res)

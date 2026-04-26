@@ -19,6 +19,13 @@ graph TD
 
 __version__ = "8.3.2"
 
+__all__ = [
+    'decompress_spx',
+    'set_parallel_threads',
+    'clear_spx_workspaces',
+    'inject_png_metadata',
+]
+
 import traceback
 import numpy as np
 import numpy.typing as npt

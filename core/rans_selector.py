@@ -68,16 +68,19 @@ __version__ = "8.3.2"
 import os
 import numpy as np
 import numpy.typing as npt
+from typing import Tuple
 
 import spx_rans as _rs
 from .common import get_empirical_templates
+
+__all__ = ['decide_shard_mode']
 
 
 def decide_shard_mode(
     counts: npt.NDArray[np.uint64],
     width: int,
     header_penalty_bits: float = 120.0,
-) -> tuple[int, npt.NDArray[np.uint64]]:
+) -> Tuple[int, npt.NDArray[np.uint64]]:
     """
     Heuristic decision engine delegating to the Rust native backend.
     

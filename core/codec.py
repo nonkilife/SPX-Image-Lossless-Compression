@@ -54,6 +54,15 @@ graph TD
 
 __version__ = "8.3.2"
 
+__all__ = [
+    'pack_bitstream',
+    'unpack_bitstream',
+    'SpxUnpackResult',
+    'get_zstd_comp',
+    'get_zstd_decomp',
+    'thread_local_codec',
+]
+
 import numpy as np
 import numpy.typing as npt
 import zstandard as zstd

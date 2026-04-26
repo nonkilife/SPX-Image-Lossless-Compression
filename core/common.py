@@ -25,6 +25,12 @@ from typing import Optional
 
 __version__ = "8.3.2"
 
+__all__ = [
+    'get_empirical_templates',
+    'FLAG_RGBA', 'FLAG_GRAYSCALE', 'FLAG_COLOR_GSUB', 'FLAG_BITPLANE',
+    'BITPLANE_H_THRESHOLD', 'BITPLANE_HIT_RATE_THRESHOLD', 'BITPLANE_P90_THRESHOLD',
+]
+
 # [v8.3.2] Lazy Initialization for Empirical Templates to reduce Import Overhead
 # These templates represent the "statistical DNA" of natural images.
 _CACHED_TEMPLATES: Optional[npt.NDArray[np.uint64]] = None

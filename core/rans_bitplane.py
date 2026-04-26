@@ -21,11 +21,19 @@ Architecture & Engineering Rationale:
    of the three channels (G, R, B) is performed concurrently using a 
    ThreadPoolExecutor that releases the Python GIL during the native call.
 
-Phase 2 Rust migration: all hot-path kernels replaced by spx_rans Rust extension.
 Public API and bitstream format are unchanged.
 """
 
 __version__ = "8.3.2"
+
+__all__ = [
+    'compress_bitplane_gray_sharded',
+    'compress_bitplane_rgb_sharded',
+    'decompress_bitplane_gray_sharded',
+    'decompress_bitplane_rgb_sharded',
+    'N_SPATIAL',
+    'BITPLANE_MAGIC',
+]
 
 import numpy as np
 import numpy.typing as npt

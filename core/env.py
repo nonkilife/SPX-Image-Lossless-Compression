@@ -30,6 +30,8 @@ Supported Environment Variables:
 
 __version__ = "8.3.2"
 
+__all__ = ['verify_environment', 'REQUIRED_PACKAGES']
+
 import sys
 import logging
 import importlib.metadata

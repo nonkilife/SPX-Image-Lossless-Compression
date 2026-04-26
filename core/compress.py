@@ -22,10 +22,18 @@ graph TD
 
 __version__ = "8.3.2"
 
+__all__ = [
+    'compress_spx',
+    'set_parallel_threads',
+    'extract_png_metadata',
+    'check_grayscale_robust',
+]
+
 import numpy as np
 import numpy.typing as npt
 import logging
-import os, time
+import os
+import time
 from typing import Optional
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -202,6 +210,7 @@ def compress_spx(img_path: Optional[str], output_path: Optional[str] = None,
 
         selected_mode = "GRAY" if is_grayscale else "RGB"
         final_payload: bytes = b""
+        # Populated only in the sharded path; stays zero for bitplane images (no per-shard PDF modes).
         modes_diag: npt.NDArray[np.uint8] = np.zeros((3, n_shards), dtype=np.uint8)
 
         if use_bitplane:

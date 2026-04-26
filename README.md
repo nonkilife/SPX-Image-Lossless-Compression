@@ -55,7 +55,7 @@ Instead of pursuing absolute compression ratio at any cost, SPX focuses on:
 
 ### v8.3.2 Performance Snapshot
 
-The following data characterizes the throughput and compression efficiency across standard datasets (Baseline v7.5.0).
+The following data characterizes the throughput and compression efficiency across standard datasets.
 
 | Dataset | Type | SPX BPP | **Savings (vs PNG)** | **Savings (vs PNM)** | **SPX Enc Speed** | WebP (M6) Speed | JXL (E7) Speed |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -76,7 +76,7 @@ The following data characterizes the throughput and compression efficiency acros
 > - **OS**: Windows 11 (64-bit, x64)
 
 #### **Technical Comparison**
-- **Encoding Speed**: SPX exhibits **25x–150x higher throughput** than WebP (Method 6) and **5x–7x higher throughput** than JPEG-XL (Effort 7) on the tested hardware in most cases.
+- **Encoding Speed**: SPX exhibits **25x–150x higher throughput** than WebP (Method 6) and **3x–14x higher throughput** than JPEG-XL (Effort 7) on the tested hardware across datasets.
 - **Quality Assurance**: Bit-perfect reconstruction across all 1,500+ test images (**MSE = 0.00000000**).
 - **Core Efficiency**: Rust-native backend utilizes **Rayon** for internal data parallelism and **4-way interleaved rANS** for instruction-level parallelism (ILP).
 - **Hybrid Performance**: Critical hot-paths (RCT, MED, Sharding, rANS) are implemented in Rust, while orchestration remains in Python.
@@ -102,7 +102,7 @@ The following data characterizes the throughput and compression efficiency acros
 
 - **Compression**: **~25-30% reduction** compared to standard PNG; comparable with WebP (m6) on high-resolution photography.
 - **Efficiency**: Stateless sharding provides a stable performance profile for both high-frequency noise and low-entropy gradients.
-- **Decoding**: Rust-native decompression throughput (~60–130 MB/s). Scalable via multi-core batching.
+- **Decoding**: Rust-native decompression throughput (~20–130 MB/s depending on image complexity). Scalable via multi-core batching.
 
 ---
 
@@ -254,8 +254,8 @@ SPX implements a **Context-Aware Bypass** logic to handle different image types 
 The backbone of SPX is the **Stateless Sharding Hub**, mapping pixels into 42+ contexts based on V-Tier (gradient strength), Intensity, and Trend. This configuration-as-data model allows for seamless profile switching without kernel recompilation.
 
 For entropy coding, the engine utilizes a **30-Mode Template Matrix**:
-- **6 Base Centroids**: Data-driven probability shapes derived from 6,000+ real-world image shards.
-- **5 Sigma Scales**: Each centroid is scaled from `0.5` to `1.5` to adapt to different noise levels.
+- **10 Base Centroids**: Data-driven probability shapes derived from real-world image shards (Hybrid Elite V10).
+- **3 Sigma Scales**: Each centroid is scaled at `0.5`, `1.0`, and `1.5` to adapt to different noise levels.
 - **Zero-Overhead**: These 30 empirical modes are hardcoded in the decoder, allowing optimal PDF matching without the "Header Tax" of custom frequency tables.
 
 ### 5.5 Bitplane rANS & Entropy Core

@@ -29,6 +29,8 @@ graph TD
 
 __version__ = "8.3.2"
 
+__all__ = ['restore_channels', 'reconstruct_2d_channels']
+
 import numpy as np
 import numpy.typing as npt
 from typing import Optional

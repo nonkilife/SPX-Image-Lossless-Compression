@@ -26,6 +26,18 @@ is handled by the spx_rans Rust extension.
 
 __version__ = "8.3.2"
 
+__all__ = [
+    'L_LOWER',
+    'build_pdf_tables_from_shards',
+    'rans_encode_shards_parallel',
+    'rans_decode_shards_parallel',
+    'rans_decode_4way_core',
+    'pack_shard_payloads',
+    'build_all_lookups',
+    'compact_pdf_tables',
+    'expand_pdf_tables',
+]
+
 import os
 import numpy as np
 import numpy.typing as npt
