@@ -6,6 +6,50 @@ An implementation of lossless image compression using a **Hybrid Python/Rust Arc
 
 ---
 
+## Table of Contents
+1. [v8.3.2 Performance Snapshot](#v832-performance-snapshot)
+2. [Technical Analysis](#v832-technical-analysis-hybrid-rust-architecture)
+3. [Comparison with Existing Formats](#2-comparison-with-existing-formats)
+4. [System Requirements & Installation](#3-system-requirements--installation)
+5. [Quick Start](#4-quick-start)
+6. [Technical Architecture & Execution Flow](#5-technical-architecture--execution-flow)
+7. [Performance Benchmarking](#6-performance-benchmarking-v8x-unified-hub)
+8. [Comparative Benchmarks](#7-comparative-benchmarks-clic--div2k--tecnick--kodak)
+9. [Limitations & Roadmap](#8-limitations--roadmap)
+10. [Dataset Sources](#9-dataset-sources)
+11. [Project Background](#10-project-background)
+12. [Acknowledgments](#11-acknowledgments)
+
+---
+
+SPX is built around a clear principle:
+> **Maximize compression efficiency per unit of compute.**
+
+Instead of pursuing absolute compression ratio at any cost, SPX focuses on:
+- **Predictable Performance**: Constant-time complexity relative to input resolution.
+- **Single-Pass Encoding**: Non-iterative execution without brute-force search.
+- **Minimal Modeling Complexity**: Stateless single-model pipeline.
+- **High Throughput**: SIMD-accelerated native computational kernels.
+
+### Trade-off Philosophy
+| Dimension | SPX Approach |
+| :--- | :--- |
+| **Compression** | Competitive (aligned with modern lossless standards) |
+| **Speed** | $O(N)$ Complexity (non-iterative) |
+| **Complexity** | Minimal (stateless pipeline) |
+| **Determinism** | Absolute |
+| **Multi-pass** | No |
+
+### Key Characteristics
+*   **Single-pass encoding**: Eliminates iterative refinement loops.
+*   **Deterministic pipeline**: Constant execution path without heuristic search.
+*   **Reduced model complexity**: Single-model context mapping without switching.
+*   **Throughput-centric design**: Optimized for maximum pixel-per-cycle throughput.
+*   **Native Rust backend**: Zero-cost abstraction with predictable runtime performance.
+*   **Extensible Architecture**: Modular configuration of shard boundaries and rANS probability templates to accommodate specialized data distributions.
+
+---
+
 ### v8.3.2 Performance Snapshot
 
 The following data characterizes the throughput and compression efficiency across standard datasets (Baseline v7.5.0).
