@@ -29,7 +29,7 @@ graph TD
     Input[Dataset Directory] --> Glob[File Discovery: PNG, BMP, PNM]
     Glob --> Workers[Parallel Workers: SPX, WebP, JXL]
     
-    subgraph Worker Loop
+    subgraph "Worker Loop"
         W1[Preload Array] --> W2[Compress: Speed + BPP]
         W2 --> W3[Decompress: Speed]
         W3 --> W4[Verify: MSE = 0]

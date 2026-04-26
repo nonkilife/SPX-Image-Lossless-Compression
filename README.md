@@ -180,7 +180,7 @@ graph TD
     E --> F[Rust: Pillar 4 rANS Engine]
     F --> G[v8.3.2 SPX Bitstream Output]
     
-    subgraph Rust Extension (spx_rans)
+    subgraph "Rust Extension (spx_rans)"
         C1
         C2
         D

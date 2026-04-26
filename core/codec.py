@@ -35,7 +35,7 @@ Bitstream Specification (SPX_CORE v8.3.2):
 Internal Dependency Map:
 ```mermaid
 graph TD
-    subgraph Core Engine
+    subgraph "Core Engine"
         CO[codec.py] --> SH[sharding.py]
         CO --> RA[rans.py]
         CO --> CM[common.py]
@@ -43,7 +43,7 @@ graph TD
         RA --> PR
         RA --> RB[rans_bitplane.py]
     end
-    subgraph Entry Points
+    subgraph "Entry Points"
         CP[compress.py] --> CO
         DP[decompress.py] --> CO
         TS[test_suite.py] --> CP
