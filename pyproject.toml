@@ -32,8 +32,8 @@ test = ["pytest>=7.0.0"]
 spx = "spx.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/nonkilife/spx-codec"
-Repository = "https://github.com/nonkilife/spx-codec"
+Homepage = "https://github.com/nonkilife/SPX-Image-Lossless-Compression"
+Repository = "https://github.com/nonkilife/SPX-Image-Lossless-Compression"
 
 [tool.maturin]
 python-packages = ["spx"]
