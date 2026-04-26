@@ -25,7 +25,7 @@ jobs:
         with:
           target: ${{ matrix.target }}
           # 關鍵：從根目錄執行，並用 -m 指定 Cargo.toml 位置
-          args: --release --out dist --find-interpreter -m native/Cargo.toml
+          args: --release --out dist --find-interpreter
           sccache: 'true'
           manylinux: auto
       - name: Upload wheels
@@ -48,7 +48,7 @@ jobs:
         uses: messense/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter -m native/Cargo.toml
+          args: --release --out dist --find-interpreter
           sccache: 'true'
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -70,7 +70,7 @@ jobs:
         uses: messense/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter -m native/Cargo.toml
+          args: --release --out dist --find-interpreter
           sccache: 'true'
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -86,7 +86,7 @@ jobs:
         uses: messense/maturin-action@v1
         with:
           command: sdist
-          args: --out dist -m native/Cargo.toml
+          args: --out dist
       - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
