@@ -4,8 +4,6 @@
 
 SPX (Space Express) 是一個採用 **Python/Rust 混合架構** 的無損影像壓縮引擎，具備 **熵分片 (Entropy Sharding)** 與 **Rayon 加速的 4 路交織 rANS (4-way Interleaved rANS)** 技術，旨在壓縮率與速度之間取得最佳平衡。本專案透過上下文分片與原生計算內核，實現了與現代標準相當的壓縮率，並將 Python 的靈活性與 Rust 的原生效能完美結合。
 
-[繁體中文版本 (Traditional Chinese)](./README_zh-TW.md)
-
 ---
 
 ## 目錄
@@ -61,12 +59,12 @@ SPX 的核心設計原則：
 | **Kodak** | RGB | **9.79** | **-24.64 %** | **-59.19 %** | **41.24 MB/s** | 0.33 MB/s | 5.65 MB/s |
 | **CLIC '25** | RGB | **8.06** | **-28.32 %** | **-66.43 %** | **69.10 MB/s** | 1.18 MB/s | 5.02 MB/s |
 | **CLIC '21** | RGB | **8.46** | **-28.03 %** | **-64.74 %** | **72.22 MB/s** | 0.97 MB/s | 5.62 MB/s |
-| **DIV2K Val**| 2K | **9.22** | **-27.32 %** | **-61.59 %** | **80.76 MB/s** | 1.28 MB/s | 5.83 MB/s |
-| **DIV2K Train**| 2K | **9.35** | **-26.22 %** | **-61.04 %** | **66.97 MB/s** | 1.38 MB/s | 6.15 MB/s |
+| **DIV2K Validation**| RGB | **9.22** | **-27.32 %** | **-61.59 %** | **80.76 MB/s** | 1.28 MB/s | 5.83 MB/s |
+| **DIV2K Train**| RGB | **9.35** | **-26.22 %** | **-61.04 %** | **66.97 MB/s** | 1.38 MB/s | 6.15 MB/s |
 | **Tecnick** | RGB | **5.18** | **-25.90 %** | **-78.42 %** | **25.12 MB/s** | 0.68 MB/s | 4.75 MB/s |
 | **Tecnick** | Gray | **1.68** | **-27.63 %** | **-79.01 %** | **14.20 MB/s** | 0.29 MB/s | 5.53 MB/s |
-| **Standard (ICI)** | RGB | **10.51** | **n/a** | **-56.19 %** | **150.81 MB/s** | 2.16 MB/s | 10.84 MB/s |
-| **Standard (ICI)** | Gray | **3.44** | **n/a** | **-56.99 %** | **53.06 MB/s** | 0.58 MB/s | 12.16 MB/s |
+| **ICI** | RGB | **10.51** | **n/a** | **-56.19 %** | **150.81 MB/s** | 2.16 MB/s | 10.84 MB/s |
+| **ICI** | Gray | **3.44** | **n/a** | **-56.99 %** | **53.06 MB/s** | 0.58 MB/s | 12.16 MB/s |
 
 > [!NOTE]
 > **硬體基準測試環境**：
@@ -173,31 +171,31 @@ print(f"解壓時間: {dec_time:.2f}s")
 為 Windows 用戶提供了方便的封裝工具：
 ```powershell
 # 執行對比基準測試 (SPX vs WebP vs JXL)
-.\test bench ./data/local_test_folder
-.\test webp ./data/local_test_folder
-.\test jxl ./data/local_test_folder
+.\test bench ./local_test_folder
+.\test webp ./local_test_folder
+.\test jxl ./local_test_folder
 
 # 執行特定編碼器的測試
-.\test spx ./data/local_test_folder
+.\test spx ./local_test_folder
 
 # 傳遞額外參數 (例如限制 10 張影像)
 .\test spx ./my_images -n 10
 ```
 > [!NOTE]
-> 本倉庫 **不包含** `data/` 目錄與基準測試數據集。要執行基準測試，您可以手動建立 `data/` 資料夾並放入影像（如 Kodak, DIV2K），或直接引用影像資料夾的路徑。該工具支援原始絕對/相對路徑，以及在 **`core/test_suite.py`** 中管理的預定義別名（如 `clic`, `kodak`, `trgb`）。
+> 本倉庫 **不包含** `data/` 目錄與基準測試數據集。要執行基準測試，您可以手動建立 `data/` 資料夾並放入影像（如 Kodak, DIV2K），或直接引用影像資料夾的路徑。該工具支援原始絕對/相對路徑，以及在 **`core/test_suite.py`** 中管理的預設定義別名（如 `clic`, `kodak`, `trgb`）。
 
 ### 4.4 專案結構
 ```text
 .
-├── core/                   # SPX 四柱核心引擎 (Python 協調層)
+├── spx/                   # SPX 四柱核心引擎 (Python 協調層)
 │   ├── codec.py            # 位元流調度與序列化
-│   ├── sharding.py         # 支柱 4: 分片配置與無狀態中心
-│   ├── rans.py             # 支柱 4: 4 路交織 rANS 核心
+│   ├── common.py           # 支柱 1: 協議常量與標誌
 │   ├── predictor.py        # 支柱 2: 無分支 MED 內核
 │   ├── transform.py        # 支柱 3: G-sub RCT 與空間運算
-│   ├── common.py           # 支柱 1: 協議常量與標誌
+│   ├── sharding.py         # 支柱 4: 分片配置與無狀態中心
+│   ├── rans.py             # 支柱 4: 4 路交織 rANS 核心
 │   └── env.py              # 環境與依賴驗證
-├── technical/              # 演算法深度規格文檔
+├── technical/              # 實驗流程及結果文檔
 ├── data/                   # [用戶提供] 基準測試數據集目錄 (不包含在倉庫中)
 ├── native/                 # [實驗性] Rust 加速後端
 ├── test.bat                # Windows 基準測試工具
@@ -248,9 +246,9 @@ graph TD
 ### 5.3 雙路徑策略
 SPX 實作了 **上下文感知旁路 (Context-Aware Bypass)** 邏輯，以處理不同類型的影像：
 * **RGB 路徑**：利用 **G-sub RCT**，先提取綠色基礎（Lead），隨後處理紅/藍殘差（Lag）。使用交錯處理窗口以保持通道間的上下文一致性。
-* **灰階路徑**：若檢測到 R=G=B，引擎會激活專門的單色旁路，將計算開銷降低約 65%。此路徑利用 **Bitplane rANS** 將 8-bit 信號分解為層次化圖層，以提高冗餘提取效率。
+* **灰階路徑**：若檢測到 R=G=B，引擎會使用專門的單色分支，將計算開銷降低約 65%。此路徑利用 **Bitplane rANS** 將 8-bit 信號分解為 4 個 2-bit 圖層，以提高冗餘提取效率。
 
-### 5.4 無狀態分片與配置驅動中心
+### 5.4 分片與配置驅動中心
 SPX 的骨幹是 **無狀態分片中心**，根據 V-Tier（梯度強度）、亮度（Intensity）和趨勢（Trend）將像素映射到 42+ 個上下文中。這種「配置即數據」的模型允許在不重新編譯內核的情況下無縫切換 Profile。
 
 在熵編碼方面，引擎使用了 **30 模式模板矩陣**：
@@ -272,9 +270,9 @@ SPX 旨在實現低延遲處理，並具備可預測的記憶體占用：
 
 ---
 
-## 6. 效能基準測試 (v8.x 統一中心)
+## 6. 效能基準測試
   
-當前引擎使用 **SPX 統一中心** 進行測試，提供與 WebP (Method 6) 和 JPEG-XL (Effort 7) 的對比分析。
+當前引擎使用 **SPX Bencharmk Hub** 進行測試，提供與 WebP (Method 6) 和 JPEG-XL (Effort 7) 的對比分析。
 
 ### 6.1 綜合指標
 詳細的效能數據（包括壓縮節省率、吞吐量 MB/s 和競爭勝率）維護在 [technical/BENCHMARK.md](./technical/BENCHMARK.md)。
@@ -295,7 +293,7 @@ python main.py benchmark C:\datasets\my_images -n 50
 
 ---
 
-## 7. 對比基準測試 (CLIC / DIV2K / TECNICK / KODAK)
+## 7. 對比基準測試 (CLIC / DIV2K / TECNICK / ICI / KODAK)
 
 詳細的效能指標以及與 WebP、JPEG-XL 在工業數據集上的對比基準測試，請參閱獨立的基準測試文檔：
 
@@ -330,7 +328,7 @@ python main.py benchmark C:\datasets\my_images -n 50
 
 SPX 專案是一個透過多階段研究週期開發的無損影像壓縮框架。本專案利用代理 AI **Claude Code** 與 **Antigravity** 來構建技術組件，包括 **四柱架構**、Universal-42 分片以及 4 路交織 rANS 熵編碼引擎。在 v1.0.0 中，核心計算內核從 Python/Numba 遷移到了 **原生 Rust 後端**，實現了顯著更高的吞吐量並減少了運行時 JIT 開銷。
 
-此倡議作為 **AI 輔助工程 (AI-assisted engineering)** 的技術概念驗證，證明了自主代理能夠協助處理複雜的演算法優化與多語言系統整合。
+此專案作為 **AI 輔助工程 (AI-assisted engineering)** 的技術概念驗證，證明了自主代理能夠協助處理複雜的演算法優化與多語言系統整合。
 
 ## 11. 致謝
 - **熵編碼**：本專案使用了由 Jarosław (Jarek) Duda 博士開發的 rANS 演算法。
