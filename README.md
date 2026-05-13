@@ -57,17 +57,147 @@ Instead of pursuing absolute compression ratio at any cost, SPX focuses on:
 
 The following data characterizes the throughput and compression efficiency across standard datasets.
 
-| Dataset | Type | SPX BPP | WebP BPP | JXL BPP | SPX Enc (SC) | WebP Enc (SC) | JXL Enc (SC) | SPX Dec (SC) | WebP Dec (SC) | JXL Dec (SC) |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Kodak** | RGB | **9.79** | 9.46 | 9.14 | **11.87 MB/s** | 0.06 MB/s | 1.14 MB/s | 18.80 MB/s | **47.86 MB/s** | 6.27 MB/s |
-| **CLIC '25** | RGB | **8.06** | 8.21 | 7.57 | **19.99 MB/s** | 0.22 MB/s | 0.94 MB/s | 17.33 MB/s | **42.86 MB/s** | 6.22 MB/s |
-| **CLIC '21** | RGB | **8.46** | 8.56 | 8.02 | **21.14 MB/s** | 0.16 MB/s | 0.98 MB/s | 18.45 MB/s | **40.24 MB/s** | 6.76 MB/s |
-| **DIV2K Validation**| 2K | **9.22** | 9.32 | 8.65 | **24.17 MB/s** | 0.24 MB/s | 1.03 MB/s | 18.69 MB/s | **42.11 MB/s** | 7.26 MB/s |
-| **DIV2K Train**| 2K | **9.35** | 9.40 | 8.78 | **20.31 MB/s** | 0.23 MB/s | 1.07 MB/s | 20.44 MB/s | **45.15 MB/s** | 7.55 MB/s |
-| **Tecnick** | RGB | **5.18** | 5.39 | 4.80 | **6.20 MB/s** | 0.12 MB/s | 0.87 MB/s | 7.63 MB/s | **26.15 MB/s** | 4.29 MB/s |
-| **Tecnick** | Gray | **1.68** | 1.99 | 1.56 | **5.16 MB/s** | 0.05 MB/s | 1.03 MB/s | 7.16 MB/s | **12.73 MB/s** | 4.29 MB/s |
-| **ICI Set** | RGB | **10.51**| 10.30 | 9.84 | **44.47 MB/s** | 0.60 MB/s | 2.81 MB/s | 38.22 MB/s | **87.54 MB/s** | 15.10 MB/s |
-| **ICI Set** | Gray | **3.44** | 3.41 | 3.29 | **17.65 MB/s** | 0.16 MB/s | 3.25 MB/s | 20.87 MB/s | **45.95 MB/s** | 14.94 MB/s |
+<table>
+  <thead>
+    <tr>
+      <th rowspan="2">Dataset</th>
+      <th rowspan="2">Type</th>
+      <th colspan="3">BPP (Efficiency)</th>
+      <th colspan="3">Enc Speed (Single Core MB/s)</th>
+      <th colspan="3">Dec Speed (Single Core MB/s)</th>
+    </tr>
+    <tr>
+      <th>SPX</th>
+      <th>WebP</th>
+      <th>JXL</th>
+      <th>SPX</th>
+      <th>WebP</th>
+      <th>JXL</th>
+      <th>SPX</th>
+      <th>WebP</th>
+      <th>JXL</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>Kodak</b></td>
+      <td align="center">RGB</td>
+      <td align="center"><b>9.79</b></td>
+      <td align="center">9.46</td>
+      <td align="center">9.14</td>
+      <td align="center"><b>11.87</b></td>
+      <td align="center">0.06</td>
+      <td align="center">1.14</td>
+      <td align="center">18.80</td>
+      <td align="center"><b>47.86</b></td>
+      <td align="center">6.27</td>
+    </tr>
+    <tr>
+      <td><b>CLIC '25</b></td>
+      <td align="center">RGB</td>
+      <td align="center"><b>8.06</b></td>
+      <td align="center">8.21</td>
+      <td align="center">7.57</td>
+      <td align="center"><b>19.99</b></td>
+      <td align="center">0.22</td>
+      <td align="center">0.94</td>
+      <td align="center">17.33</td>
+      <td align="center"><b>42.86</b></td>
+      <td align="center">6.22</td>
+    </tr>
+    <tr>
+      <td><b>CLIC '21</b></td>
+      <td align="center">RGB</td>
+      <td align="center"><b>8.46</b></td>
+      <td align="center">8.56</td>
+      <td align="center">8.02</td>
+      <td align="center"><b>21.14</b></td>
+      <td align="center">0.16</td>
+      <td align="center">0.98</td>
+      <td align="center">18.45</td>
+      <td align="center"><b>40.24</b></td>
+      <td align="center">6.76</td>
+    </tr>
+    <tr>
+      <td><b>DIV2K Validation</b></td>
+      <td align="center">2K</td>
+      <td align="center"><b>9.22</b></td>
+      <td align="center">9.32</td>
+      <td align="center">8.65</td>
+      <td align="center"><b>24.17</b></td>
+      <td align="center">0.24</td>
+      <td align="center">1.03</td>
+      <td align="center">18.69</td>
+      <td align="center"><b>42.11</b></td>
+      <td align="center">7.26</td>
+    </tr>
+    <tr>
+      <td><b>DIV2K Train</b></td>
+      <td align="center">2K</td>
+      <td align="center"><b>9.35</b></td>
+      <td align="center">9.40</td>
+      <td align="center">8.78</td>
+      <td align="center"><b>20.31</b></td>
+      <td align="center">0.23</td>
+      <td align="center">1.07</td>
+      <td align="center">20.44</td>
+      <td align="center"><b>45.15</b></td>
+      <td align="center">7.55</td>
+    </tr>
+    <tr>
+      <td><b>Tecnick</b></td>
+      <td align="center">RGB</td>
+      <td align="center"><b>5.18</b></td>
+      <td align="center">5.39</td>
+      <td align="center">4.80</td>
+      <td align="center"><b>6.20</b></td>
+      <td align="center">0.12</td>
+      <td align="center">0.87</td>
+      <td align="center">7.63</td>
+      <td align="center"><b>26.15</b></td>
+      <td align="center">4.29</td>
+    </tr>
+    <tr>
+      <td><b>Tecnick</b></td>
+      <td align="center">Gray</td>
+      <td align="center"><b>1.68</b></td>
+      <td align="center">1.99</td>
+      <td align="center">1.56</td>
+      <td align="center"><b>5.16</b></td>
+      <td align="center">0.05</td>
+      <td align="center">1.03</td>
+      <td align="center">7.16</td>
+      <td align="center"><b>12.73</b></td>
+      <td align="center">4.29</td>
+    </tr>
+    <tr>
+      <td><b>ICI Set</b></td>
+      <td align="center">RGB</td>
+      <td align="center"><b>10.51</b></td>
+      <td align="center">10.30</td>
+      <td align="center">9.84</td>
+      <td align="center"><b>44.47</b></td>
+      <td align="center">0.60</td>
+      <td align="center">2.81</td>
+      <td align="center">38.22</td>
+      <td align="center"><b>87.54</b></td>
+      <td align="center">15.10</td>
+    </tr>
+    <tr>
+      <td><b>ICI Set</b></td>
+      <td align="center">Gray</td>
+      <td align="center"><b>3.44</b></td>
+      <td align="center">3.41</td>
+      <td align="center">3.29</td>
+      <td align="center"><b>17.65</b></td>
+      <td align="center">0.16</td>
+      <td align="center">3.25</td>
+      <td align="center">20.87</td>
+      <td align="center"><b>45.95</b></td>
+      <td align="center">14.94</td>
+    </tr>
+  </tbody>
+</table>
 
 > [!NOTE]
 > **Performance Metrics**:
