@@ -62,20 +62,20 @@ The following data characterizes the throughput and compression efficiency acros
     <tr>
       <th rowspan="2">Dataset</th>
       <th rowspan="2">Type</th>
-      <th colspan="3">BPP (Efficiency)</th>
-      <th colspan="3">Enc Speed (Single Core MB/s)</th>
-      <th colspan="3">Dec Speed (Single Core MB/s)</th>
+      <th colspan="3">BPP</th>
+      <th colspan="3">Enc Speed (1-Core, MB/s)</th>
+      <th colspan="3">Dec Speed (1-Core, MB/s)</th>
     </tr>
     <tr>
       <th>SPX</th>
-      <th>WebP</th>
-      <th>JXL</th>
+      <th>WebP(M6)</th>
+      <th>JXL(E7)</th>
       <th>SPX</th>
-      <th>WebP</th>
-      <th>JXL</th>
+      <th>WebP(M6)</th>
+      <th>JXL(E7)</th>
       <th>SPX</th>
-      <th>WebP</th>
-      <th>JXL</th>
+      <th>WebP(M6)</th>
+      <th>JXL(E7)</th>
     </tr>
   </thead>
   <tbody>
@@ -120,7 +120,7 @@ The following data characterizes the throughput and compression efficiency acros
     </tr>
     <tr>
       <td><b>DIV2K Validation</b></td>
-      <td align="center">2K</td>
+      <td align="center">RGB</td>
       <td align="center"><b>9.22</b></td>
       <td align="center">9.32</td>
       <td align="center">8.65</td>
@@ -133,7 +133,7 @@ The following data characterizes the throughput and compression efficiency acros
     </tr>
     <tr>
       <td><b>DIV2K Train</b></td>
-      <td align="center">2K</td>
+      <td align="center">RGB</td>
       <td align="center"><b>9.35</b></td>
       <td align="center">9.40</td>
       <td align="center">8.78</td>
@@ -202,7 +202,7 @@ The following data characterizes the throughput and compression efficiency acros
 > [!NOTE]
 > **Performance Metrics**:
 > - **BPP**: Bits Per Pixel (lower is better).
-> - **SC Speed**: Single Core throughput in MB/s (higher is better).
+> - **1-Core Speed**: Single-core throughput in MB/s (higher is better).
 > - **Enc/Dec**: WebP Method 6 and JXL Effort 7 are used as competitive baselines.
 
 > [!NOTE]
