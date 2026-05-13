@@ -1,6 +1,6 @@
 # SPX (Space Express): High Throughput Lossless Image Compression Engine
 
-![Python Version](https://img.shields.io/badge/python-3.10%2B-blue) [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE) ![MSE](https://img.shields.io/badge/MSE-0.00000000-red) ![Version](https://img.shields.io/badge/version-1.0.0-orange) ![Speed](https://img.shields.io/badge/Speed-150_MB/s-brightgreen) ![Savings](https://img.shields.io/badge/Savings-28%25-blueviolet)
+![Python Version](https://img.shields.io/badge/python-3.10%2B-blue) [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE) ![MSE](https://img.shields.io/badge/MSE-0.00000000-red) ![Version](https://img.shields.io/badge/version-1.0.0-orange) ![Savings](https://img.shields.io/badge/Savings-28%25-blueviolet)
 
 SPX (Space Express) is a lossless image compression engine using a **Hybrid Python/Rust Architecture**, featuring **Entropy Sharding** and **Rayon-accelerated 4-way Interleaved rANS** to achieve balance between compression ratio and speed. This project exhibits comparable compression ratios through contextual sharding and native computational kernels, bridging Python's flexibility with Rust's native performance.
 
@@ -62,12 +62,12 @@ The following data characterizes the throughput and compression efficiency acros
 | **Kodak** | RGB | **9.79** | 9.46 | 9.14 | **11.87 MB/s** | 0.06 MB/s | 1.14 MB/s | 18.80 MB/s | **47.86 MB/s** | 6.27 MB/s |
 | **CLIC '25** | RGB | **8.06** | 8.21 | 7.57 | **19.99 MB/s** | 0.22 MB/s | 0.94 MB/s | 17.33 MB/s | **42.86 MB/s** | 6.22 MB/s |
 | **CLIC '21** | RGB | **8.46** | 8.56 | 8.02 | **21.14 MB/s** | 0.16 MB/s | 0.98 MB/s | 18.45 MB/s | **40.24 MB/s** | 6.76 MB/s |
-| **DIV2K Val**| 2K | **9.22** | 9.32 | 8.65 | **24.17 MB/s** | 0.24 MB/s | 1.03 MB/s | 18.69 MB/s | **42.11 MB/s** | 7.26 MB/s |
+| **DIV2K Validation**| 2K | **9.22** | 9.32 | 8.65 | **24.17 MB/s** | 0.24 MB/s | 1.03 MB/s | 18.69 MB/s | **42.11 MB/s** | 7.26 MB/s |
 | **DIV2K Train**| 2K | **9.35** | 9.40 | 8.78 | **20.31 MB/s** | 0.23 MB/s | 1.07 MB/s | 20.44 MB/s | **45.15 MB/s** | 7.55 MB/s |
 | **Tecnick** | RGB | **5.18** | 5.39 | 4.80 | **6.20 MB/s** | 0.12 MB/s | 0.87 MB/s | 7.63 MB/s | **26.15 MB/s** | 4.29 MB/s |
 | **Tecnick** | Gray | **1.68** | 1.99 | 1.56 | **5.16 MB/s** | 0.05 MB/s | 1.03 MB/s | 7.16 MB/s | **12.73 MB/s** | 4.29 MB/s |
-| **Standard ICI**| RGB | **10.51**| 10.30 | 9.84 | **44.47 MB/s** | 0.60 MB/s | 2.81 MB/s | 38.22 MB/s | **87.54 MB/s** | 15.10 MB/s |
-| **Standard ICI**| Gray | **3.44** | 3.41 | 3.29 | **17.65 MB/s** | 0.16 MB/s | 3.25 MB/s | 20.87 MB/s | **45.95 MB/s** | 14.94 MB/s |
+| **ICI Set** | RGB | **10.51**| 10.30 | 9.84 | **44.47 MB/s** | 0.60 MB/s | 2.81 MB/s | 38.22 MB/s | **87.54 MB/s** | 15.10 MB/s |
+| **ICI Set** | Gray | **3.44** | 3.41 | 3.29 | **17.65 MB/s** | 0.16 MB/s | 3.25 MB/s | 20.87 MB/s | **45.95 MB/s** | 14.94 MB/s |
 
 > [!NOTE]
 > **Performance Metrics**:
@@ -82,7 +82,7 @@ The following data characterizes the throughput and compression efficiency acros
 > - **OS**: Windows 11 (64-bit, x64)
 
 #### **Technical Comparison**
-- **Encoding Performance**: SPX v1.0.0 exhibits a **100x+ single-core encoding lead** over WebP (m=6) across standard datasets and a **110x lead** in Grayscale (ICI). It remains **15x–20x faster** than JXL (Effort 7) in single-core throughput.
+- **Encoding Performance**: SPX v1.0.0 exhibits a **100x+ single-core encoding lead** over WebP (m=6) across standard datasets and a **110x lead** in Grayscale (ICI Set). It remains **15x–20x faster** than JXL (Effort 7) in single-core throughput.
 - **Lossless Assurance**: Bit-perfect reconstruction across all 1,500+ test images (**MSE = 0.00000000**).
 - **Core Efficiency**: Rust-native backend utilizes **Rayon** for internal data parallelism and **4-way interleaved rANS** for instruction-level parallelism (ILP).
 - **Hybrid Performance**: Critical hot-paths (RCT, MED, Sharding, rANS) are implemented in Rust, while orchestration remains in Python.
@@ -180,12 +180,12 @@ print(f"Dec Time: {dec_time:.2f}s")
 For Windows users, a convenient batch wrapper is provided for benchmarking:
 ```powershell
 # Run comparative benchmark (SPX vs WebP vs JXL)
-.\test bench ./data/local_test_folder
-.\test webp ./data/local_test_folder
-.\test jxl ./data/local_test_folder
+.\test bench ./local_test_folder
+.\test webp ./local_test_folder
+.\test jxl ./local_test_folder
 
 # Run solo tests for specific codecs
-.\test spx ./data/local_test_folder
+.\test spx ./local_test_folder
 
 # Pass additional arguments (e.g., limit to 10 images)
 .\test spx ./my_images -n 10
@@ -196,17 +196,17 @@ For Windows users, a convenient batch wrapper is provided for benchmarking:
 ### 4.4 Project Structure
 ```text
 .
-├── core/                   # SPX 4-Pillar Core Engine (Python Orchestration)
+├── spx/                   # SPX 4-Pillar Core Engine (Python Orchestration)
 │   ├── codec.py            # Bitstream orchestration & serialization
-│   ├── sharding.py         # Pillar 4: Shard profiles & Stateless Hub
-│   ├── rans.py             # Pillar 4: 4-way interleaved rANS core
+│   ├── common.py           # Pillar 1: Protocol constants & Flags
 │   ├── predictor.py        # Pillar 2: Branchless MED kernels
 │   ├── transform.py        # Pillar 3: G-sub RCT & Spatial ops
-│   ├── common.py           # Pillar 1: Protocol constants & Flags
+│   ├── sharding.py         # Pillar 4: Shard profiles & Stateless Hub
+│   ├── rans.py             # Pillar 4: 4-way interleaved rANS core
 │   └── env.py              # Environment & Dependency validator
-├── technical/              # Deep-dive algorithmic specifications
+├── technical/              # Experiment results during development
 ├── data/                   # [User-provided] Directory for benchmark datasets (not in repo)
-├── native/                 # [Experimental] Rust-accelerated backend
+├── native/                 # Rust-accelerated backend
 ├── test.bat                # Windows benchmark utility
 └── main.py                 # CLI entry point
 ```
@@ -264,7 +264,7 @@ SPX implements a **Context-Aware Bypass** logic to handle different image types 
 The backbone of SPX is the **Stateless Sharding Hub**, mapping pixels into 42+ contexts based on V-Tier (gradient strength), Intensity, and Trend. This configuration-as-data model allows for seamless profile switching without kernel recompilation.
 
 For entropy coding, the engine utilizes a **30-Mode Template Matrix**:
-- **10 Base Centroids**: Data-driven probability shapes derived from real-world image shards (Hybrid Elite V10).
+- **10 Base Centroids**: Data-driven probability shapes derived from real-world image shards.
 - **3 Sigma Scales**: Each centroid is scaled at `0.5`, `1.0`, and `1.5` to adapt to different noise levels.
 - **Zero-Overhead**: These 30 empirical modes are hardcoded in the decoder, allowing optimal PDF matching without the "Header Tax" of custom frequency tables.
 
@@ -381,7 +381,7 @@ To verify the benchmarks or test the engine with standard datasets, you can down
 
 - **Tecnick Data Set**: [SourceForge - TestImages](https://sourceforge.net/projects/testimages/files/SAMPLING/)
 
-- **Standard Test Images (ICI)**: [Image Compression Info](https://imagecompression.info/test_images/)
+- **ICI Set**: [Image Compression Info](https://imagecompression.info/test_images/)
 
 ---
 
