@@ -63,19 +63,19 @@ The following data characterizes the throughput and compression efficiency acros
       <th rowspan="2">Dataset</th>
       <th rowspan="2">Type</th>
       <th colspan="3">BPP</th>
-      <th colspan="3">Enc Speed (1-Core, MB/s)</th>
-      <th colspan="3">Dec Speed (1-Core, MB/s)</th>
+      <th colspan="3">Enc Speed<br>(1-Core, MB/s)</th>
+      <th colspan="3">Dec Speed<br>(1-Core, MB/s)</th>
     </tr>
     <tr>
       <th>SPX</th>
-      <th>WebP(M6)</th>
-      <th>JXL(E7)</th>
+      <th>WebP<br>(M6)</th>
+      <th>JXL<br>(E7)</th>
       <th>SPX</th>
-      <th>WebP(M6)</th>
-      <th>JXL(E7)</th>
+      <th>WebP<br>(M6)</th>
+      <th>JXL<br>(E7)</th>
       <th>SPX</th>
-      <th>WebP(M6)</th>
-      <th>JXL(E7)</th>
+      <th>WebP<br>(M6)</th>
+      <th>JXL<br>(E7)</th>
     </tr>
   </thead>
   <tbody>
