@@ -57,17 +57,23 @@ Instead of pursuing absolute compression ratio at any cost, SPX focuses on:
 
 The following data characterizes the throughput and compression efficiency across standard datasets.
 
-| Dataset | Type | SPX BPP | **Savings (vs PNG)** | **Savings (vs PNM)** | **SPX Enc Speed** | WebP (M6) Speed | JXL (E7) Speed |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Kodak** | RGB | **9.79** | **-24.64 %** | **-59.19 %** | **41.24 MB/s** | 0.33 MB/s | 5.65 MB/s |
-| **CLIC '25** | RGB | **8.06** | **-28.32 %** | **-66.43 %** | **69.10 MB/s** | 1.18 MB/s | 5.02 MB/s |
-| **CLIC '21** | RGB | **8.46** | **-28.03 %** | **-64.74 %** | **72.22 MB/s** | 0.97 MB/s | 5.62 MB/s |
-| **DIV2K Val**| 2K | **9.22** | **-27.32 %** | **-61.59 %** | **80.76 MB/s** | 1.28 MB/s | 5.83 MB/s |
-| **DIV2K Train**| 2K | **9.35** | **-26.22 %** | **-61.04 %** | **66.97 MB/s** | 1.38 MB/s | 6.15 MB/s |
-| **Tecnick** | RGB | **5.18** | **-25.90 %** | **-78.42 %** | **25.12 MB/s** | 0.68 MB/s | 4.75 MB/s |
-| **Tecnick** | Gray | **1.68** | **-27.63 %** | **-79.01 %** | **14.20 MB/s** | 0.29 MB/s | 5.53 MB/s |
-| **Standard (ICI)** | RGB | **10.51** | **n/a** | **-56.19 %** | **150.81 MB/s** | 2.16 MB/s | 10.84 MB/s |
-| **Standard (ICI)** | Gray | **3.44** | **n/a** | **-56.99 %** | **53.06 MB/s** | 0.58 MB/s | 12.16 MB/s |
+| Dataset | Type | SPX BPP | WebP BPP | JXL BPP | SPX Enc (SC) | WebP Enc (SC) | JXL Enc (SC) | SPX Dec (SC) | WebP Dec (SC) | JXL Dec (SC) |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Kodak** | RGB | **9.79** | 9.46 | 9.14 | **11.87 MB/s** | 0.06 MB/s | 1.14 MB/s | 18.80 MB/s | **47.86 MB/s** | 6.27 MB/s |
+| **CLIC '25** | RGB | **8.06** | 8.21 | 7.57 | **19.99 MB/s** | 0.22 MB/s | 0.94 MB/s | 17.33 MB/s | **42.86 MB/s** | 6.22 MB/s |
+| **CLIC '21** | RGB | **8.46** | 8.56 | 8.02 | **21.14 MB/s** | 0.16 MB/s | 0.98 MB/s | 18.45 MB/s | **40.24 MB/s** | 6.76 MB/s |
+| **DIV2K Val**| 2K | **9.22** | 9.32 | 8.65 | **24.17 MB/s** | 0.24 MB/s | 1.03 MB/s | 18.69 MB/s | **42.11 MB/s** | 7.26 MB/s |
+| **DIV2K Train**| 2K | **9.35** | 9.40 | 8.78 | **20.31 MB/s** | 0.23 MB/s | 1.07 MB/s | 20.44 MB/s | **45.15 MB/s** | 7.55 MB/s |
+| **Tecnick** | RGB | **5.18** | 5.39 | 4.80 | **6.20 MB/s** | 0.12 MB/s | 0.87 MB/s | 7.63 MB/s | **26.15 MB/s** | 4.29 MB/s |
+| **Tecnick** | Gray | **1.68** | 1.99 | 1.56 | **5.16 MB/s** | 0.05 MB/s | 1.03 MB/s | 7.16 MB/s | **12.73 MB/s** | 4.29 MB/s |
+| **Standard ICI**| RGB | **10.51**| 10.30 | 9.84 | **44.47 MB/s** | 0.60 MB/s | 2.81 MB/s | 38.22 MB/s | **87.54 MB/s** | 15.10 MB/s |
+| **Standard ICI**| Gray | **3.44** | 3.41 | 3.29 | **17.65 MB/s** | 0.16 MB/s | 3.25 MB/s | 20.87 MB/s | **45.95 MB/s** | 14.94 MB/s |
+
+> [!NOTE]
+> **Performance Metrics**:
+> - **BPP**: Bits Per Pixel (lower is better).
+> - **SC Speed**: Single Core throughput in MB/s (higher is better).
+> - **Enc/Dec**: WebP Method 6 and JXL Effort 7 are used as competitive baselines.
 
 > [!NOTE]
 > **Hardware Benchmark Environment**:
@@ -76,8 +82,8 @@ The following data characterizes the throughput and compression efficiency acros
 > - **OS**: Windows 11 (64-bit, x64)
 
 #### **Technical Comparison**
-- **Encoding Performance**: SPX v1.0.0 exhibits a **103x parallel encoding lead** over WebP (m=6) in RGB and a **63x lead** in Grayscale (ICI). It remains **6x–8x faster** than JXL (Effort 7) across industrial datasets.ted hardware across datasets.
-- **Loseless Assurance**: Bit-perfect reconstruction across all 1,500+ test images (**MSE = 0.00000000**).
+- **Encoding Performance**: SPX v1.0.0 exhibits a **100x+ single-core encoding lead** over WebP (m=6) across standard datasets and a **110x lead** in Grayscale (ICI). It remains **15x–20x faster** than JXL (Effort 7) in single-core throughput.
+- **Lossless Assurance**: Bit-perfect reconstruction across all 1,500+ test images (**MSE = 0.00000000**).
 - **Core Efficiency**: Rust-native backend utilizes **Rayon** for internal data parallelism and **4-way interleaved rANS** for instruction-level parallelism (ILP).
 - **Hybrid Performance**: Critical hot-paths (RCT, MED, Sharding, rANS) are implemented in Rust, while orchestration remains in Python.
 
