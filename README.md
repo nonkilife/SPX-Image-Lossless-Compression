@@ -244,6 +244,27 @@ The following data characterizes the throughput and compression efficiency acros
 
 ## 3. System Requirements & Installation
 
+### 3.1 Windows Standalone Executable (No Python Required)
+
+For reviewers or users who do not have Python installed, a self-contained Windows executable is available in the [`dist/`](./dist/) directory of this repository.
+
+**Download** `dist/spx.exe` and run it directly from any terminal:
+
+```powershell
+spx.exe compress photo.png
+spx.exe decompress photo.spx
+spx.exe --help
+```
+
+No installation, no dependencies, no setup. See [`dist/INSTRUCTIONS.md`](./dist/INSTRUCTIONS.md) for full usage details.
+
+> [!NOTE]
+> The executable is built for **Windows 10/11 x64** only. For other platforms, use the pip installation below.
+
+---
+
+### 3.2 Python Package (All Platforms)
+
 - **Python Version**: 3.10+ (3.11+ recommended)
 - **Platforms**: Windows x64, Linux x64/aarch64, macOS x86_64/arm64 (pre-built wheels)
 

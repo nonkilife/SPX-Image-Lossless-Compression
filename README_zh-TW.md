@@ -105,6 +105,27 @@ SPX 的核心設計原則：
 
 ## 3. 系統需求與安裝
 
+### 3.1 Windows 獨立執行檔（免安裝 Python）
+
+對於沒有安裝 Python 的審閱者或使用者，本倉庫的 [`dist/`](./dist/) 目錄中提供了免安裝的 Windows 獨立執行檔。
+
+**下載** `dist/spx.exe`，直接在任何終端機中執行：
+
+```powershell
+spx.exe compress photo.png
+spx.exe decompress photo.spx
+spx.exe --help
+```
+
+無須安裝、無須依賴套件、無須任何設定。完整使用說明請參閱 [`dist/INSTRUCTIONS.md`](./dist/INSTRUCTIONS.md)。
+
+> [!NOTE]
+> 此執行檔僅支援 **Windows 10/11 x64**。其他平台請使用下方的 pip 安裝方式。
+
+---
+
+### 3.2 Python 套件（全平台）
+
 - **Python 版本**：3.10+ (建議 3.11+)
 - **支援平台**：Windows x64、Linux x64/aarch64、macOS x86_64/arm64（預編譯二進位套件）
 

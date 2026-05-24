@@ -11,6 +11,9 @@
 !technical/**
 !native/
 !native/**
+!dist/
+!dist/spx.exe
+!dist/INSTRUCTIONS.md
 
 # Whitelist files
 !README.md
@@ -20,6 +23,7 @@
 !test.bat
 !.gitignore
 !pyproject.toml
+!spx.spec
 !native/Cargo.lock
 
 # Re-exclude junk
