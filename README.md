@@ -396,6 +396,70 @@ graph TD
     end
 ```
 
+#### Pillar 1 — Green-Subtract RCT (Color Decorrelation)
+
+The goal of RCT is to decorrelate the three color channels so that residuals in each channel carry less entropy.
+
+An earlier design split the image into a **Grayscale channel** (luminance), a **Secondary Color channel**, and a **Pure Color channel** — e.g. `(10, 30, 50)` RGB → `10`, `20`, `20`. This kept structural information in the grayscale channel, which doubled the MED predictor hit rate in the color channels. However, it required 3 extra bits per pixel to record the zero-position of the two color channels.
+
+SPX v1.0.0 instead uses the standard **Green-Subtract (G-sub)** transform, producing three channels with equivalent compression performance but no zero-position overhead:
+
+| Channel | Formula | Example `(R=10, G=30, B=50)` |
+| :--- | :--- | :--- |
+| **G** | Green as-is | `30` |
+| **RD** | R − G (uint8 wraparound) | `236` (= −20 mod 256) |
+| **BD** | B − G (uint8 wraparound) | `20` |
+
+#### Pillar 2 — Edge-Tuned MED (Spatial Prediction)
+
+SPX evaluated GAP, Paeth, and MED predictors across multiple datasets. Plain MED consistently produced the best compression ratio. MED was then extended with an **Edge Tuning** factor: when neighboring pixel values differ by more than 50, the predictor locks onto the closer neighbor rather than computing the median. This prevents large residual overshoots at sharp edges and discontinuities.
+
+See [PREDICTOR.md](./technical/1.%20PREDICTOR.md) for the full statistical analysis and edge-case evaluation.
+
+#### Pillar 3 — Universal-42 Stateless Sharding
+
+After prediction, residuals are categorized into exactly **42 shards** based on three pixel-level features, ordered by empirical importance:
+
+| Feature | Symbol | Description |
+| :--- | :--- | :--- |
+| Gradient Magnitude | **V** | How sharp is the local edge? |
+| Intensity | **I** | Is this a dark, mid-tone, or highlight region? |
+| Trend | **T** | Is the local color intensity rising, falling, or flat? |
+
+The 42 shards are partitioned as follows:
+
+- **V = 0 (flat regions)**: No meaningful trend, so only 3 shards (one per Intensity tier). IDs 0–2.
+- **1 ≤ V ≤ 3 (soft edges)**: All three features are significant — 3 V-tiers × 3 I-tiers × 3 T-values = **27 shards**. IDs 3–29.
+- **V ≥ 4 (hard edges)**: At strong edges, intensity becomes less meaningful, so only V and T are used — 4 V-tiers × 3 T-values = **12 shards**. IDs 30–41.
+
+This partition (42 vs. alternatives such as 60 or 80) was chosen empirically; a higher shard count risks overfitting to the training datasets.
+
+After sharding, **BICC (Bias Cancellation)** shifts the residuals in each shard toward zero if they have drifted from the median. The compression gain from BICC alone is negligible, but it ensures residual distributions align tightly with the empirical rANS templates in Pillar 4.
+
+See [SHARD_TEMPLATE.md](./technical/2.%20SHARD_TEMPLATE.md) for the full boundary derivation.
+
+#### Pillar 4 — Two-Pass rANS Entropy Coding
+
+Residuals are **ZigZag-mapped** (signed → unsigned) before entropy coding so that small positive and negative values both map to small symbols, keeping the probability distribution tight.
+
+The rANS stage uses two passes before encoding:
+
+- **Pass 1 — Statistical Profiling**: Scans all shards to collect histograms, symbol counts, and shard widths. If a shard's symbols only span 0–23, symbols 24–255 are excluded entirely, shrinking the PDF header.
+- **Pass 2 — Physical Sharding**: Gathers data into contiguous memory blocks, eliminating random-access patterns during the parallel encode phase and maximising CPU ILP.
+
+**Mode selection (34 modes total):**
+
+| Mode | Name | Description |
+| :--- | :--- | :--- |
+| **0** | Custom PDF | Encoder builds a unique probability table for the shard. Carries a ~120-bit (15-byte) header penalty; only chosen when the compression gain exceeds this cost. |
+| **1–2** | Reserved | Placeholder slots retained for future architectural expansions. |
+| **3** | Zero-Entropy | Used when a shard contains only a single symbol (typically all zeros). No bitstream payload is written for that shard. |
+| **4–33** | Empirical Templates | 10 statistical centroids derived from K-means analysis of real image shards, each scaled at ×0.5, ×1.0, and ×1.5 — 30 templates total. Stored in `rans_mode.npz` and hardcoded in the decoder (1-byte mode header, no PDF transmission). |
+
+The encoder selects the mode whose theoretical bit-cost (cross-entropy) is lowest, subject to the 120-bit penalty for Mode 0. Template shapes were derived from natural-image datasets and may exhibit overfitting on out-of-distribution content.
+
+Encoding is parallelised via **Rayon** (one thread per shard) with **4-way interleaved rANS** within each shard for ILP throughput.
+
 ### 5.2 Deep-Dive Technical Series
 
 For detailed algorithmic specifications, refer to the following documentation in the `technical/` directory:
@@ -412,12 +476,9 @@ SPX implements a **Context-Aware Bypass** logic to handle different image types 
 * **Grayscale Route**: If R=G=B is detected, the engine activates a specialized monochrome bypass, reducing computational overhead by ~65%. This path utilizes **Bitplane rANS**, which decomposes the 8-bit signal into hierarchical layers to increase redundancy extraction efficiency.
 
 ### 5.4 Stateless Sharding & Profile-Driven Hub
-The backbone of SPX is the **Stateless Sharding Hub**, mapping pixels into 42+ contexts based on V-Tier (gradient strength), Intensity, and Trend. This configuration-as-data model allows for seamless profile switching without kernel recompilation.
+The backbone of SPX is the **Stateless Sharding Hub**, mapping pixels into exactly **42 contexts** based on V-Tier (gradient strength), Intensity, and Trend. This configuration-as-data model allows for seamless profile switching without kernel recompilation.
 
-For entropy coding, the engine utilizes a **30-Mode Template Matrix**:
-- **10 Base Centroids**: Data-driven probability shapes derived from real-world image shards.
-- **3 Sigma Scales**: Each centroid is scaled at `0.5`, `1.0`, and `1.5` to adapt to different noise levels.
-- **Zero-Overhead**: These 30 empirical modes are hardcoded in the decoder, allowing optimal PDF matching without the "Header Tax" of custom frequency tables.
+For entropy coding, the engine uses a **34-mode selection system** — see the Pillar 4 breakdown in section 5.1 for the full mode table. The 30 empirical template modes (4–33) are hardcoded in the decoder, requiring only a 1-byte mode header per shard.
 
 ### 5.5 Bitplane rANS & Entropy Core
 For high-density images, SPX employs **Shard-Conditioned Bitplane rANS**. Instead of treating the residual as a single 256-symbol alphabet, it decomposes the signal into 2-bit layers. Each layer uses a **2,688-way context model** ($42 \text{ Shards} \times 64 \text{ Spatial Patterns}$), allowing the rANS core to isolate structural predictable bits from stochastic noise bits.
