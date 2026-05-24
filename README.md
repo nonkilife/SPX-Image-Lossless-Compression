@@ -460,6 +460,37 @@ The encoder selects the mode whose theoretical bit-cost (cross-entropy) is lowes
 
 Encoding is parallelised via **Rayon** (one thread per shard) with **4-way interleaved rANS** within each shard for ILP throughput.
 
+#### Bitplane rANS — Alternative High-Structure Coding Path
+
+Grayscale images **always** use Bitplane rANS. RGB images use it automatically when Pass 1 statistics satisfy all three of the following conditions:
+
+| Metric | Threshold | Rationale |
+| :--- | :--- | :--- |
+| Shannon Entropy (H) | < 3.2 bits/symbol | Standard context sharding plateaus above this point |
+| Zero-residual hit rate | > 30% | Bitplane's sparse model is only efficient when many residuals are zero |
+| P90 symbol width | < 112 | Wide residual distributions make 2-bit layer derivation too costly |
+
+Instead of encoding residuals as a 256-symbol alphabet, Bitplane rANS decomposes each 8-bit ZigZag residual into **4 layers of 2 bits each**:
+
+| Layer | Bits | Alphabet |
+| :--- | :--- | :--- |
+| Layer 0 | bits 0–1 (LSB pair) | 4 symbols (0–3) |
+| Layer 1 | bits 2–3 | 4 symbols (0–3) |
+| Layer 2 | bits 4–5 | 4 symbols (0–3) |
+| Layer 3 | bits 6–7 (MSB pair) | 4 symbols (0–3) |
+
+Each layer is coded with a **2,688-way context model** (42 shards × 64 spatial patterns). The 64 spatial patterns come from the same packed spatial-LUT feature byte used in standard rANS — V-tier (3 bits) × Trend (2 bits) × Noise flag (1 bit) = 64 combinations. This gives finer per-pixel context granularity than the 34-mode path while keeping the per-layer alphabet small.
+
+**RGB Bitplane — Green-Lead Strategy:**
+
+When Bitplane rANS is triggered for an RGB image, the three channels are not treated symmetrically:
+
+1. **Green (G)** is encoded first, using self-referential spatial context from its own left/top neighbours.
+2. The reconstructed Green channel is then used as a **spatial anchor** for the RD and BD chroma channels. Since chroma residuals are strongly correlated with local Green structure, this anchor allows the rANS engine to model RD/BD residuals with much higher precision.
+3. All three channels are encoded **concurrently** via a `ThreadPoolExecutor` that releases the Python GIL during the native Rust FFI call.
+
+The PDF tables for each layer are Zstd-compressed (level 3) in the bitstream header, and the 4-way interleaved rANS state (4 × uint64) is stored immediately before the encoded bitstream payload.
+
 ### 5.2 Deep-Dive Technical Series
 
 For detailed algorithmic specifications, refer to the following documentation in the `technical/` directory:
